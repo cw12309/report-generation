@@ -148,13 +148,31 @@ def get_rerank_api_key() -> str:
     return os.environ.get("SILICONFLOW_API_KEY", "") or os.environ.get("RERANK_API_KEY", "") or _get_active("reranks").get("api_key", "")
 
 def get_db_path() -> str:
+    milvus_uri = os.environ.get("MILVUS_URI", "") or _resolve("milvus.uri", "")
+    if milvus_uri:
+        return milvus_uri
     path = _resolve("retrieval.db_path", "./data_pipeline/milvus_lite.db")
     if not os.path.isabs(path):
         path = os.path.join(_project_root, path)
     return path
 
+def get_milvus_token() -> str:
+    return os.environ.get("MILVUS_TOKEN", "") or _resolve("milvus.token", "") or ""
+
 def get_collection_name() -> str:
     return _resolve("retrieval.collection_name", "report_slices")
+
+def get_markdown_dir() -> str:
+    path = _resolve("data.markdown_dir", "./app/data_pipeline/output_markdown")
+    if not os.path.isabs(path):
+        path = os.path.join(_project_root, path)
+    return path
+
+def get_retrieval_index_config() -> dict:
+    return {
+        "hnsw_m": _resolve("retrieval.hnsw_m", 16),
+        "hnsw_ef_construction": _resolve("retrieval.hnsw_ef_construction", 256),
+    }
 
 def get_rag_top_k() -> int:
     return _resolve("retrieval.rag_top_k", 10)

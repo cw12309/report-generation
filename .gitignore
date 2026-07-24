@@ -8,7 +8,10 @@ build/
 milvus_lite.db/
 milvus_lite.db
 xlsx_slices/
-report_template/
+/app/data_pipeline/report_template/
+/app/data_pipeline/output_markdown/
+/app/data_pipeline/metadata.json
+/app/data_pipeline/报告整理结果.md
 
 *.xlsx
 ~$*.xlsx
@@ -29,3 +32,4 @@ venv/
 data/
 app/memory/data/
 data/sessions.db
+

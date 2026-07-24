@@ -18,17 +18,39 @@
 """
 import os
 
-from pymilvus import MilvusClient
-from config import get_collection_name
+from pymilvus import AnnSearchRequest, MilvusClient, RRFRanker
+from config import get_collection_name, get_milvus_token
 
 try:
     from .query_rewrite import parse_query_keywords
+    from .sparse_vector import text_to_sparse_vector
 except ImportError:
     from query_rewrite import parse_query_keywords
+    from sparse_vector import text_to_sparse_vector
 
 COLLECTION_NAME = get_collection_name()
 
-OUTPUT_FIELDS = ["text", "source", "vector_type", "检查类型", "部位", "检查项目", "诊断结论"]
+OUTPUT_FIELDS = [
+    "id", "modality", "level_1", "level_2", "level_3", "level_4",
+    "module_name", "imaging_findings", "imaging_opinion", "combined_text",
+]
+
+
+def _add_display_fields(entity):
+    """Expose the ASCII Milvus fields under the existing business keys."""
+    entity["text"] = entity.get("combined_text", "")
+    entity["source"] = str(entity.get("id", entity.get("module_name", "")))
+    entity["vector_type"] = "hybrid"
+    entity["检查类型"] = entity.get("modality", "")
+    entity["部位"] = entity.get("level_1", "")
+    entity["检查项目"] = entity.get("level_3", "")
+    entity["诊断结论"] = entity.get("module_name", "")
+    entity["一级目录"] = entity.get("level_1", "")
+    entity["二级目录"] = entity.get("level_2", "")
+    entity["三级目录"] = entity.get("level_3", "")
+    entity["四级目录"] = entity.get("level_4", "")
+    entity["模块名称"] = entity.get("module_name", "")
+    return entity
 
 
 def _esc_filter(value):
@@ -39,8 +61,18 @@ def _esc_filter(value):
     return value.replace('"', '').replace('\\', '')
 
 
-def vector_search(query_vec, top_k, client):
-    """向量检索（Bi-Encoder 语义匹配）。
+def _scalar_filter(keywords):
+    conditions = []
+    if keywords.get("检查类型"):
+        check_type = "MR" if keywords["检查类型"] == "MRI" else keywords["检查类型"]
+        conditions.append(f'modality == "{_esc_filter(check_type)}"')
+    if keywords.get("部位"):
+        conditions.append(f'level_1 == "{_esc_filter(keywords["部位"])}"')
+    return " and ".join(conditions)
+
+
+def vector_search(query, query_vec, keywords, top_k, client):
+    """Dense + sparse hybrid search with shared scalar filters.
 
     Args:
         query_vec: 查询向量 (1024维)
@@ -50,9 +82,25 @@ def vector_search(query_vec, top_k, client):
     Returns:
         list[dict]: 候选文档列表，每项包含 text, source, 元数据, _distance, _recall_path
     """
-    results = client.search(
-        collection_name=COLLECTION_NAME,
+    filter_expr = _scalar_filter(keywords)
+    dense_request = AnnSearchRequest(
         data=[query_vec],
+        anns_field="dense_vector",
+        param={"metric_type": "COSINE", "params": {"ef": 64}},
+        limit=top_k,
+        expr=filter_expr or None,
+    )
+    sparse_request = AnnSearchRequest(
+        data=[text_to_sparse_vector(query)],
+        anns_field="sparse_vector",
+        param={"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
+        limit=top_k,
+        expr=filter_expr or None,
+    )
+    results = client.hybrid_search(
+        collection_name=COLLECTION_NAME,
+        reqs=[dense_request, sparse_request],
+        ranker=RRFRanker(),
         limit=top_k,
         output_fields=OUTPUT_FIELDS,
         timeout=60,  # 60秒超时，防止 Milvus 卡住导致整个请求挂起
@@ -61,6 +109,8 @@ def vector_search(query_vec, top_k, client):
     candidates = []
     for hit in results[0]:
         entity = hit["entity"]
+        entity["id"] = hit.get("id", entity.get("id"))
+        entity = _add_display_fields(entity)
         entity["_distance"] = hit.get("distance", 0)
         entity["_recall_path"] = "vector"
         candidates.append(entity)
@@ -84,14 +134,14 @@ def metadata_filter(keywords, top_k, client):
         check_type = keywords["检查类型"]
         if check_type == "MRI":
             check_type = "MR"
-        conditions.append(f'检查类型 == "{_esc_filter(check_type)}"')
+        conditions.append(f'modality == "{_esc_filter(check_type)}"')
 
     if keywords.get("部位"):
-        conditions.append(f'部位 == "{_esc_filter(keywords["部位"])}"')
+        conditions.append(f'level_1 == "{_esc_filter(keywords["部位"])}"')
 
     if keywords.get("诊断关键词"):
         for kw in keywords["诊断关键词"]:
-            conditions.append(f'诊断结论 like "%{_esc_filter(kw)}%"')
+            conditions.append(f'module_name like "%{_esc_filter(kw)}%"')
 
     if not conditions:
         return []
@@ -112,6 +162,7 @@ def metadata_filter(keywords, top_k, client):
 
     candidates = []
     for r in results:
+        _add_display_fields(r)
         r["_distance"] = -1
         r["_recall_path"] = "metadata"
         candidates.append(r)
@@ -142,7 +193,7 @@ def keyword_search(keywords, top_k, client):
 
     all_conditions = []
     for term in search_terms:
-        all_conditions.append(f'text like "%{_esc_filter(term)}%"')
+        all_conditions.append(f'combined_text like "%{_esc_filter(term)}%"')
 
     if not all_conditions:
         return []
@@ -154,11 +205,11 @@ def keyword_search(keywords, top_k, client):
         ct = keywords["检查类型"]
         if ct == "MRI":
             ct = "MR"
-        type_cond = f'检查类型 == "{_esc_filter(ct)}"'
+        type_cond = f'modality == "{_esc_filter(ct)}"'
 
     part_cond = ""
     if keywords.get("部位"):
-        part_cond = f'部位 == "{_esc_filter(keywords["部位"])}"'
+        part_cond = f'level_1 == "{_esc_filter(keywords["部位"])}"'
 
     extra_conds = [c for c in [type_cond, part_cond] if c]
     if extra_conds:
@@ -178,13 +229,17 @@ def keyword_search(keywords, top_k, client):
 
     candidates = []
     for r in results:
+        _add_display_fields(r)
         r["_distance"] = -1
         r["_recall_path"] = "keyword"
         candidates.append(r)
     return candidates
 
 
-def multi_recall(query_vec, keywords, top_k, client, recall_paths=None, return_details=False):
+def multi_recall(
+    query_vec, keywords, top_k, client, recall_paths=None,
+    return_details=False, query="",
+):
     """多路召回 + 去重。
 
     支持双通道向量化（full_row 和 opinion），同一 source 的多个向量会被合并，
@@ -217,7 +272,14 @@ def multi_recall(query_vec, keywords, top_k, client, recall_paths=None, return_d
     details = {}
 
     if "vector" in recall_paths:
-        vec_results = vector_search(query_vec, top_k, client)
+        hybrid_query = query or " ".join(
+            filter(None, [
+                keywords.get("检查类型", ""),
+                keywords.get("部位", ""),
+                " ".join(keywords.get("诊断关键词", [])),
+            ])
+        )
+        vec_results = vector_search(hybrid_query, query_vec, keywords, top_k, client)
         details["vector"] = vec_results
         for entity in vec_results:
             src = entity["source"]
@@ -289,7 +351,8 @@ if __name__ == "__main__":
 
     test_queries = ["CT脑出血", "动脉瘤（宽颈多发）", "头颅", "CT"]
 
-    client = MilvusClient(uri=DB_PATH)
+    token = get_milvus_token()
+    client = MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
     client.load_collection(COLLECTION_NAME)
 
     for q in test_queries:

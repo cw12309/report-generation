@@ -7,6 +7,7 @@ import os
 import queue
 import shutil
 import time
+from pathlib import Path
 
 import yaml
 import requests
@@ -21,15 +22,15 @@ from memory.short_term import ShortTermMemory
 from memory.long_term import LongTermMemory
 from memory.session_store import SessionStore
 from config import (
-    get_db_path, get_collection_name,
+    get_db_path, get_collection_name, get_markdown_dir, get_milvus_token,
     get_llm_model, get_llm_api_key, get_llm_base_url,
     get_embed_model, get_embed_api_key, get_embed_base_url,
     get_rerank_api_key, get_rerank_model, get_rerank_base_url,
     get_max_rounds, reload_config,
 )
 from data_pipeline.build_vector_db import build_db
-from data_pipeline.extract_metadata import extract_metadata
-from data_pipeline.xlsx_slicer import process_file
+from data_pipeline.extract_metadata import extract_all, save_json
+from data_pipeline.process_reports import main as process_reports
 
 from .schemas import (
     ChatRequest, ConfigSaveRequest, TestModelRequest,
@@ -48,6 +49,11 @@ DB_PATH = get_db_path()
 COLLECTION_NAME = get_collection_name()
 CHAT_MODEL = get_llm_model()
 EMBED_MODEL = get_embed_model()
+
+
+def _new_milvus_client():
+    token = get_milvus_token()
+    return MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
 
 
 def web_main(port=8000):
@@ -82,7 +88,7 @@ def web_main(port=8000):
             stm = ShortTermMemory(max_rounds=get_max_rounds())
             entity_tracker = EntityTracker(llm_chat_fn=chat_stream)
             ltm = LongTermMemory()
-            client = MilvusClient(DB_PATH)
+            client = _new_milvus_client()
             client.load_collection(COLLECTION_NAME)
 
             # 恢复对话历史到 STM
@@ -114,7 +120,7 @@ def web_main(port=8000):
             stm = ShortTermMemory(max_rounds=get_max_rounds())
             entity_tracker = EntityTracker(llm_chat_fn=chat_stream)
             ltm = LongTermMemory()
-            client = MilvusClient(DB_PATH)
+            client = _new_milvus_client()
             client.load_collection(COLLECTION_NAME)
 
             store.create_session(session_id)
@@ -293,12 +299,12 @@ def web_main(port=8000):
         total = 0
         try:
             if os.path.exists(DB_PATH):
-                client = MilvusClient(DB_PATH)
+                client = _new_milvus_client()
                 total = len(client.query(COLLECTION_NAME, filter="", output_fields=["count(*)"]))
                 client.close()
         except Exception:
             logger.warning("查询 Milvus 知识库状态失败", exc_info=True)
-        slices_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "app", "data_pipeline", "xlsx_slices")
+        markdown_dir = get_markdown_dir()
         md_count = len([f for f in os.listdir(slices_dir) if f.endswith(".md")]) if os.path.isdir(slices_dir) else 0
         metadata_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "report_template", "metadata.json")
         meta_exists = os.path.exists(metadata_path)
@@ -340,7 +346,7 @@ def web_main(port=8000):
                 event_queue.put_nowait(json.dumps(data, ensure_ascii=False))
 
             def run():
-                build_db(slices_dir, batch_size=batch_size, rebuild=rebuild, progress_callback=_emit_log)
+                build_db(markdown_dir, batch_size=batch_size, rebuild=rebuild, progress_callback=_emit_log)
                 event_queue.put_nowait("[DONE]")
 
             loop.run_in_executor(None, run)
@@ -370,7 +376,10 @@ def web_main(port=8000):
                 event_queue.put_nowait(json.dumps(data, ensure_ascii=False))
 
             def run():
-                extract_metadata(metadata_dir, metadata_path, progress_callback=_emit_log)
+                _emit_log({"level": "info", "msg": "正在从 Markdown 提取元数据..."})
+                metadata = extract_all(Path(get_markdown_dir()))
+                save_json(metadata, Path(metadata_path))
+                _emit_log({"level": "done", "msg": f"元数据提取完成，共 {len(metadata)} 条"})
                 event_queue.put_nowait("[DONE]")
 
             loop.run_in_executor(None, run)
@@ -410,9 +419,9 @@ def web_main(port=8000):
                 _emit_log({"level": "info", "msg": f"上传文件: {file.filename}"})
                 with open(filepath, "wb") as f:
                     shutil.copyfileobj(file.file, f)
-                _emit_log({"level": "info", "msg": "切片中..."})
-                count = process_file(filepath, slices_dir, progress_callback=_emit_log)
-                _emit_log({"level": "done", "msg": f"✅ 切片完成，共生成 {count} 个 md 文件"})
+                _emit_log({"level": "info", "msg": "正在整理 Markdown 报告..."})
+                process_reports()
+                _emit_log({"level": "done", "msg": "Markdown 报告整理完成"})
                 event_queue.put_nowait("[DONE]")
 
             loop.run_in_executor(None, run)

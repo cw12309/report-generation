@@ -33,7 +33,14 @@ def search_reports(query, top_k=RAG_TOP_K, rerank_top_k=RERANK_TOP_K, client=Non
     query_vec = get_embedding(query)
     keywords = parse_query_keywords(query)
 
-    candidates, recall_details = multi_recall(query_vec, keywords, top_k=top_k, client=client, return_details=True)
+    candidates, recall_details = multi_recall(
+        query_vec,
+        keywords,
+        top_k=top_k,
+        client=client,
+        return_details=True,
+        query=query,
+    )
 
     if not candidates:
         return "未检索到相关报告。", []

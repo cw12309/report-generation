@@ -1,381 +1,338 @@
-"""读取 xlsx 切片 md 文件，向量化后存入 Milvus Lite（支持增量添加）。
+"""Rebuild the medical report collection with dense and sparse vectors."""
 
-用法示例：
-  python build_vector_db.py                                    # 增量模式，只添加新切片
-  python build_vector_db.py --input ../xlsx_slices             # 指定输入文件夹
-  python build_vector_db.py --rebuild                          # 全量重建
-  python build_vector_db.py --batch-size 8                     # 指定批次大小
-"""
 import argparse
-import os
+import random
 import sys
 import time
+from pathlib import Path
+from typing import Callable, Dict, List, Optional
 
 import requests
-from dotenv import load_dotenv
-from pymilvus import CollectionSchema, DataType, FieldSchema, MilvusClient
-
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
-
-from config import (
-    get_embed_base_url, get_embed_model,
-    get_embed_dimension, get_db_path, get_collection_name,
+import yaml
+from pymilvus import (
+    AnnSearchRequest,
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    MilvusClient,
+    RRFRanker,
 )
 
-EMBED_URL = get_embed_base_url()
-EMBED_MODEL = get_embed_model()
-EMBED_DIM = get_embed_dimension()
-DB_PATH = get_db_path()
-COLLECTION_NAME = get_collection_name()
+APP_DIR = Path(__file__).resolve().parents[1]
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from config import (  # noqa: E402
+    get_collection_name,
+    get_db_path,
+    get_embed_api_key,
+    get_embed_base_url,
+    get_embed_dimension,
+    get_embed_model,
+    get_markdown_dir,
+    get_milvus_token,
+)
+from rag.sparse_vector import text_to_sparse_vector  # noqa: E402
 
 
-def parse_md_slice(filepath):
-    """解析切片 md 文件，返回 (自然语言文本, 元数据字典, 影像学表现文本)。
-    
-    Returns:
-        tuple: (natural_text, metadata, imaging_text)
-            - natural_text: 完整行内容的自然语言文本
-            - metadata: 元数据字典
-            - imaging_text: 仅影像学表现字段的文本
-    """
-    with open(filepath, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    lines = [l.strip() for l in content.strip().split("\n") if l.strip()]
-
-    header = None
-    data_row = None
-    for line in lines:
-        if line.startswith("|") and "---" in line:
-            continue
-        if line.startswith("##"):
-            continue
-        cells = [c.strip() for c in line.split("|")]
-        cells = [c for c in cells if c]
-        if not cells:
-            continue
-        if header is None:
-            header = cells
-        else:
-            data_row = cells
-            break
-
-    if not header or not data_row:
-        return None, None, None
-
-    text_parts = []
-    metadata = {}
-    imaging_text = ""
-    for h, v in zip(header, data_row):
-        text_parts.append(f"{h}：{v}")
-        if h in ("检查类型", "部位", "检查项目", "诊断结论"):
-            metadata[h] = v
-        if h == "影像学表现" and v.strip():
-            imaging_text = v.strip()
-
-    natural_text = "\n".join(text_parts)
-    return natural_text, metadata, imaging_text
+def _section(content: str, heading: str) -> str:
+    marker = f"### {heading}"
+    if marker not in content:
+        return ""
+    body = content.split(marker, 1)[1]
+    if "\n### " in body:
+        body = body.split("\n### ", 1)[0]
+    return body.strip()
 
 
-def get_embeddings(texts, batch_size=16, progress_callback=None):
-    """调用 bge-m3 接口，批量获取向量，带重试。"""
-    def _log(msg, level="info"):
-        print(msg, flush=True)
-        if progress_callback:
-            progress_callback({"level": level, "msg": msg})
+def parse_markdown(path: Path) -> Dict:
+    """Parse one generated Markdown report into the collection fields."""
+    content = path.read_text(encoding="utf-8")
+    metadata: Dict[str, str] = {}
+    body = content
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) == 3:
+            loaded = yaml.safe_load(parts[1]) or {}
+            metadata = {str(key): str(value or "") for key, value in loaded.items()}
+            body = parts[2].strip()
 
-    all_embeddings = []
-    total = len(texts)
-    for i in range(0, total, batch_size):
-        batch = texts[i:i + batch_size]
-        payload = {
-            "model": EMBED_MODEL,
-            "input": batch,
-        }
-        success = False
+    findings = _section(body, "影像学表现")
+    opinion = _section(body, "影像学意见")
+    combined_text = "\n".join(filter(None, [
+        f"检查类型：{metadata.get('modality', '')}",
+        f"一级目录：{metadata.get('level_1', '')}",
+        f"二级目录：{metadata.get('level_2', '')}",
+        f"三级目录：{metadata.get('level_3', '')}",
+        f"四级目录：{metadata.get('level_4', '')}",
+        f"模块名称：{metadata.get('module_name', '')}",
+        f"影像学表现：{findings}" if findings else "",
+        f"影像学意见：{opinion}" if opinion else "",
+    ]))
+    return {
+        "modality": metadata.get("modality", "")[:32],
+        "level_1": metadata.get("level_1", "")[:64],
+        "level_2": metadata.get("level_2", "")[:64],
+        "level_3": metadata.get("level_3", "")[:64],
+        "level_4": metadata.get("level_4", "")[:64],
+        "module_name": metadata.get("module_name", "")[:128],
+        "imaging_findings": findings[:4096],
+        "imaging_opinion": opinion[:4096],
+        "combined_text": combined_text[:8192],
+    }
+
+
+def _embedding_url() -> str:
+    base_url = get_embed_base_url().rstrip("/")
+    return base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
+
+
+def get_dense_embeddings(
+    texts: List[str],
+    batch_size: int,
+    progress_callback: Optional[Callable[[str], None]] = None,
+) -> List[List[float]]:
+    headers = {"Content-Type": "application/json"}
+    api_key = get_embed_api_key()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    embeddings: List[List[float]] = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start + batch_size]
         for attempt in range(5):
             try:
-                r = requests.post(EMBED_URL, json=payload, timeout=120)
-                r.raise_for_status()
-                data = r.json()["data"]
-                data.sort(key=lambda x: x["index"])
-                all_embeddings.extend([d["embedding"] for d in data])
-                success = True
+                response = requests.post(
+                    _embedding_url(),
+                    headers=headers,
+                    json={"model": get_embed_model(), "input": batch},
+                    timeout=120,
+                )
+                response.raise_for_status()
+                items = sorted(response.json()["data"], key=lambda item: item["index"])
+                embeddings.extend(item["embedding"] for item in items)
+                if progress_callback:
+                    completed = min(start + len(batch), len(texts))
+                    percentage = completed * 100 / len(texts)
+                    progress_callback(
+                        f"Dense向量化: {completed}/{len(texts)} ({percentage:.1f}%)"
+                    )
                 break
-            except Exception as e:
-                if attempt < 4:
-                    wait = (attempt + 1) * 5
-                    # 静默等待，不发送日志到前端
-                    _log(f"向量化进度: {i//batch_size+1}/{(total + batch_size - 1)//batch_size} 批次 (重试中...)", "info")
-                    time.sleep(wait)
-                else:
-                    _log(f"批次 {i//batch_size+1} 重试5次仍失败: {e}", "error")
-                    all_embeddings.extend([None] * len(batch))
-        if success:
-            done = min(i + batch_size, total)
-            _log(f"向量化进度: {done}/{total} ({done*100//total}%)")
-        time.sleep(0.2)
-    all_embeddings = [e for e in all_embeddings if e is not None]
-    return all_embeddings
+            except Exception:
+                if attempt == 4:
+                    raise
+                time.sleep((attempt + 1) * 5)
+    return embeddings
 
 
-def get_existing_sources(client):
-    """获取数据库中已有的 source 文件名集合。"""
-    if not client.has_collection(COLLECTION_NAME):
-        return set()
-    try:
-        client.load_collection(COLLECTION_NAME)
-        results = client.query(COLLECTION_NAME, filter="", output_fields=["source"])
-        return {r["source"] for r in results}
-    except Exception:
-        return set()
+def _client() -> MilvusClient:
+    kwargs = {"uri": get_db_path()}
+    token = get_milvus_token()
+    if token:
+        kwargs["token"] = token
+    return MilvusClient(**kwargs)
 
 
-def create_collection(client):
-    """创建集合（如果不存在）。"""
-    if client.has_collection(COLLECTION_NAME):
-        return
+def create_collection(client: MilvusClient) -> None:
+    """Create the exact scalar, dense, and sparse schema and its indexes."""
     schema = CollectionSchema(fields=[
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
-        FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=EMBED_DIM),
-        FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=4096),
-        FieldSchema(name="source", dtype=DataType.VARCHAR, max_length=512),
-        FieldSchema(name="vector_type", dtype=DataType.VARCHAR, max_length=64),
-        FieldSchema(name="检查类型", dtype=DataType.VARCHAR, max_length=256),
-        FieldSchema(name="部位", dtype=DataType.VARCHAR, max_length=256),
-        FieldSchema(name="检查项目", dtype=DataType.VARCHAR, max_length=256),
-        FieldSchema(name="诊断结论", dtype=DataType.VARCHAR, max_length=1024),
+        FieldSchema(name="modality", dtype=DataType.VARCHAR, max_length=32),
+        FieldSchema(name="level_1", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="level_2", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="level_3", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="level_4", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="module_name", dtype=DataType.VARCHAR, max_length=128),
+        FieldSchema(name="imaging_findings", dtype=DataType.VARCHAR, max_length=4096),
+        FieldSchema(name="imaging_opinion", dtype=DataType.VARCHAR, max_length=4096),
+        FieldSchema(name="combined_text", dtype=DataType.VARCHAR, max_length=8192),
+        FieldSchema(
+            name="dense_vector",
+            dtype=DataType.FLOAT_VECTOR,
+            dim=get_embed_dimension(),
+        ),
+        FieldSchema(name="sparse_vector", dtype=DataType.SPARSE_FLOAT_VECTOR),
     ])
 
-    index_params = client.prepare_index_params()
-    index_params.add_index(field_name="vector", index_type="IVF_FLAT", metric_type="COSINE", params={"nlist": 128})
-
+    indexes = client.prepare_index_params()
+    indexes.add_index(field_name="modality", index_type="INVERTED")
+    indexes.add_index(field_name="level_1", index_type="INVERTED")
+    indexes.add_index(
+        field_name="dense_vector",
+        index_type="HNSW",
+        metric_type="COSINE",
+        params={"M": 16, "efConstruction": 256},
+    )
+    indexes.add_index(
+        field_name="sparse_vector",
+        index_type="SPARSE_INVERTED_INDEX",
+        metric_type="IP",
+        params={"drop_ratio_build": 0.2},
+    )
     client.create_collection(
-        collection_name=COLLECTION_NAME,
+        collection_name=get_collection_name(),
         schema=schema,
-        index_params=index_params,
+        index_params=indexes,
     )
 
 
-def insert_data(client, texts, metadatas, source_files, embeddings, vector_types=None):
-    """将数据插入集合。
-    
-    Args:
-        vector_types: 向量类型列表，与 texts 一一对应（"full_row" 或 "opinion"）
-    """
-    if vector_types is None:
-        vector_types = ["full_row"] * len(texts)
-    
-    data = []
-    for i in range(len(texts)):
-        meta = metadatas[i]
-        data.append({
-            "vector": embeddings[i],
-            "text": texts[i],
-            "source": source_files[i],
-            "vector_type": vector_types[i],
-            "检查类型": meta.get("检查类型", ""),
-            "部位": meta.get("部位", ""),
-            "检查项目": meta.get("检查项目", ""),
-            "诊断结论": meta.get("诊断结论", ""),
-        })
-
-    insert_batch = 500
-    for i in range(0, len(data), insert_batch):
-        client.insert(collection_name=COLLECTION_NAME, data=data[i:i + insert_batch])
-    return len(data)
-
-
-def build_db(input_dir, batch_size=16, rebuild=False, progress_callback=None):
-    def _log(msg, level="info"):
-        print(msg, flush=True)
+def build_db(
+    input_dir: Optional[str] = None,
+    batch_size: int = 32,
+    rebuild: bool = True,
+    progress_callback: Optional[Callable] = None,
+) -> int:
+    """Drop and rebuild the collection from all generated Markdown reports."""
+    def log(message: str, level: str = "info") -> None:
+        print(message, flush=True)
         if progress_callback:
-            progress_callback({"level": level, "msg": msg})
+            progress_callback({"level": level, "msg": message})
 
-    # 全量重建：先清空旧切片，然后重新切片
-    if rebuild:
-        _log("全量重建模式：清空旧数据...")
-        
-        # 清空旧切片文件（避免新旧命名方式冲突）
-        if os.path.isdir(input_dir):
-            import shutil
-            _log(f"清空切片目录: {input_dir}")
-            shutil.rmtree(input_dir)
-        
-        # 自动重新切片
-        report_dir = os.path.join(os.path.dirname(input_dir), "report_template")
-        if os.path.isdir(report_dir):
-            xlsx_files = [f for f in os.listdir(report_dir) if f.endswith(".xlsx") and not f.startswith("~$")]
-            if xlsx_files:
-                os.makedirs(input_dir, exist_ok=True)
-                
-                # 动态导入 xlsx_slicer
-                slicer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xlsx_slicer.py")
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("xlsx_slicer", slicer_path)
-                xlsx_slicer = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(xlsx_slicer)
-                process_file = xlsx_slicer.process_file
-                
-                for fname in xlsx_files:
-                    fpath = os.path.join(report_dir, fname)
-                    _log(f"自动切片: {fname}")
-                    process_file(fpath, input_dir, progress_callback)
-            else:
-                _log(f"在 {report_dir} 中未找到 xlsx 文件", "error")
-                return
-        else:
-            _log(f"报告模板目录不存在: {report_dir}", "error")
-            return
-    elif not os.path.isdir(input_dir):
-        # 增量模式：目录不存在则自动切片
-        _log(f"输入文件夹不存在: {input_dir}，尝试自动切片...")
-        
-        report_dir = os.path.join(os.path.dirname(input_dir), "report_template")
-        if os.path.isdir(report_dir):
-            xlsx_files = [f for f in os.listdir(report_dir) if f.endswith(".xlsx") and not f.startswith("~$")]
-            if xlsx_files:
-                os.makedirs(input_dir, exist_ok=True)
-                
-                slicer_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xlsx_slicer.py")
-                import importlib.util
-                spec = importlib.util.spec_from_file_location("xlsx_slicer", slicer_path)
-                xlsx_slicer = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(xlsx_slicer)
-                process_file = xlsx_slicer.process_file
-                
-                for fname in xlsx_files:
-                    fpath = os.path.join(report_dir, fname)
-                    _log(f"自动切片: {fname}")
-                    process_file(fpath, input_dir, progress_callback)
-            else:
-                _log(f"在 {report_dir} 中未找到 xlsx 文件", "error")
-                return
-        else:
-            _log(f"报告模板目录不存在: {report_dir}", "error")
-            return
+    base_dir = Path(input_dir or get_markdown_dir()).resolve()
+    if not base_dir.is_dir():
+        raise FileNotFoundError(f"Markdown目录不存在: {base_dir}")
 
-    md_files = sorted([f for f in os.listdir(input_dir) if f.endswith(".md")])
-    if not md_files:
-        _log(f"在 {input_dir} 中未找到 md 文件", "error")
-        return
+    markdown_files = sorted(base_dir.rglob("*.md"))
+    reports = [parse_markdown(path) for path in markdown_files]
+    reports = [report for report in reports if report["combined_text"]]
+    log(f"发现有效Markdown报告: {len(reports)} 个")
 
-    client = MilvusClient(uri=DB_PATH)
-
-    if rebuild:
-        _log("清空向量数据库集合...")
-        # 关闭客户端再删除数据库文件（避免 Windows 文件锁定问题）
-        client.close()
-        if os.path.exists(DB_PATH):
-            _log(f"删除数据库文件: {DB_PATH}")
-            os.remove(DB_PATH)
-        # 重新创建客户端和集合
-        client = MilvusClient(uri=DB_PATH)
+    client = _client()
+    collection_name = get_collection_name()
+    try:
+        if client.has_collection(collection_name):
+            log(f"删除现有集合: {collection_name}")
+            client.drop_collection(collection_name)
         create_collection(client)
-        new_files = md_files
-        _log(f"将处理全部 {len(new_files)} 个切片文件")
-    else:
+        log(f"集合已创建: {collection_name}")
+
+        dense_vectors = get_dense_embeddings(
+            [report["combined_text"] for report in reports],
+            batch_size,
+            progress_callback=log,
+        )
+        rows = []
+        total_reports = len(reports)
+        for index, (report, dense_vector) in enumerate(
+            zip(reports, dense_vectors),
+            start=1,
+        ):
+            rows.append({
+                **report,
+                "dense_vector": dense_vector,
+                "sparse_vector": text_to_sparse_vector(report["combined_text"]),
+            })
+            if index % 100 == 0 or index == total_reports:
+                percentage = index * 100 / total_reports
+                log(f"Sparse向量化: {index}/{total_reports} ({percentage:.1f}%)")
+
+        for start in range(0, len(rows), 500):
+            client.insert(
+                collection_name=collection_name,
+                data=rows[start:start + 500],
+            )
+            log(f"写入进度: {min(start + 500, len(rows))}/{len(rows)}")
+        client.flush(collection_name)
+        client.load_collection(collection_name)
+        log(f"建库完成，共写入 {len(rows)} 条")
+        return len(rows)
+    finally:
+        client.close()
+
+
+def build_demo() -> int:
+    """Create the same schema and insert three self-contained mock reports."""
+    samples = [
+        {
+            "modality": "CT", "level_1": "头颅", "level_2": "",
+            "level_3": "颅脑平扫", "level_4": "", "module_name": "脑出血",
+            "imaging_findings": "右侧基底节区见片状高密度影，周围轻度水肿。",
+            "imaging_opinion": "右侧基底节区脑出血。",
+        },
+        {
+            "modality": "CT", "level_1": "头颅", "level_2": "",
+            "level_3": "颅脑平扫", "level_4": "", "module_name": "脑梗死",
+            "imaging_findings": "左侧额叶见片状低密度影，灰白质界限欠清。",
+            "imaging_opinion": "考虑左侧额叶脑梗死。",
+        },
+        {
+            "modality": "MR", "level_1": "头颅", "level_2": "",
+            "level_3": "头颅MRI", "level_4": "", "module_name": "脑膜瘤",
+            "imaging_findings": "右侧额部见类圆形异常信号，边界清楚。",
+            "imaging_opinion": "右侧额部占位，考虑脑膜瘤。",
+        },
+    ]
+    random_source = random.Random(20260724)
+    for sample in samples:
+        sample["combined_text"] = "\n".join([
+            f"检查类型：{sample['modality']}",
+            f"一级目录：{sample['level_1']}",
+            f"三级目录：{sample['level_3']}",
+            f"模块名称：{sample['module_name']}",
+            f"影像学表现：{sample['imaging_findings']}",
+            f"影像学意见：{sample['imaging_opinion']}",
+        ])
+        sample["dense_vector"] = [
+            random_source.random() for _ in range(get_embed_dimension())
+        ]
+        sample["sparse_vector"] = text_to_sparse_vector(sample["combined_text"])
+
+    client = _client()
+    collection_name = get_collection_name()
+    try:
+        if client.has_collection(collection_name):
+            client.drop_collection(collection_name)
         create_collection(client)
-        existing = get_existing_sources(client)
-        new_files = [f for f in md_files if f not in existing]
-        _log(f"数据库已有: {len(existing)} 条")
-        _log(f"新增切片: {len(new_files)} 个")
-        if not new_files:
-            _log("没有新切片需要添加")
-            client.close()
-            return
+        client.insert(collection_name=collection_name, data=samples)
+        client.flush(collection_name)
+        client.load_collection(collection_name)
+        print(f"模拟数据写入完成，共 {len(samples)} 条", flush=True)
 
-    _log(f"开始解析 {len(new_files)} 个新切片...")
-
-    # ── 双通道数据收集 ──
-    # full_row 通道：完整行内容
-    full_texts = []
-    full_metadatas = []
-    full_sources = []
-    
-    # imaging 通道：仅影像学表现
-    imaging_texts = []
-    imaging_metadatas = []
-    imaging_sources = []
-
-    for fname in new_files:
-        fpath = os.path.join(input_dir, fname)
-        text, meta, imaging = parse_md_slice(fpath)
-        if text:
-            # 通道1：完整行
-            full_texts.append(text)
-            full_metadatas.append(meta or {})
-            full_sources.append(fname)
-            
-            # 通道2：影像学表现（如果存在）
-            if imaging:
-                imaging_texts.append(imaging)
-                imaging_metadatas.append(meta or {})
-                imaging_sources.append(fname)
-
-    _log(f"完整行通道: {len(full_texts)} 条")
-    _log(f"影像学表现通道: {len(imaging_texts)} 条")
-    _log(f"总计待向量化: {len(full_texts) + len(imaging_texts)} 条")
-    
-    if not full_texts:
-        _log("没有有效切片可添加")
-        client.close()
-        return
-
-    _log(f"开始向量化 (batch_size={batch_size})...")
-    
-    # 合并两个通道的文本进行批量向量化
-    all_texts = full_texts + imaging_texts
-    all_embeddings = get_embeddings(all_texts, batch_size=batch_size, progress_callback=progress_callback)
-
-    if not all_embeddings:
-        _log("向量化失败，未获取到任何向量", "error")
-        client.close()
-        return
-
-    _log(f"向量化完成，维度: {len(all_embeddings[0])}")
-    _log("写入 Milvus Lite...")
-
-    # 分离两个通道的嵌入向量
-    full_embeddings = all_embeddings[:len(full_texts)]
-    imaging_embeddings = all_embeddings[len(full_texts):]
-    
-    # 插入完整行通道
-    inserted_full = 0
-    if full_embeddings:
-        inserted_full = insert_data(
-            client, full_texts, full_metadatas, full_sources, 
-            full_embeddings, vector_types=["full_row"] * len(full_texts)
+        filter_expr = 'modality == "CT" and level_1 == "头颅"'
+        dense_request = AnnSearchRequest(
+            data=[samples[0]["dense_vector"]],
+            anns_field="dense_vector",
+            param={"metric_type": "COSINE", "params": {"ef": 64}},
+            limit=3,
+            expr=filter_expr,
         )
-        _log(f"完整行通道插入: {inserted_full} 条")
-    
-    # 插入影像学表现通道
-    inserted_imaging = 0
-    if imaging_embeddings:
-        inserted_imaging = insert_data(
-            client, imaging_texts, imaging_metadatas, imaging_sources,
-            imaging_embeddings, vector_types=["imaging"] * len(imaging_texts)
+        sparse_request = AnnSearchRequest(
+            data=[text_to_sparse_vector("脑出血")],
+            anns_field="sparse_vector",
+            param={"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
+            limit=3,
+            expr=filter_expr,
         )
-        _log(f"影像学表现通道插入: {inserted_imaging} 条")
+        results = client.hybrid_search(
+            collection_name=collection_name,
+            reqs=[dense_request, sparse_request],
+            ranker=RRFRanker(),
+            limit=3,
+            output_fields=["module_name", "imaging_opinion"],
+        )
+        for hit in results[0]:
+            entity = hit["entity"]
+            print(
+                entity["module_name"],
+                entity["imaging_opinion"],
+                hit["distance"],
+                flush=True,
+            )
+        return len(samples)
+    finally:
+        client.close()
 
-    total = client.query(COLLECTION_NAME, filter="", output_fields=["count(*)"])
-    total_count = len(total)
-    _log(f"本次新增总计: {inserted_full + inserted_imaging} 条")
-    _log(f"数据库总计: {total_count} 条")
-    _log(f"数据库文件: {DB_PATH}")
-    client.close()
-    _log("__DONE__", "done")
 
-
-def main():
-    default_input = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xlsx_slices")
-    parser = argparse.ArgumentParser(description="将 xlsx 切片向量化存入 Milvus Lite（支持增量）")
-    parser.add_argument("--input", type=str, default=default_input, help="切片 md 文件所在文件夹")
-    parser.add_argument("--batch-size", type=int, default=16, help="向量化批次大小")
-    parser.add_argument("--rebuild", action="store_true", help="全量重建（删除旧数据重新导入）")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="重建医疗报告Dense+Sparse混合向量库")
+    parser.add_argument("--input", default=get_markdown_dir(), help="Markdown根目录")
+    parser.add_argument("--batch-size", type=int, default=32, help="Dense向量化批次")
+    parser.add_argument("--demo", action="store_true", help="重建并插入3条模拟数据")
     args = parser.parse_args()
-
-    build_db(os.path.abspath(args.input), batch_size=args.batch_size, rebuild=args.rebuild)
+    if args.demo:
+        build_demo()
+    else:
+        build_db(args.input, args.batch_size)
 
 
 if __name__ == "__main__":

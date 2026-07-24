@@ -22,16 +22,49 @@ embeddings:
     model: bge-m3
     api_key: ""
     dimension: 1024
+    batch_size: 32
+    max_length: 8192
+    timeout: 60
 reranks:
   - name: Qwen-Qwen3-VL-Reranker-8B
     base_url: https://api.siliconflow.cn/v1/rerank
     model: Qwen/Qwen3-VL-Reranker-8B
-    api_key: ""
+    api_key: sk-rpygoxnxhkpwegwjuuackgiipnfqsrlnfhubtdcqlztgbzip
+    batch_size: 32
+    timeout: 60
+milvus:
+  uri: http://220.154.3.166:19530
+  token:
 retrieval:
   rag_top_k: 20
   rerank_top_k: 10
-  collection_name: report_slices
+  collection_name: medical_reports
   db_path: ./app/data_pipeline/milvus_lite.db
+  hnsw_m: 16
+  hnsw_ef_construction: 256
+  hnsw_ef_search: 64
+  sparse_drop_ratio_build: 0.2
+  sparse_drop_ratio_search: 0.2
+data:
+  markdown_dir: ./app/data_pipeline/output_markdown
+  standard_fields:
+    - modality
+    - level_1
+    - level_2
+    - level_3
+    - level_4
+    - module_name
+  content_fields:
+    - imaging_findings
+    - imaging_opinion
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(message)s"
+  datefmt: "%H:%M:%S"
+misc:
+  use_local_models: false
+  recreate_collection: false
+  verbose: false
 short_term_memory:
   max_rounds: 5
   decay_factor: 0.9

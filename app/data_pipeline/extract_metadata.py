@@ -1,100 +1,159 @@
-"""从 xlsx 报告模板中提取去重的元数据字段值。
-
-输出 JSON 文件，供查询改写模块使用，确保用户输入的术语
-能被标准化为数据库中实际存在的检查类型、部位、检查项目、诊断结论。
-
-用法：
-    python extract_metadata.py                          # 默认扫描 report_template/ 目录
-    python extract_metadata.py --input ./report_template
-    python extract_metadata.py --output metadata.json
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 """
-import argparse
+元数据提取 - extract_metadata.py
+================================
+
+功能：从 Markdown 文件中提取元数据信息，并导出为 JSON 格式。
+
+使用场景：
+    - 统计报告模板数量
+    - 查看元数据分布
+    - 调试数据解析问题
+    - 生成数据索引
+
+使用方式：
+    python extract_metadata.py                      # 提取所有元数据
+    python extract_metadata.py --stats               # 仅显示统计信息
+    python extract_metadata.py --sample 5            # 显示前 5 个样本
+"""
+
 import json
-import os
+import logging
+import argparse
+from pathlib import Path
+from collections import Counter
+from typing import List, Dict
 
-from openpyxl import load_workbook
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
+# 数据目录（相对于 data_pipeline）
+PIPELINE_DIR = Path(__file__).resolve().parent
+DATA_DIR = PIPELINE_DIR / "output_markdown"
 
 
-def extract_metadata(input_dir, output_path=None, progress_callback=None):
-    """从 xlsx 文件中提取去重的元数据。
+def extract_frontmatter(md_file: Path) -> Dict:
+    """提取单个 Markdown 文件的 YAML frontmatter"""
+    try:
+        content = md_file.read_text(encoding='utf-8')
+        
+        # 匹配 frontmatter
+        if not content.startswith("---"):
+            return {}
+        
+        parts = content.split("---", 2)
+        if len(parts) < 3:
+            return {}
+        
+        frontmatter_text = parts[1]
+        metadata = {}
+        
+        for line in frontmatter_text.strip().split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                metadata[key.strip()] = value.strip().strip('"').strip("'")
+        
+        # 添加文件路径
+        metadata['file_path'] = str(md_file.relative_to(PIPELINE_DIR))
+        
+        return metadata
+    except Exception as e:
+        logger.error(f"解析失败 {md_file.name}: {e}")
+        return {}
 
-    Args:
-        input_dir: xlsx 文件所在目录
-        output_path: 输出 JSON 文件路径，默认为 input_dir/metadata.json
-        progress_callback: 进度回调，接收 dict {"level": "info"|"error"|"done", "msg": str}
 
-    Returns:
-        dict: 包含 检查类型, 部位, 检查项目, 诊断结论 四个去重列表
-    """
-    def _log(msg, level="info"):
-        print(msg, flush=True)
-        if progress_callback:
-            progress_callback({"level": level, "msg": msg})
+def extract_all(data_dir: Path = None) -> List[Dict]:
+    """提取所有 Markdown 文件的元数据"""
+    data_dir = data_dir or DATA_DIR
+    
+    if not data_dir.exists():
+        logger.warning(f"数据目录不存在: {data_dir}")
+        return []
+    
+    md_files = list(data_dir.rglob("*.md"))
+    logger.info(f"找到 {len(md_files)} 个 Markdown 文件")
+    
+    metadata_list = []
+    for md_file in md_files:
+        metadata = extract_frontmatter(md_file)
+        if metadata:
+            metadata_list.append(metadata)
+    
+    logger.info(f"✅ 成功提取 {len(metadata_list)} 个文件的元数据")
+    return metadata_list
 
-    check_types = set()
-    parts = set()
-    projects = set()
-    diagnoses = set()
 
-    xlsx_files = [
-        f for f in os.listdir(input_dir)
-        if f.endswith(".xlsx") and not f.startswith("~$")
-    ]
+def print_stats(metadata_list: List[Dict]) -> None:
+    """打印统计信息"""
+    if not metadata_list:
+        logger.info("没有数据")
+        return
+    
+    # 统计各字段分布
+    modality_count = Counter(m.get('modality', '') for m in metadata_list)
+    level_1_count = Counter(m.get('level_1', '') for m in metadata_list)
+    
+    logger.info("=" * 60)
+    logger.info("📊 数据统计")
+    logger.info("=" * 60)
+    logger.info(f"总文件数: {len(metadata_list)}")
+    
+    logger.info("\n检查类型分布:")
+    for modality, count in modality_count.most_common():
+        logger.info(f"  {modality}: {count}")
+    
+    logger.info("\n部位分布（前10）:")
+    for level, count in level_1_count.most_common(10):
+        logger.info(f"  {level}: {count}")
 
-    if not xlsx_files:
-        _log(f"在 {input_dir} 中未找到 xlsx 文件", "error")
-        return None
 
-    for fname in sorted(xlsx_files):
-        fpath = os.path.join(input_dir, fname)
-        _log(f"处理: {fname}")
-        wb = load_workbook(fpath, read_only=True)
-        ws = wb.active
+def print_samples(metadata_list: List[Dict], n: int = 3) -> None:
+    """打印样本数据"""
+    if not metadata_list:
+        return
+    
+    logger.info("=" * 60)
+    logger.info(f"📋 样本数据（前 {min(n, len(metadata_list))} 个）")
+    logger.info("=" * 60)
+    
+    for i, meta in enumerate(metadata_list[:n], 1):
+        logger.info(f"\n样本 {i}:")
+        logger.info(json.dumps(meta, ensure_ascii=False, indent=2))
 
-        rows = list(ws.iter_rows(min_row=2, values_only=True))
-        for row in rows:
-            if len(row) < 4:
-                continue
-            if row[0] and str(row[0]).strip():
-                check_types.add(str(row[0]).strip())
-            if row[1] and str(row[1]).strip():
-                parts.add(str(row[1]).strip())
-            if row[2] and str(row[2]).strip():
-                projects.add(str(row[2]).strip())
-            if row[3] and str(row[3]).strip():
-                diagnoses.add(str(row[3]).strip())
 
-        wb.close()
-
-    metadata = {
-        "检查类型": sorted(check_types),
-        "部位": sorted(parts),
-        "检查项目": sorted(projects),
-        "诊断结论": sorted(diagnoses),
-    }
-
-    if output_path is None:
-        output_path = os.path.join(input_dir, "metadata.json")
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-    _log(f"提取完成:")
-    _log(f"  检查类型: {len(check_types)} 种 → {sorted(check_types)}")
-    _log(f"  部位: {len(parts)} 种 → {sorted(parts)}")
-    _log(f"  检查项目: {len(projects)} 种")
-    _log(f"  诊断结论: {len(diagnoses)} 种")
-    _log(f"输出文件: {output_path}")
-    _log("__DONE__", "done")
-
-    return metadata
+def save_json(metadata_list: List[Dict], output_path: Path = None) -> None:
+    """保存为 JSON 文件"""
+    output_path = output_path or PIPELINE_DIR / "metadata.json"
+    
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata_list, f, ensure_ascii=False, indent=2)
+    
+    logger.info(f"\n✅ 已保存到: {output_path}")
 
 
 if __name__ == "__main__":
-    default_input = os.path.join(os.path.dirname(os.path.abspath(__file__)), "report_template")
-    parser = argparse.ArgumentParser(description="从 xlsx 报告模板中提取去重的元数据字段值")
-    parser.add_argument("--input", type=str, default=default_input, help="xlsx 文件所在目录")
-    parser.add_argument("--output", type=str, default=None, help="输出 JSON 文件路径")
+    parser = argparse.ArgumentParser(description="元数据提取工具")
+    parser.add_argument("--stats", action="store_true", help="仅显示统计信息")
+    parser.add_argument("--sample", type=int, default=0, help="显示样本数量")
+    parser.add_argument("--no-save", action="store_true", help="不保存 JSON 文件")
     args = parser.parse_args()
-
-    extract_metadata(os.path.abspath(args.input), args.output)
+    
+    # 提取元数据
+    metadata_list = extract_all()
+    
+    if args.stats:
+        print_stats(metadata_list)
+    
+    if args.sample > 0:
+        print_samples(metadata_list, args.sample)
+    
+    if not args.no_save and metadata_list:
+        save_json(metadata_list)

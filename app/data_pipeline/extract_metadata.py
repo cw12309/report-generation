@@ -1,159 +1,172 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""
-元数据提取 - extract_metadata.py
-================================
+"""Build a hierarchical metadata tree from generated Markdown reports."""
 
-功能：从 Markdown 文件中提取元数据信息，并导出为 JSON 格式。
-
-使用场景：
-    - 统计报告模板数量
-    - 查看元数据分布
-    - 调试数据解析问题
-    - 生成数据索引
-
-使用方式：
-    python extract_metadata.py                      # 提取所有元数据
-    python extract_metadata.py --stats               # 仅显示统计信息
-    python extract_metadata.py --sample 5            # 显示前 5 个样本
-"""
-
+import argparse
 import json
 import logging
-import argparse
 from pathlib import Path
-from collections import Counter
-from typing import List, Dict
+from typing import Any, Dict
 
-# 配置日志
+import yaml
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
+    datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
-# 数据目录（相对于 data_pipeline）
 PIPELINE_DIR = Path(__file__).resolve().parent
 DATA_DIR = PIPELINE_DIR / "output_markdown"
+DEFAULT_OUTPUT = PIPELINE_DIR / "metadata.json"
+LEVEL_FIELDS = (
+    ("level_1", "一级目录"),
+    ("level_2", "二级目录"),
+    ("level_3", "三级目录"),
+    ("level_4", "四级目录"),
+)
 
-
-def extract_frontmatter(md_file: Path) -> Dict:
-    """提取单个 Markdown 文件的 YAML frontmatter"""
+def extract_frontmatter(md_file: Path) -> Dict[str, str]:
+    """Read YAML Front Matter without recording the Markdown file path."""
     try:
-        content = md_file.read_text(encoding='utf-8')
-        
-        # 匹配 frontmatter
+        content = md_file.read_text(encoding="utf-8")
         if not content.startswith("---"):
             return {}
-        
+
         parts = content.split("---", 2)
         if len(parts) < 3:
             return {}
-        
-        frontmatter_text = parts[1]
-        metadata = {}
-        
-        for line in frontmatter_text.strip().split('\n'):
-            if ':' in line:
-                key, value = line.split(':', 1)
-                metadata[key.strip()] = value.strip().strip('"').strip("'")
-        
-        # 添加文件路径
-        metadata['file_path'] = str(md_file.relative_to(PIPELINE_DIR))
-        
-        return metadata
-    except Exception as e:
-        logger.error(f"解析失败 {md_file.name}: {e}")
+
+        loaded = yaml.safe_load(parts[1]) or {}
+        if not isinstance(loaded, dict):
+            return {}
+        return {
+            str(key): str(value).strip()
+            for key, value in loaded.items()
+            if value is not None and str(value).strip()
+        }
+    except Exception as exc:
+        logger.error("解析失败 %s: %s", md_file.name, exc)
         return {}
 
 
-def extract_all(data_dir: Path = None) -> List[Dict]:
-    """提取所有 Markdown 文件的元数据"""
-    data_dir = data_dir or DATA_DIR
-    
-    if not data_dir.exists():
-        logger.warning(f"数据目录不存在: {data_dir}")
-        return []
-    
-    md_files = list(data_dir.rglob("*.md"))
-    logger.info(f"找到 {len(md_files)} 个 Markdown 文件")
-    
-    metadata_list = []
+def _insert_metadata(tree: Dict[str, Any], metadata: Dict[str, str]) -> None:
+    modality = metadata.get("modality", "").strip()
+    if not modality:
+        return
+
+    node = tree["检查类型"].setdefault(modality, {})
+    for field, label in LEVEL_FIELDS:
+        value = metadata.get(field, "").strip()
+        if value:
+            node = node.setdefault(label, {}).setdefault(value, {})
+
+def _sort_tree(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _sort_tree(child)
+            for key, child in sorted(value.items(), key=lambda item: item[0])
+        }
+    if isinstance(value, list):
+        return sorted(value)
+    return value
+
+
+def extract_all(data_dir: Path = None) -> Dict[str, Any]:
+    """Scan all Markdown files and return a deduplicated hierarchy tree."""
+    data_dir = Path(data_dir or DATA_DIR)
+    if not data_dir.is_dir():
+        logger.warning("数据目录不存在: %s", data_dir)
+        return {}
+
+    md_files = sorted(data_dir.rglob("*.md"))
+    logger.info("找到 %d 个 Markdown 文件", len(md_files))
+
+    tree: Dict[str, Any] = {"检查类型": {}}
+    parsed_count = 0
     for md_file in md_files:
         metadata = extract_frontmatter(md_file)
         if metadata:
-            metadata_list.append(metadata)
-    
-    logger.info(f"✅ 成功提取 {len(metadata_list)} 个文件的元数据")
-    return metadata_list
+            _insert_metadata(tree, metadata)
+            parsed_count += 1
+
+    logger.info("成功解析 %d 个 Markdown 文件", parsed_count)
+    return _sort_tree(tree)
 
 
-def print_stats(metadata_list: List[Dict]) -> None:
-    """打印统计信息"""
-    if not metadata_list:
+def _collect_values(value: Any, label: str) -> set:
+    values = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == label:
+                if isinstance(child, dict):
+                    values.update(child.keys())
+                elif isinstance(child, list):
+                    values.update(child)
+            values.update(_collect_values(child, label))
+    elif isinstance(value, list):
+        for child in value:
+            values.update(_collect_values(child, label))
+    return values
+
+
+def print_stats(metadata_tree: Dict[str, Any]) -> None:
+    """Print unique counts for every hierarchy level."""
+    if not metadata_tree:
         logger.info("没有数据")
         return
-    
-    # 统计各字段分布
-    modality_count = Counter(m.get('modality', '') for m in metadata_list)
-    level_1_count = Counter(m.get('level_1', '') for m in metadata_list)
-    
+
+    modalities = metadata_tree.get("检查类型", {})
     logger.info("=" * 60)
-    logger.info("📊 数据统计")
+    logger.info("层级元数据统计")
     logger.info("=" * 60)
-    logger.info(f"总文件数: {len(metadata_list)}")
-    
-    logger.info("\n检查类型分布:")
-    for modality, count in modality_count.most_common():
-        logger.info(f"  {modality}: {count}")
-    
-    logger.info("\n部位分布（前10）:")
-    for level, count in level_1_count.most_common(10):
-        logger.info(f"  {level}: {count}")
+    logger.info("检查类型: %d 个", len(modalities))
+    for _, label in LEVEL_FIELDS:
+        logger.info("%s: %d 个", label, len(_collect_values(metadata_tree, label)))
 
 
-def print_samples(metadata_list: List[Dict], n: int = 3) -> None:
-    """打印样本数据"""
-    if not metadata_list:
-        return
-    
-    logger.info("=" * 60)
-    logger.info(f"📋 样本数据（前 {min(n, len(metadata_list))} 个）")
-    logger.info("=" * 60)
-    
-    for i, meta in enumerate(metadata_list[:n], 1):
-        logger.info(f"\n样本 {i}:")
-        logger.info(json.dumps(meta, ensure_ascii=False, indent=2))
+def print_samples(metadata_tree: Dict[str, Any], n: int = 3) -> None:
+    """Print the first N modality subtrees."""
+    modalities = metadata_tree.get("检查类型", {})
+    samples = dict(list(modalities.items())[:n])
+    if samples:
+        logger.info(
+            "层级样本（前 %d 个检查类型）:\n%s",
+            len(samples),
+            json.dumps({"检查类型": samples}, ensure_ascii=False, indent=2),
+        )
 
 
-def save_json(metadata_list: List[Dict], output_path: Path = None) -> None:
-    """保存为 JSON 文件"""
-    output_path = output_path or PIPELINE_DIR / "metadata.json"
-    
+def save_json(
+    metadata_tree: Dict[str, Any],
+    output_path: Path = None,
+) -> None:
+    """Save the hierarchy as JSON."""
+    output_path = Path(output_path or DEFAULT_OUTPUT)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(metadata_list, f, ensure_ascii=False, indent=2)
-    
-    logger.info(f"\n✅ 已保存到: {output_path}")
+    output_path.write_text(
+        json.dumps(metadata_tree, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("已保存到: %s", output_path)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="生成报告模板层级元数据")
+    parser.add_argument("--stats", action="store_true", help="显示层级统计")
+    parser.add_argument("--sample", type=int, default=0, help="显示检查类型样本数")
+    parser.add_argument("--no-save", action="store_true", help="不保存 JSON")
+    args = parser.parse_args()
+
+    metadata_tree = extract_all()
+    if args.stats:
+        print_stats(metadata_tree)
+    if args.sample > 0:
+        print_samples(metadata_tree, args.sample)
+    if not args.no_save and metadata_tree:
+        save_json(metadata_tree)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="元数据提取工具")
-    parser.add_argument("--stats", action="store_true", help="仅显示统计信息")
-    parser.add_argument("--sample", type=int, default=0, help="显示样本数量")
-    parser.add_argument("--no-save", action="store_true", help="不保存 JSON 文件")
-    args = parser.parse_args()
-    
-    # 提取元数据
-    metadata_list = extract_all()
-    
-    if args.stats:
-        print_stats(metadata_list)
-    
-    if args.sample > 0:
-        print_samples(metadata_list, args.sample)
-    
-    if not args.no_save and metadata_list:
-        save_json(metadata_list)
+    main()

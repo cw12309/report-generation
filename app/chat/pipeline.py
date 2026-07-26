@@ -9,8 +9,9 @@ from langsmith.run_helpers import get_current_run_tree
 from memory.retriever import MemoryRetriever
 from tools.registry import ToolRegistry, ToolResult
 from prompt.builder import PromptBuilder
-from rag.query_rewrite import needs_rewrite, rewrite_query, parse_query_keywords, standardize_query
-from rag.retrieval import multi_recall
+from rag.query_rewrite import needs_rewrite, rewrite_query, standardize_query
+from rag.query_planner import build_query_plan
+from rag.retrieval import retrieve_with_fallback
 from config import get_rag_top_k, get_rerank_top_k
 
 from .llm_client import get_embedding, chat_stream, chat_with_tools, rerank_with_retry
@@ -25,38 +26,40 @@ RERANK_TOP_K = get_rerank_top_k()
 # =============================================================================
 # RAG 检索
 # =============================================================================
-def search_reports(query, top_k=RAG_TOP_K, rerank_top_k=RERANK_TOP_K, client=None, _emit=None):
-    """RAG 检索：多路召回 + Rerank，返回 (格式化文本, reranked_entities)"""
+def search_reports(
+    query,
+    top_k=RAG_TOP_K,
+    rerank_top_k=RERANK_TOP_K,
+    client=None,
+    _emit=None,
+    context=None,
+):
+    """Plan filters, run Hybrid Search with fallback, then Rerank."""
     if rerank_top_k > top_k:
         rerank_top_k = top_k
 
-    query_vec = get_embedding(query)
-    keywords = parse_query_keywords(query)
-
-    candidates, recall_details = multi_recall(
-        query_vec,
-        keywords,
+    plan = build_query_plan(query, context=context)
+    query_vec = get_embedding(plan["semantic_query"])
+    candidates, recall_details = retrieve_with_fallback(
+        plan=plan,
+        query_vector=query_vec,
         top_k=top_k,
         client=client,
-        return_details=True,
-        query=query,
     )
 
     if not candidates:
         return "未检索到相关报告。", []
 
     if _emit:
-        vec_results = recall_details.get("vector", [])
-        meta_results = recall_details.get("metadata", [])
-        kw_results = recall_details.get("keyword", [])
-        total_before = len(vec_results) + len(meta_results) + len(kw_results)
+        _emit("query_plan", plan)
         _emit("recall", {
-            "vector_count": len(vec_results),
-            "metadata_count": len(meta_results),
-            "keyword_count": len(kw_results),
-            "total_before": total_before,
+            "vector_count": len(candidates),
+            "metadata_count": 0,
+            "keyword_count": len(candidates),
+            "total_before": len(candidates),
             "total_after": len(candidates),
-            "dedup": total_before - len(candidates),
+            "dedup": 0,
+            "stages": recall_details.get("stages", []),
         })
 
     documents = [e["text"] for e in candidates]
@@ -127,7 +130,12 @@ def _build_tool_registry(
                            _emit=_emit, debug=debug, caller=caller)
 
     def _search_reports_fn(query, _emit=None):
-        return search_reports(query, client=client, _emit=_emit)
+        return search_reports(
+            query,
+            client=client,
+            _emit=_emit,
+            context=entity_tracker.slots if entity_tracker else None,
+        )
 
     rag_handler = create_rag_search_handler(
         chat_fn=_chat_fn,

@@ -157,6 +157,9 @@ def create_collection(client: MilvusClient) -> None:
     indexes = client.prepare_index_params()
     indexes.add_index(field_name="modality", index_type="INVERTED")
     indexes.add_index(field_name="level_1", index_type="INVERTED")
+    indexes.add_index(field_name="level_2", index_type="INVERTED")
+    indexes.add_index(field_name="level_3", index_type="INVERTED")
+    indexes.add_index(field_name="level_4", index_type="INVERTED")
     indexes.add_index(
         field_name="dense_vector",
         index_type="HNSW",

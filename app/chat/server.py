@@ -379,7 +379,11 @@ def web_main(port=8000):
                 _emit_log({"level": "info", "msg": "正在从 Markdown 提取元数据..."})
                 metadata = extract_all(Path(get_markdown_dir()))
                 save_json(metadata, Path(metadata_path))
-                _emit_log({"level": "done", "msg": f"元数据提取完成，共 {len(metadata)} 条"})
+                modality_count = len(metadata.get("检查类型", {}))
+                _emit_log({
+                    "level": "done",
+                    "msg": f"层级元数据提取完成，共 {modality_count} 个检查类型",
+                })
                 event_queue.put_nowait("[DONE]")
 
             loop.run_in_executor(None, run)

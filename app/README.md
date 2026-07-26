@@ -95,7 +95,12 @@ app/
 │   ├── refine_tool.py     # refine_report — 重写报告风格
 │   └── __init__.py
 ├── rag/
-│   ├── retrieval.py       # 多路召回模块（向量检索 + 元数据过滤 + 关键词检索）
+│   ├── query_planner.py   # 自然语言 → modality/level_1～4 结构化检索计划
+│   ├── metadata_navigator.py # 层级候选披露和合法值校验
+│   ├── sparse_vector.py   # 建库与检索共用的 Sparse 词面向量
+│   ├── retrieval.py       # 标量过滤 + Dense/Sparse + RRF + 动态降级
+│   ├── rerank.py          # 外部 Rerank 精排
+│   └── README.md          # RAG 检索流程说明
 │   ├── query_rewrite.py   # 查询改写模块（模糊检测 + 术语标准化 + 关键词解析 + LLM 改写）
 │   ├── rerank.py          # Rerank 精排模块（SiliconFlow API）
 │   └── prompt.md          # 影像报告结构化规范（实际 prompt 模板在 app/prompt/ 目录）
@@ -107,12 +112,12 @@ app/
 │   ├── data/              # 长期记忆数据库文件（ltm.db）
 │   └── README.md          # 记忆模块说明
 ├── data_pipeline/
-│   ├── build_vector_db.py # 向量数据库构建（支持增量/全量重建）
-│   ├── extract_metadata.py# 从 xlsx 提取标准术语（生成 metadata.json）
-│   ├── xlsx_slicer.py     # xlsx 按行切片工具
-│   ├── milvus_lite.db/    # Milvus Lite 向量数据库（运行时生成）
-│   ├── xlsx_slices/       # 切片后的 Markdown 文件
-│   └── report_template/   # 原始 xlsx 报告模板 + metadata.json
+│   ├── process_reports.py # Excel 模板整理为层级 Markdown
+│   ├── build_vector_db.py # Dense + Sparse Milvus 知识库全量构建
+│   ├── extract_metadata.py# 汇总 modality 与 level_1～4（生成 metadata.json）
+│   ├── README.md          # 数据管线、Schema 与运行说明
+│   ├── output_markdown/   # 生成的层级 Markdown（已忽略）
+│   └── report_template/   # 原始 xlsx 报告模板（已忽略）
 ├── config.py              # 配置读取器（config.yml → 各模块）
 ├── prompt/                # 系统提示词模板（各阶段 LLM prompt）
 │   ├── builder.py         # ★ PromptBuilder — 统一 Prompt 拼装器（LTM + Entity + 模板 + Last Report）
@@ -182,19 +187,19 @@ python app/chat/main.py
 | 操作       | 说明                                                                                             | 对应 API                        |
 | ---------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
 | 上传模板   | 上传 `.xlsx` 格式的影像报告模板文件                                                              | `POST /api/kb/upload`           |
-| 自动切片   | 上传后自动将 xlsx 每一行按列头切分为独立 Markdown 文件，命名格式为"检查类型*部位*检查项目\_诊断" | `xlsx_slicer.py`                |
-| 提取元数据 | 从 xlsx 模板中提取标准术语（检查类型、部位、检查项目、诊断结论），生成 `metadata.json`           | `POST /api/kb/extract-metadata` |
-| 构建向量库 | 将切片后的 Markdown 文件向量化并入库，支持增量模式和全量重建                                     | `POST /api/kb/build`            |
-| 查看状态   | 查看当前向量库条目数、切片文件数、元数据状态                                                     | `GET /api/kb/status`            |
-| 查看文件   | 列出所有已上传的报告模板及其切片数量                                                             | `GET /api/kb/files`             |
+| 整理模板   | 将 xlsx 数据按标准层级整理为独立 Markdown 报告                           | `process_reports.py`             |
+| 提取元数据 | 从 Markdown 汇总 `modality → level_1～4` 目录树，生成 `metadata.json` | `POST /api/kb/extract-metadata`  |
+| 构建向量库 | 将 Markdown 转为 Dense + Sparse 向量并全量重建远程 Milvus Collection  | `POST /api/kb/build`             |
+| 查看状态   | 查看当前向量库条目数、Markdown 文件数和元数据状态                       | `GET /api/kb/status`             |
+| 查看文件   | 列出已上传的报告模板                                                     | `GET /api/kb/files`              |
 
 ```
 上传 xlsx
    │
    ▼
 ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
-│ 自动切片     │ →  │ 提取元数据    │ →  │ 构建向量库    │
-│ 按行转 .md  │    │ metadata.json │    │ bge-m3 向量化 │
+│ 整理模板     │ →  │ 提取元数据    │ →  │ 构建向量库       │
+│ 层级化 .md   │    │ modality/L1   │    │ Dense + Sparse   │
 └─────────────┘    └──────────────┘    └──────────────┘
 ```
 
@@ -504,36 +509,284 @@ case "ambiguous":
 
 ## 向量数据库 Schema
 
-集合名：`report_slices`（Milvus Lite）
+集合名：`medical_reports`（远程 Milvus）
 
-| 字段       | 类型               | 说明             |
-| ---------- | ------------------ | ---------------- |
-| `id`       | INT64              | 主键，自增       |
-| `vector`   | FLOAT_VECTOR(1024) | bge-m3 向量      |
-| `text`     | VARCHAR(4096)      | 切片自然语言文本 |
-| `source`   | VARCHAR(512)       | 来源文件名       |
-| `检查类型` | VARCHAR(256)       | 如 CT、MRI       |
-| `部位`     | VARCHAR(256)       | 检查部位         |
-| `检查项目` | VARCHAR(256)       | 检查项目名称     |
-| `诊断结论` | VARCHAR(1024)      | 诊断结论         |
+每个 Markdown 报告对应一条 Milvus Entity。标量字段、报告正文、Dense
+向量和 Sparse 向量存放在同一个 Collection 中。
 
-索引：IVF_FLAT，COSINE 相似度
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | INT64 | Milvus 自动生成的主键 |
+| `modality` | VARCHAR(32) | 检查类型 |
+| `level_1` | VARCHAR(64) | 一级目录 |
+| `level_2` | VARCHAR(64) | 二级目录 |
+| `level_3` | VARCHAR(64) | 三级目录 |
+| `level_4` | VARCHAR(64) | 四级目录 |
+| `module_name` | VARCHAR(128) | 模块名称 |
+| `imaging_findings` | VARCHAR(4096) | 影像学表现 |
+| `imaging_opinion` | VARCHAR(4096) | 影像学意见 |
+| `combined_text` | VARCHAR(8192) | 元数据与报告正文的组合检索文本 |
+| `dense_vector` | FLOAT_VECTOR(1024) | BGE-M3 语义向量 |
+| `sparse_vector` | SPARSE_FLOAT_VECTOR | 词面稀疏向量 |
+
+索引：
+
+| 字段 | 索引 | 参数 |
+|---|---|---|
+| `modality` | INVERTED | 标量过滤 |
+| `level_1` | INVERTED | 标量过滤 |
+| `level_2` | INVERTED | 标量过滤 |
+| `level_3` | INVERTED | 标量过滤 |
+| `level_4` | INVERTED | 标量过滤 |
+| `dense_vector` | HNSW | COSINE, M=16, efConstruction=256 |
+| `sparse_vector` | SPARSE_INVERTED_INDEX | IP, drop_ratio_build=0.2 |
+
+检索时先从问题和对话历史中规划 `modality`、`level_1～4`，并依据
+`metadata.json` 校验层级关系；随后为 Dense 和 Sparse 分别构造
+`AnnSearchRequest`，两路请求使用相同的标量过滤条件，通过 `RRFRanker`
+完成粗排。严格条件召回不足时按 `level_4 → level_1` 逐层放宽，最后交给
+外部 Rerank 模型精排。
+
+## RAG 检索架构
+
+`app/rag` 负责把自然语言问题转换为经过元数据校验的检索计划，并在
+Milvus 中完成标量过滤、Dense/Sparse 双路召回、RRF 粗排和动态降级；
+`chat/pipeline.py` 负责串联该流程，并对粗排候选执行外部 Rerank 精排。
+
+```text
+用户问题 + Entity Tracker 历史槽位
+                  │
+                  ▼
+           Query Planner
+      modality + level_1～4
+                  │
+                  ▼
+        Metadata Navigator
+      层级候选披露 + 合法值校验
+                  │
+                  ▼
+          最严格的标量过滤
+             ┌────┴────┐
+             ▼         ▼
+       Dense HNSW   Sparse Inverted
+          COSINE          IP
+             └────┬────┘
+                  ▼
+          Milvus RRFRanker
+             粗排 Top-K
+                  │
+        候选不足时逐级放宽
+                  │
+                  ▼
+          外部 Rerank 精排
+             最终 Top-K
+```
+
+### 层级元数据导航
+
+`extract_metadata.py` 生成的 `metadata.json` 只保存目录关系，不保存模块名称
+或 Markdown 文件路径：
+
+```json
+{
+  "检查类型": {
+    "CT": {
+      "一级目录": {
+        "头颅": {
+          "三级目录": {
+            "颅脑平扫": {}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+空层级会被跳过，因此 `level_2` 为空时，三级目录可以直接位于一级目录
+节点下。`MetadataNavigator` 会把目录树展开为合法路径集合，用于获取候选
+检查类型和目录值、匹配当前问题中的最长合法值，以及校验 LLM 输出。
+
+### 结构化 Query Planner
+
+`build_query_plan()` 按以下优先级确定检索字段：
+
+1. 当前问题中明确出现且存在于元数据中的值。
+2. Entity Tracker 历史槽位中的检查类型和部位。
+3. LLM 从 Metadata Navigator 提供的候选值中选择的值。
+
+LLM 不能自由生成目录名称，不属于合法层级路径的值会被丢弃。规划结果示例：
+
+```json
+{
+  "query": "CT头颅颅脑平扫脑出血",
+  "semantic_query": "CT头颅颅脑平扫脑出血",
+  "keyword_query": "脑出血",
+  "diagnosis_query": "脑出血",
+  "filters": {
+    "modality": "CT",
+    "level_1": "头颅",
+    "level_3": "颅脑平扫"
+  },
+  "slots": {
+    "modality": {
+      "value": "CT",
+      "confidence": 1.0,
+      "source": "current_query"
+    },
+    "level_1": {
+      "value": "头颅",
+      "confidence": 1.0,
+      "source": "current_query"
+    },
+    "level_3": {
+      "value": "颅脑平扫",
+      "confidence": 1.0,
+      "source": "current_query"
+    }
+  }
+}
+```
+
+`semantic_query` 保留完整自然语言，用于生成 Dense 向量；
+`keyword_query` 会移除已经识别的检查类型和层级名称，用于生成 Sparse
+词面向量。
+
+### 标量过滤与双路召回
+
+只有经过元数据校验的字段才会进入 Milvus 过滤表达式：
+
+```text
+modality == "CT"
+and level_1 == "头颅"
+and level_3 == "颅脑平扫"
+```
+
+Dense 和 Sparse 的 `AnnSearchRequest` 使用相同的标量过滤表达式：
+
+```python
+dense_request = AnnSearchRequest(
+    data=[query_vector],
+    anns_field="dense_vector",
+    param={"metric_type": "COSINE", "params": {"ef": 64}},
+    expr=filter_expr,
+    limit=top_k,
+)
+
+sparse_request = AnnSearchRequest(
+    data=[text_to_sparse_vector(keyword_query)],
+    anns_field="sparse_vector",
+    param={"metric_type": "IP", "params": {"drop_ratio_search": 0.2}},
+    expr=filter_expr,
+    limit=top_k,
+)
+```
+
+Milvus 使用 `RRFRanker()` 融合语义排名和关键词排名，得到粗排候选。
+
+### 动态降级
+
+严格过滤范围内的累计候选不足时，按照目录深度逐级放宽：
+
+```text
+modality + level_1 + level_2 + level_3 + level_4
+modality + level_1 + level_2 + level_3
+modality + level_1 + level_2
+modality + level_1
+modality
+```
+
+目录降级不会移除 `modality`。严格阶段的结果优先保留，后续阶段按 Milvus
+实体 `id` 去重。每个阶段都会记录实际过滤条件、过滤表达式和召回数量。
+
+### Rerank 与运行事件
+
+RRF 候选返回 `chat/pipeline.py` 后，外部 Rerank 服务根据
+`combined_text` 重新评分并选出最终 Top-K。Rerank 不再次访问 Milvus；
+服务异常时会退化为直接使用 RRF 粗排结果。
+
+检索过程向前端发送以下事件：
+
+| 事件 | 内容 |
+|---|---|
+| `query_plan` | 结构化检索计划、字段置信度和来源 |
+| `recall` | 候选数量及所有动态降级阶段 |
+| `rerank` | 精排分数、来源和诊断名称 |
+
+### Collection 加载校验
+
+每次召回前，`ensure_collection_loaded()` 会读取 Collection Load State。
+Collection 未加载时主动调用 `load_collection()` 并再次校验；仍未加载则
+抛出明确错误。因此 Milvus 重启或 Collection 被 Attu Release 后，下一次
+检索会尝试恢复其加载状态。
 
 ## 离线工具脚本
+
+### 生成 Markdown
+
+将 `app/data_pipeline/report_template` 中的 xlsx 模板整理到
+`app/data_pipeline/output_markdown`：
+
+```bash
+python app/data_pipeline/process_reports.py
+```
+
+输出目录按照 `modality / level_1 / level_2 / level_3 / level_4` 构建，
+`module_name` 用作 Markdown 文件名。同目录下模块名称和内容均相同时跳过，
+名称相同但内容不同时生成 `_1`、`_2` 等编号文件。
 
 ### 构建向量数据库
 
 ```bash
-python app/data_pipeline/build_vector_db.py                           # 增量模式
-python app/data_pipeline/build_vector_db.py --rebuild                 # 全量重建
-python app/data_pipeline/build_vector_db.py --input ./xlsx_slices --batch-size 8
+python app/data_pipeline/build_vector_db.py
+python app/data_pipeline/build_vector_db.py --batch-size 16
 ```
 
-### 提取标准术语
+当前采用全量重建：执行时会删除已存在的 `medical_reports` Collection，
+按最新 Schema 重建，然后导入全部 Markdown。向量化过程显示百分比：
+
+```text
+Dense向量化: 640/2800 (22.9%)
+Sparse向量化: 700/2800 (25.0%)
+```
+
+模拟建表、插入三条报告并执行 Hybrid Search：
+
+```bash
+python app/data_pipeline/build_vector_db.py --demo
+```
+
+注意：`--demo` 同样会删除 `medical_reports`，不要在正式知识库上随意执行。
+
+### 提取层级元数据
 
 ```bash
 python app/data_pipeline/extract_metadata.py
+python app/data_pipeline/extract_metadata.py --stats
+python app/data_pipeline/extract_metadata.py --sample 3
 ```
+
+默认生成 `app/data_pipeline/metadata.json`，记录检查类型和完整目录层级，
+不记录 Markdown 文件名或模块名称：
+
+```json
+{
+  "检查类型": {
+    "CT": {
+      "一级目录": {
+        "头颅": {
+          "三级目录": {
+            "颅脑平扫": {}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+`report_template`、`output_markdown`、`metadata.json` 和报告整理结果均已
+加入 `.gitignore`。
 
 ### 检索评估
 
@@ -555,14 +808,14 @@ python app/test/eval_rerank_compare.py -n 50 -k 10 -r 5    # 抽 50 条，向量
 | ------------- | ----------------------- | -------------------------- |
 | Web 框架      | FastAPI + uvicorn       | SSE 流式推送               |
 | 前端          | 原生 HTML/CSS/JS        | 无框架依赖                 |
-| 向量数据库    | Milvus Lite (pymilvus)  | 轻量级本地向量库           |
+| 向量数据库    | 远程 Milvus (pymilvus)  | Dense + Sparse 混合检索    |
 | Embedding     | bge-m3 (1024 维)        | 本地部署，OpenAI 兼容 API  |
 | Rerank        | Qwen3-VL-Reranker-8B    | SiliconFlow 云端 API       |
 | LLM 生成/改写 | Qwen (qwen36-27b)       | 本地部署，OpenAI SDK 调用  |
 | 配置管理      | config.yml + PyYAML     | 环境变量自动覆盖           |
 | 短期记忆      | 内存 OrderedDict        | 轮次淘汰 + 自动摘要        |
 | 会话持久化    | SQLite (Python sqlite3) | 会话数据自动保存，断线恢复 |
-| 向量计算      | NumPy                   | 余弦相似度排序             |
+| 向量检索      | HNSW + Sparse Inverted  | COSINE/IP + RRF 融合       |
 | 可观测性      | LangSmith               | LLM 调用链路、Token 监控   |
 
 ## 会话持久化

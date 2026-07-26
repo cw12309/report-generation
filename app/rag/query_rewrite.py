@@ -47,8 +47,49 @@ def _load_metadata():
     """
     if os.path.exists(METADATA_PATH):
         with open(METADATA_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            metadata = json.load(f)
+            if isinstance(metadata.get("检查类型"), dict):
+                return _flatten_metadata_tree(metadata)
+            return metadata
     return {}
+
+
+def _flatten_metadata_tree(metadata):
+    """Convert hierarchical metadata into the flat term lists used here."""
+    flattened = {
+        "检查类型": sorted(metadata.get("检查类型", {}).keys()),
+        "部位": [],
+        "检查项目": [],
+        "诊断结论": [],
+    }
+    collected = {
+        "一级目录": set(),
+        "二级目录": set(),
+        "三级目录": set(),
+        "四级目录": set(),
+    }
+
+    def visit(node):
+        if isinstance(node, dict):
+            for key, child in node.items():
+                if key in collected:
+                    if isinstance(child, dict):
+                        collected[key].update(child.keys())
+                    elif isinstance(child, list):
+                        collected[key].update(child)
+                visit(child)
+        elif isinstance(node, list):
+            for child in node:
+                visit(child)
+
+    visit(metadata)
+    flattened["部位"] = sorted(collected["一级目录"])
+    flattened["检查项目"] = sorted(
+        collected["二级目录"]
+        | collected["三级目录"]
+        | collected["四级目录"]
+    )
+    return flattened
 
 
 _METADATA = _load_metadata()

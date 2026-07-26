@@ -20,7 +20,7 @@ output_markdown/**/*.md
 extract_metadata.py    build_vector_db.py
         |                      |
         v                      v
-output_metadata.json   Milvus: medical_reports
+metadata.json          Milvus: medical_reports
 ```
 
 ## 目录说明
@@ -66,7 +66,7 @@ modality / level_1 / level_2 / level_3 / level_4
 
 ## 2. 提取元数据
 
-从 `output_markdown` 中所有 Markdown 的 YAML Front Matter 提取元数据：
+从 `output_markdown` 中所有 Markdown 的 YAML Front Matter 汇总目录层级：
 
 ```powershell
 python app/data_pipeline/extract_metadata.py
@@ -75,8 +75,20 @@ python app/data_pipeline/extract_metadata.py
 默认输出：
 
 ```text
-app/data_pipeline/output_metadata.json
+app/data_pipeline/metadata.json
 ```
+
+JSON 记录检查类型及完整目录层级，不记录 Markdown 文件路径：
+
+```text
+检查类型
+└── 一级目录
+    └── 二级目录
+        └── 三级目录
+            └── 四级目录
+```
+
+空层级会跳过。模块名称和 Markdown 文件路径不会写入该文件。
 
 常用参数：
 
@@ -156,6 +168,9 @@ medical_reports
 | --------------- | --------------------- | -------------------------------- |
 | `modality`      | INVERTED              | 标量过滤                         |
 | `level_1`       | INVERTED              | 标量过滤                         |
+| `level_2`       | INVERTED              | 标量过滤                         |
+| `level_3`       | INVERTED              | 标量过滤                         |
+| `level_4`       | INVERTED              | 标量过滤                         |
 | `dense_vector`  | HNSW                  | COSINE, M=16, efConstruction=256 |
 | `sparse_vector` | SPARSE_INVERTED_INDEX | IP, drop_ratio_build=0.2         |
 

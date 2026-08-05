@@ -19,7 +19,13 @@ LEVEL_FIELDS = tuple(FIELD_LABELS)
 class MetadataNavigator:
     """Load hierarchy JSON and expose progressively constrained candidates."""
 
-    def __init__(self, metadata_path: Optional[str] = None):
+    def __init__(self, metadata_path: Optional[str] = None,
+                 metadata_trees: Optional[Iterable[Dict]] = None):
+        if metadata_trees is not None:
+            self.metadata_path = None
+            self.tree = self.merge_trees(metadata_trees)
+            self.paths = self._flatten_paths()
+            return
         configured = Path(metadata_path or get_metadata_path())
         fallback = Path(__file__).resolve().parents[1] / "data_pipeline" / "metadata.json"
         self.metadata_path = configured
@@ -30,6 +36,30 @@ class MetadataNavigator:
         if not self.tree.get("检查类型"):
             self.tree = {"检查类型": {}}
         self.paths = self._flatten_paths()
+
+    @classmethod
+    def from_knowledge_bases(cls, knowledge_bases: Iterable[Dict]):
+        return cls(metadata_trees=[
+            kb.get("metadata_tree", {}) for kb in knowledge_bases
+            if kb.get("status") == "active"
+        ])
+
+    @staticmethod
+    def merge_trees(trees: Iterable[Dict]) -> Dict:
+        """Merge selected KB trees without mutating their SQLite payloads."""
+        merged: Dict = {"检查类型": {}}
+
+        def merge_node(target: Dict, source: Dict) -> None:
+            for key, value in source.items():
+                if isinstance(value, dict):
+                    merge_node(target.setdefault(key, {}), value)
+                else:
+                    target[key] = value
+
+        for tree in trees:
+            if isinstance(tree, dict):
+                merge_node(merged, tree)
+        return merged
 
     @staticmethod
     def _read_tree(path: Path) -> Dict:

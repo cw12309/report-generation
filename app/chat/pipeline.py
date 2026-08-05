@@ -12,6 +12,7 @@ from prompt.builder import PromptBuilder
 from rag.query_rewrite import needs_rewrite, rewrite_query, standardize_query
 from rag.query_planner import build_query_plan
 from rag.retrieval import retrieve_with_fallback
+from rag.metadata_navigator import MetadataNavigator
 from config import get_rag_top_k, get_rerank_top_k
 
 from .llm_client import get_embedding, chat_stream, chat_with_tools, rerank_with_retry
@@ -33,18 +34,25 @@ def search_reports(
     client=None,
     _emit=None,
     context=None,
+    selected_kbs=None,
+    knowledge_bases=None,
 ):
     """Plan filters, run Hybrid Search with fallback, then Rerank."""
     if rerank_top_k > top_k:
         rerank_top_k = top_k
 
-    plan = build_query_plan(query, context=context)
+    navigator = (
+        MetadataNavigator.from_knowledge_bases(knowledge_bases)
+        if knowledge_bases is not None else MetadataNavigator()
+    )
+    plan = build_query_plan(query, context=context, navigator=navigator)
     query_vec = get_embedding(plan["semantic_query"])
     candidates, recall_details = retrieve_with_fallback(
         plan=plan,
         query_vector=query_vec,
         top_k=top_k,
         client=client,
+        selected_kbs=selected_kbs,
     )
 
     if not candidates:
@@ -103,7 +111,8 @@ def search_reports(
 # 工具注册
 # =============================================================================
 def _build_tool_registry(
-    ltm, entity_tracker, client, last_report, _emit, selected_diagnosis=None, last_ambiguity=None,
+    ltm, entity_tracker, client, last_report, _emit, selected_diagnosis=None,
+    last_ambiguity=None, selected_kbs=None, knowledge_bases=None,
 ):
     """构建并注册工具到 ToolRegistry。
 
@@ -135,6 +144,8 @@ def _build_tool_registry(
             client=client,
             _emit=_emit,
             context=entity_tracker.slots if entity_tracker else None,
+            selected_kbs=selected_kbs,
+            knowledge_bases=knowledge_bases,
         )
 
     rag_handler = create_rag_search_handler(
@@ -173,7 +184,9 @@ def _build_tool_registry(
 # 主流程：run_pipeline
 # =============================================================================
 @traceable(run_type="chain", name="Agent_Main_Pipeline")
-async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last_report, _emit, selected_diagnosis=None, last_ambiguity=None):
+async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last_report,
+                       _emit, selected_diagnosis=None, last_ambiguity=None,
+                       selected_kbs=None, knowledge_bases=None):
     """Tool Calling 架构主流程
 
     记忆模块集成点：
@@ -298,7 +311,11 @@ async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last
 
     # ── Phase 2: Tool Calling 主循环 ──
     # 构建工具注册中心
-    registry = _build_tool_registry(ltm, entity_tracker, client, last_report, _emit, selected_diagnosis=selected_diagnosis, last_ambiguity=last_ambiguity)
+    registry = _build_tool_registry(
+        ltm, entity_tracker, client, last_report, _emit,
+        selected_diagnosis=selected_diagnosis, last_ambiguity=last_ambiguity,
+        selected_kbs=selected_kbs, knowledge_bases=knowledge_bases,
+    )
     tools_schema = registry.get_tools_schema()
     logger.info(f"已注册工具: {list(registry._tools.keys())}")
 

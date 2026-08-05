@@ -6,7 +6,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import yaml
 
@@ -73,7 +73,7 @@ def _sort_tree(value: Any) -> Any:
     return value
 
 
-def extract_all(data_dir: Path = None) -> Dict[str, Any]:
+def extract_all(data_dir: Path = None, kb_id: Optional[str] = None) -> Dict[str, Any]:
     """Scan all Markdown files and return a deduplicated hierarchy tree."""
     data_dir = Path(data_dir or DATA_DIR)
     if not data_dir.is_dir():
@@ -87,7 +87,7 @@ def extract_all(data_dir: Path = None) -> Dict[str, Any]:
     parsed_count = 0
     for md_file in md_files:
         metadata = extract_frontmatter(md_file)
-        if metadata:
+        if metadata and (not kb_id or metadata.get("kb_id") == kb_id):
             _insert_metadata(tree, metadata)
             parsed_count += 1
 
@@ -141,9 +141,13 @@ def print_samples(metadata_tree: Dict[str, Any], n: int = 3) -> None:
 def save_json(
     metadata_tree: Dict[str, Any],
     output_path: Path = None,
+    kb_id: Optional[str] = None,
 ) -> None:
     """Save the hierarchy as JSON."""
-    output_path = Path(output_path or DEFAULT_OUTPUT)
+    output_path = Path(
+        output_path
+        or (PIPELINE_DIR / f"metadata_{kb_id}.json" if kb_id else DEFAULT_OUTPUT)
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(metadata_tree, ensure_ascii=False, indent=2),

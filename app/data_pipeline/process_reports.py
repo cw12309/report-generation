@@ -5,6 +5,7 @@
 将Excel文件转换为层级文件夹结构，并生成Markdown文件
 """
 
+import argparse
 import pandas as pd
 import os
 import re
@@ -105,10 +106,12 @@ def create_folder_structure(base_path: Path, data: Dict) -> Path:
     return current_path
 
 
-def create_markdown_content(data: Dict) -> str:
+def create_markdown_content(data: Dict, kb_id: str = "") -> str:
     """生成Markdown文件内容"""
     # YAML Frontmatter
     frontmatter = "---\n"
+    if kb_id:
+        frontmatter += f"kb_id: {kb_id}\n"
     for field in STANDARD_FIELDS:
         value = data.get(field, '')
         # 转义YAML中的特殊字符
@@ -135,7 +138,25 @@ def create_markdown_content(data: Dict) -> str:
     return content
 
 
-def process_excel_file(file_path: str, base_output_path: Path, filename_counter: Dict, content_cache: Dict, diff_records: List) -> Dict:
+def create_combined_text(data: Dict) -> str:
+    """生成用于原文展示和向量化的统一切片文本。"""
+    findings = data.get("影像学表现", "")
+    opinion = data.get("影像学意见", "")
+    return "\n".join(filter(None, [
+        f"检查类型：{data.get('modality', '')}",
+        f"一级目录：{data.get('level_1', '')}",
+        f"二级目录：{data.get('level_2', '')}",
+        f"三级目录：{data.get('level_3', '')}",
+        f"四级目录：{data.get('level_4', '')}",
+        f"模块名称：{data.get('module_name', '')}",
+        f"影像学表现：{findings}" if findings else "",
+        f"影像学意见：{opinion}" if opinion else "",
+    ]))
+
+
+def process_excel_file(file_path: str, base_output_path: Path, filename_counter: Dict,
+                       content_cache: Dict, diff_records: List,
+                       kb_id: str = "") -> Dict:
     """处理单个Excel文件
     
     Args:
@@ -151,7 +172,8 @@ def process_excel_file(file_path: str, base_output_path: Path, filename_counter:
         'processed_rows': 0,
         'skipped_duplicates': 0,
         'different_content': 0,
-        'errors': []
+        'errors': [],
+        'chunks': [],
     }
     
     try:
@@ -238,10 +260,25 @@ def process_excel_file(file_path: str, base_output_path: Path, filename_counter:
                         md_path = folder_path / md_filename
                         
                         # 生成并保存Markdown内容
-                        md_content = create_markdown_content(normalized_data)
+                        md_content = create_markdown_content(normalized_data, kb_id=kb_id)
                         
                         with open(md_path, 'w', encoding='utf-8') as f:
                             f.write(md_content)
+
+                        stats['chunks'].append({
+                            'source_file': Path(file_path).name,
+                            'sheet_name': str(sheet_name),
+                            'source_row': int(idx + 2),
+                            'modality': normalized_data.get('modality', ''),
+                            'level_1': normalized_data.get('level_1', ''),
+                            'level_2': normalized_data.get('level_2', ''),
+                            'level_3': normalized_data.get('level_3', ''),
+                            'level_4': normalized_data.get('level_4', ''),
+                            'module_name': normalized_data.get('module_name', ''),
+                            'imaging_findings': imaging_findings,
+                            'imaging_opinion': imaging_opinion,
+                            'combined_text': create_combined_text(normalized_data),
+                        })
                         
                         stats['processed_rows'] += 1
                     
@@ -255,6 +292,41 @@ def process_excel_file(file_path: str, base_output_path: Path, filename_counter:
         stats['errors'].append(f"文件读取错误: {str(e)}")
     
     return stats
+
+
+def process_uploaded_excel(file_path: str, base_output_path: Path, kb_id: str) -> Dict:
+    """Process one upload into an isolated KB directory."""
+    return process_uploaded_excels([file_path], base_output_path, kb_id)
+
+
+def process_uploaded_excels(file_paths: List[str], base_output_path: Path, kb_id: str) -> Dict:
+    """Process multiple Excel files into one isolated KB directory."""
+    if not kb_id or len(kb_id) > 64:
+        raise ValueError("kb_id 必须是 1-64 个字符")
+    if not file_paths:
+        raise ValueError("至少需要一个 Excel 文件")
+    base_output_path = Path(base_output_path) / kb_id
+    base_output_path.mkdir(parents=True, exist_ok=True)
+    filename_counter, content_cache, diff_records = {}, {}, []
+    all_stats = []
+    for file_path in file_paths:
+        all_stats.append(process_excel_file(
+            file_path, base_output_path, filename_counter, content_cache,
+            diff_records, kb_id=kb_id,
+        ))
+    chunks = [chunk for stats in all_stats for chunk in stats['chunks']]
+    for chunk_index, chunk in enumerate(chunks, start=1):
+        chunk['chunk_index'] = chunk_index
+        chunk['chunk_id'] = f"{kb_id}:{chunk_index:08d}"
+    return {
+        "files": len(all_stats),
+        "total_rows": sum(item["total_rows"] for item in all_stats),
+        "processed_rows": sum(item["processed_rows"] for item in all_stats),
+        "skipped_duplicates": sum(item["skipped_duplicates"] for item in all_stats),
+        "different_content": sum(item["different_content"] for item in all_stats),
+        "errors": [error for item in all_stats for error in item["errors"]],
+        "chunks": chunks,
+    }
 
 
 def check_empty_modality(input_dir: Path, xlsx_files: List[str]):
@@ -501,6 +573,20 @@ def analyze_output(output_dir: Path) -> str:
 
 def main():
     """主函数"""
+    parser = argparse.ArgumentParser(description="将 Excel 报告模板切片为带 kb_id 的 Markdown")
+    parser.add_argument("--input-file", help="单个 Excel 文件路径")
+    parser.add_argument("--output", help="Markdown 根目录，默认 output_markdown")
+    parser.add_argument("--kb-id", help="逻辑知识库 ID（建议使用 UUID）")
+    args = parser.parse_args()
+
+    if args.input_file:
+        if not args.kb_id:
+            parser.error("--input-file 必须同时提供 --kb-id")
+        output_dir = Path(args.output or (Path(__file__).resolve().parent / "output_markdown"))
+        stats = process_uploaded_excel(args.input_file, output_dir, args.kb_id)
+        print(f"已生成知识库 {args.kb_id} 的 Markdown: {stats['processed_rows']} 条")
+        return
+
     # 输入输出路径
     # 以脚本所在的 data_pipeline 目录为根目录，确保从任意工作目录运行都使用同一组输入输出。
     pipeline_dir = Path(__file__).resolve().parent

@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     query: str = Field(..., description="用户输入内容")
     session_id: str = Field(default="default", description="会话 ID")
     selected_diagnosis: Optional[str] = Field(default=None, description="选择的诊断（歧义场景）")
+    selected_kbs: List[str] = Field(default_factory=list, description="本轮检索的知识库 ID")
 
 
 class ConfigSaveRequest(BaseModel):
@@ -30,6 +31,25 @@ class KBBuildRequest(BaseModel):
     """构建知识库请求"""
     rebuild: bool = Field(default=False, description="是否重建（清空现有数据）")
     batch_size: int = Field(default=16, description="批次大小")
+    kb_id: str = Field(..., description="要增量写入的知识库 ID")
+
+
+class KnowledgeBaseInfo(BaseModel):
+    kb_id: str
+    kb_name: str
+    created_at: Optional[str] = None
+    status: str
+    progress: int = Field(default=0, ge=0, le=100)
+
+
+class KBUploadResponse(BaseModel):
+    knowledge_bases: List[KnowledgeBaseInfo]
+
+
+class KBBuildResponse(BaseModel):
+    kb_id: str
+    status: str
+    progress: int = Field(default=0, ge=0, le=100)
 
 
 class SessionTitleUpdate(BaseModel):

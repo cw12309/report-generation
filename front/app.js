@@ -1,4 +1,4 @@
-console.log("[APP] app.js v2 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v3 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -21,22 +21,36 @@ const btnMemory = document.getElementById("btnMemory");
 const btnMemoryClose = document.getElementById("btnMemoryClose");
 const memoryPanel = document.getElementById("memoryPanel");
 const memoryPanelBody = document.getElementById("memoryPanelBody");
-const kbTotal = document.getElementById("kbTotal");
-const kbMdCount = document.getElementById("kbMdCount");
-const kbMeta = document.getElementById("kbMeta");
 const btnBuildIncremental = document.getElementById("btnBuildIncremental");
 const btnBuildRebuild = document.getElementById("btnBuildRebuild");
 const btnExtractMeta = document.getElementById("btnExtractMeta");
-const btnUploadXlsx = document.getElementById("btnUploadXlsx");
+const btnSidebarUpload = document.getElementById("btnSidebarUpload");
 const xlsxInput = document.getElementById("xlsxInput");
 const kbLog = document.getElementById("kbLog");
 const kbLogContent = document.getElementById("kbLogContent");
+const manageKbList = document.getElementById("manageKbList");
+const kbDetailArea = document.getElementById("kbDetailArea");
+const detailKbName = document.getElementById("detailKbName");
+const detailKbCount = document.getElementById("detailKbCount");
+const kbChunkList = document.getElementById("kbChunkList");
+const agentKbSelectorList = document.getElementById("agentKbSelectorList");
+const btnOpenKbSelector = document.getElementById("btnOpenKbSelector");
+const kbSelectedCount = document.getElementById("kbSelectedCount");
+const agentKbModal = document.getElementById("agentKbModal");
+const btnCloseKbSelector = document.getElementById("btnCloseKbSelector");
+const btnConfirmKbSelector = document.getElementById("btnConfirmKbSelector");
+const agentKbModalOverlay = agentKbModal?.querySelector(".agent-modal-overlay");
 const statusText = document.getElementById("statusText");
 
 // 状态
 let isProcessing = false;
 let currentReader = null; // 当前 SSE 读取器
 let chatAbortController = null; // 当前请求的 AbortController
+let knowledgeBases = [];
+let selectedKnowledgeBaseIds = new Set();
+let selectedManageKbId = null;
+let kbPollTimer = null;
+let kbChunkAbortController = null;
 
 // API 基础地址
 const API_BASE = "/api";
@@ -207,7 +221,9 @@ sidebarBtns.forEach(btn => {
     const target = document.getElementById(pageMap[page] || "pageAgent");
     if (target) target.classList.add("active");
     if (page === "kb") {
-      refreshKBStatus();
+      refreshKnowledgeBases();
+    } else if (page === "agent") {
+      refreshKnowledgeBases();
     }
     if (page === "config") {
       loadConfig();
@@ -223,67 +239,355 @@ sidebarBtns.forEach(btn => {
 let kbAbortController = null;
 
 async function refreshKBStatus() {
-  try {
-    const resp = await fetch(`${API_BASE}/kb/status?t=${Date.now()}`);
-    const data = await resp.json();
-    
-    if (data.rebuilding) {
-      kbTotal.textContent = "重建中...";
-      kbTotal.style.color = "#ff9800";
-    } else {
-      kbTotal.textContent = data.total !== undefined ? data.total : "-";
-      kbTotal.style.color = "";
-    }
-    
-    kbMdCount.textContent = data.md_count !== undefined ? data.md_count : "-";
-    kbMeta.textContent = data.metadata_exists ? "✅ 已生成" : "❌ 未生成";
-    kbMeta.style.color = data.metadata_exists ? "#2e7d32" : "#e53935";
-  } catch (e) {
-    console.error("[KB] 获取状态失败:", e);
-  }
-  refreshKBFiles();
+  return refreshKnowledgeBases();
 }
 
-async function refreshKBFiles() {
+async function refreshKnowledgeBases() {
   try {
-    const resp = await fetch(`${API_BASE}/kb/files?t=${Date.now()}`);
+    const resp = await fetch(`${API_BASE}/kbs?_t=${Date.now()}`, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    const files = data.files || [];
-    const kbFiles = document.getElementById("kbFiles");
-    const kbFilesList = document.getElementById("kbFilesList");
-    kbFiles.style.display = "block";
-    if (files.length === 0) {
-      kbFilesList.innerHTML = `<div class="kb-file-item kb-file-empty">暂无文件，请上传 xlsx</div>`;
-      return;
+    const previousSelectedKb = knowledgeBases.find(
+      (kb) => kb.kb_id === selectedManageKbId,
+    );
+    knowledgeBases = data.knowledge_bases || [];
+    renderManageKbList(knowledgeBases);
+    renderAgentKbSelector(knowledgeBases);
+    updateKBPolling();
+    const currentSelectedKb = knowledgeBases.find(
+      (kb) => kb.kb_id === selectedManageKbId,
+    );
+    const chunksBecameAvailable = currentSelectedKb
+      && currentSelectedKb.status === "processing"
+      && Number(previousSelectedKb?.progress || 0) < 15
+      && Number(currentSelectedKb.progress || 0) >= 15;
+    const buildFinished = previousSelectedKb?.status === "processing"
+      && currentSelectedKb
+      && currentSelectedKb.status !== "processing";
+    if (chunksBecameAvailable || buildFinished) {
+      loadKnowledgeBaseChunks(selectedManageKbId);
     }
-    kbFilesList.innerHTML = files.map(f => {
-      const date = new Date(f.mtime * 1000).toLocaleString("zh-CN");
-      const sizeKB = (f.size / 1024).toFixed(1);
-      return `<div class="kb-file-item">
-        <span class="kb-file-name">📄 ${escapeHtml(f.name)}</span>
-        <span class="kb-file-info">${f.slice_count} 切片 · ${sizeKB} KB · ${date}</span>
+  } catch (error) {
+    console.error("[KB] 获取知识库列表失败:", error);
+    if (manageKbList) {
+      manageKbList.innerHTML = '<div class="kb-manage-empty">知识库加载失败</div>';
+      delete manageKbList.dataset.renderKey;
+    }
+    if (agentKbSelectorList) agentKbSelectorList.innerHTML = '<span class="kb-chip-empty">知识库加载失败</span>';
+    updateKbSelectedCount();
+  }
+}
+
+function kbStatusLabel(status) {
+  return {
+    uploaded: "待构建",
+    processing: "构建中...",
+    active: "已激活",
+    failed: "构建失败",
+  }[status] || status || "未知";
+}
+
+function formatKbCreatedAt(value) {
+  if (!value) return "—";
+  return String(value).replace("T", " ").replace(/\.\d+Z?$/, "").slice(0, 19);
+}
+
+function renderKbDetail(kb) {
+  if (!kbDetailArea || !detailKbName || !detailKbCount || !kbChunkList) return;
+  if (!kb) {
+    kbChunkAbortController?.abort();
+    detailKbName.textContent = "请在左侧选择知识库";
+    detailKbCount.textContent = "";
+    delete kbChunkList.dataset.kbId;
+    kbChunkList.innerHTML = '<div class="kb-empty-tip">点击左侧列表查看具体的切片内容...</div>';
+    return;
+  }
+
+  detailKbName.textContent = kb.kb_name || kb.kb_id;
+  if (kbChunkList.dataset.kbId !== kb.kb_id) {
+    detailKbCount.textContent = "";
+    kbChunkList.dataset.kbId = kb.kb_id;
+    kbChunkList.innerHTML = '<div class="kb-empty-tip">正在加载切片...</div>';
+  }
+}
+
+function renderChunkCard(item) {
+  const hierarchy = [item.level_1, item.level_2, item.level_3, item.level_4]
+    .filter(Boolean)
+    .map(escapeHtml)
+    .join(" / ");
+  const findings = item.imaging_findings
+    ? `<div class="chunk-field"><span>影像学表现</span><p>${escapeHtml(item.imaging_findings)}</p></div>`
+    : "";
+  const opinion = item.imaging_opinion
+    ? `<div class="chunk-field chunk-opinion"><span>影像学意见</span><p>${escapeHtml(item.imaging_opinion)}</p></div>`
+    : "";
+  const fallbackText = !findings && !opinion && item.combined_text
+    ? `<div class="chunk-field"><span>切片原文</span><p>${escapeHtml(item.combined_text)}</p></div>`
+    : "";
+  const sourceParts = [item.source_file, item.sheet_name ? `Sheet: ${item.sheet_name}` : "",
+    item.source_row ? `第 ${item.source_row} 行` : ""].filter(Boolean);
+
+  return `<article class="chunk-card">
+    <div class="chunk-card-header">
+      <div class="chunk-card-title">
+        <span class="chunk-index">#${Number(item.chunk_index) || 0}</span>
+        <strong>${escapeHtml(item.module_name || "未命名切片")}</strong>
+      </div>
+      ${item.modality ? `<span class="chunk-modality">${escapeHtml(item.modality)}</span>` : ""}
+    </div>
+    ${hierarchy ? `<div class="chunk-hierarchy">${hierarchy}</div>` : ""}
+    ${findings}${opinion}${fallbackText}
+    ${sourceParts.length ? `<div class="chunk-source">来源：${sourceParts.map(escapeHtml).join(" · ")}</div>` : ""}
+  </article>`;
+}
+
+async function loadKnowledgeBaseChunks(kbId, page = 1, size = 50) {
+  if (!kbChunkList || !detailKbCount) return;
+  kbChunkAbortController?.abort();
+  const controller = new AbortController();
+  kbChunkAbortController = controller;
+  kbChunkList.dataset.kbId = kbId;
+  kbChunkList.innerHTML = '<div class="kb-empty-tip"><span class="spinner-icon"></span> 正在加载切片...</div>';
+  detailKbCount.textContent = "";
+
+  try {
+    const resp = await fetch(
+      `${API_BASE}/kbs/${encodeURIComponent(kbId)}/chunks?page=${page}&size=${size}`,
+      { cache: "no-store", signal: controller.signal },
+    );
+    const payload = await resp.json();
+    if (!resp.ok || payload.code !== 0) {
+      throw new Error(payload.detail || "切片加载失败");
+    }
+    if (selectedManageKbId !== kbId) return;
+
+    const data = payload.data || {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    const total = Number(data.total) || 0;
+    detailKbCount.textContent = `共 ${total} 个切片${total > items.length ? ` · 当前显示 ${items.length} 个` : ""}`;
+    kbChunkList.innerHTML = items.length
+      ? items.map(renderChunkCard).join("")
+      : '<div class="kb-empty-tip">暂无切片数据，请构建或重新构建该知识库。</div>';
+  } catch (error) {
+    if (error.name === "AbortError" || selectedManageKbId !== kbId) return;
+    detailKbCount.textContent = "";
+    kbChunkList.innerHTML = `<div class="kb-empty-tip error">切片加载失败：${escapeHtml(error.message)}</div>`;
+  } finally {
+    if (kbChunkAbortController === controller) kbChunkAbortController = null;
+  }
+}
+
+function renderManageKbList(data = knowledgeBases) {
+  if (!manageKbList) return;
+
+  if (selectedManageKbId && !data.some((kb) => kb.kb_id === selectedManageKbId)) {
+    selectedManageKbId = null;
+  }
+
+  if (!data.length) {
+    selectedManageKbId = null;
+    if (manageKbList.dataset.renderKey !== "empty") {
+      manageKbList.innerHTML = '<div class="kb-manage-empty">暂无知识库，请先上传 Excel</div>';
+      manageKbList.dataset.renderKey = "empty";
+    }
+    renderKbDetail(null);
+    return;
+  }
+
+  const renderKey = JSON.stringify({
+    selectedManageKbId,
+    items: data.map((kb) => [kb.kb_id, kb.kb_name, kb.status, kb.progress, kb.created_at]),
+  });
+  if (manageKbList.dataset.renderKey === renderKey) {
+    renderKbDetail(data.find((kb) => kb.kb_id === selectedManageKbId));
+    return;
+  }
+
+  const listMarkup = data.map((kb) => {
+    const status = kb.status || "uploaded";
+    const buildLabel = status === "uploaded" ? "构建" : "重新构建";
+    const buildButton = `<button class="kb-card-btn primary kb-build-btn" data-kb-id="${escapeHtml(kb.kb_id)}">${buildLabel}</button>`;
+    const deleteButton = `<button class="kb-card-btn danger kb-delete-btn" data-kb-id="${escapeHtml(kb.kb_id)}">删除</button>`;
+    const parsedProgress = Number.parseFloat(kb.progress);
+    const progressText = Number.isFinite(parsedProgress)
+      ? `构建中... ${Math.min(100, Math.max(0, Math.round(parsedProgress)))}%`
+      : "构建中，请稍候...";
+
+    let actionContent = deleteButton;
+    if (status === "uploaded" || status === "active") {
+      actionContent = `${buildButton}${deleteButton}`;
+    } else if (status === "failed") {
+      actionContent = `<span class="kb-action-failed">构建失败</span>${buildButton}${deleteButton}`;
+    } else if (status === "processing") {
+      actionContent = `<div class="kb-action-processing">
+        <span class="spinner-icon" aria-hidden="true"></span>
+        <span>${progressText}</span>
       </div>`;
-    }).join("");
-  } catch (e) {
-    console.error("[KB] 获取文件列表失败:", e);
+    }
+
+    return `<div class="manage-kb-card ${selectedManageKbId === kb.kb_id ? "is-selected" : ""}"
+      data-kb-id="${escapeHtml(kb.kb_id)}" role="button" tabindex="0">
+      <div class="manage-kb-main">
+        <div class="manage-kb-name" title="${escapeHtml(kb.kb_name || kb.kb_id)}">${escapeHtml(kb.kb_name || kb.kb_id)}</div>
+        <div class="manage-kb-meta">
+          <span class="kb-status-badge kb-status-${status}">${kbStatusLabel(status)}</span>
+          <span title="${escapeHtml(kb.kb_id)}">${escapeHtml(kb.kb_id.slice(0, 8))}...</span>
+        </div>
+      </div>
+      <div class="manage-kb-actions">${actionContent}</div>
+    </div>`;
+  }).join("");
+
+  const previousScrollTop = manageKbList.scrollTop;
+  manageKbList.innerHTML = listMarkup;
+  manageKbList.dataset.renderKey = renderKey;
+  manageKbList.scrollTop = previousScrollTop;
+
+  manageKbList.querySelectorAll(".manage-kb-card").forEach((card) => {
+    const selectCard = () => {
+      selectedManageKbId = card.dataset.kbId;
+      renderManageKbList(knowledgeBases);
+      loadKnowledgeBaseChunks(selectedManageKbId);
+    };
+    card.addEventListener("click", selectCard);
+    card.addEventListener("keydown", (event) => {
+      if (event.target === card && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        selectCard();
+      }
+    });
+  });
+  manageKbList.querySelectorAll(".kb-build-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      startKnowledgeBaseBuild(button.dataset.kbId);
+    });
+  });
+  manageKbList.querySelectorAll(".kb-delete-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      deleteKnowledgeBase(button.dataset.kbId);
+    });
+  });
+
+  renderKbDetail(data.find((kb) => kb.kb_id === selectedManageKbId));
+}
+
+function renderAgentKbSelector(data = knowledgeBases) {
+  if (!agentKbSelectorList) return;
+  const active = data.filter((kb) => kb.status === "active");
+  const activeIds = new Set(active.map((kb) => kb.kb_id));
+  selectedKnowledgeBaseIds = new Set(
+    [...selectedKnowledgeBaseIds].filter((kbId) => activeIds.has(kbId)),
+  );
+  updateKbSelectedCount();
+
+  if (!active.length) {
+    agentKbSelectorList.innerHTML = '<span class="kb-chip-empty">暂无已激活知识库，请先前往知识库页面构建</span>';
+    return;
+  }
+
+  agentKbSelectorList.innerHTML = active.map((kb) => `
+    <label class="kb-chip-item" title="${escapeHtml(kb.kb_id)}">
+      <input type="checkbox" value="${escapeHtml(kb.kb_id)}"
+        ${selectedKnowledgeBaseIds.has(kb.kb_id) ? "checked" : ""}>
+      <span>${escapeHtml(kb.kb_name || kb.kb_id)}</span>
+    </label>`).join("");
+
+  agentKbSelectorList.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      if (input.checked) selectedKnowledgeBaseIds.add(input.value);
+      else selectedKnowledgeBaseIds.delete(input.value);
+      updateKbSelectedCount();
+    });
+  });
+}
+
+function updateKbSelectedCount() {
+  const count = selectedKnowledgeBaseIds.size;
+  if (kbSelectedCount) {
+    kbSelectedCount.textContent = String(count);
+    kbSelectedCount.classList.toggle("is-empty", count === 0);
+  }
+  if (btnOpenKbSelector) {
+    btnOpenKbSelector.classList.toggle("has-no-selection", count === 0);
+  }
+}
+
+function openAgentKbSelector() {
+  if (!agentKbModal) return;
+  renderAgentKbSelector(knowledgeBases);
+  agentKbModal.hidden = false;
+  agentKbModal.setAttribute("aria-hidden", "false");
+  btnCloseKbSelector?.focus();
+}
+
+function closeAgentKbSelector() {
+  if (!agentKbModal) return;
+  agentKbModal.hidden = true;
+  agentKbModal.setAttribute("aria-hidden", "true");
+  btnOpenKbSelector?.focus();
+}
+
+btnOpenKbSelector?.addEventListener("click", openAgentKbSelector);
+btnCloseKbSelector?.addEventListener("click", closeAgentKbSelector);
+btnConfirmKbSelector?.addEventListener("click", closeAgentKbSelector);
+agentKbModalOverlay?.addEventListener("click", closeAgentKbSelector);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && agentKbModal && !agentKbModal.hidden) {
+    closeAgentKbSelector();
+  }
+});
+
+function updateKBPolling() {
+  const hasProcessing = knowledgeBases.some((kb) => kb.status === "processing");
+  if (hasProcessing && !kbPollTimer) {
+    kbPollTimer = setInterval(refreshKnowledgeBases, 4000);
+  } else if (!hasProcessing && kbPollTimer) {
+    clearInterval(kbPollTimer);
+    kbPollTimer = null;
+  }
+}
+
+async function startKnowledgeBaseBuild(kbId) {
+  try {
+    const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}/build`, { method: "POST" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (!kbPollTimer) kbPollTimer = setInterval(refreshKnowledgeBases, 4000);
+    appendKBLog(`已提交构建: ${kbId}`, "info");
+    await refreshKnowledgeBases();
+  } catch (error) {
+    appendKBLog(`构建提交失败: ${error.message}`, "error");
+  }
+}
+
+async function deleteKnowledgeBase(kbId) {
+  if (!confirm("确定删除该知识库及其 Milvus 数据吗？")) return;
+  try {
+    const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}`, { method: "DELETE" });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    selectedKnowledgeBaseIds.delete(kbId);
+    if (selectedManageKbId === kbId) selectedManageKbId = null;
+    await refreshKnowledgeBases();
+  } catch (error) {
+    appendKBLog(`删除失败: ${error.message}`, "error");
   }
 }
 
 function setKBBtnsDisabled(disabled) {
-  btnUploadXlsx.disabled = disabled;
-  btnBuildIncremental.disabled = disabled;
-  btnBuildRebuild.disabled = disabled;
-  btnExtractMeta.disabled = disabled;
+  if (btnSidebarUpload) btnSidebarUpload.disabled = disabled;
+  if (btnBuildIncremental) btnBuildIncremental.disabled = disabled;
+  if (btnBuildRebuild) btnBuildRebuild.disabled = disabled;
+  if (btnExtractMeta) btnExtractMeta.disabled = disabled;
   if (disabled) {
-    btnUploadXlsx.classList.add("btn-disabled");
-    btnBuildIncremental.classList.add("btn-disabled");
-    btnBuildRebuild.classList.add("btn-disabled");
-    btnExtractMeta.classList.add("btn-disabled");
+    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta].filter(Boolean)
+      .forEach((button) => button.classList.add("btn-disabled"));
   } else {
-    btnUploadXlsx.classList.remove("btn-disabled");
-    btnBuildIncremental.classList.remove("btn-disabled");
-    btnBuildRebuild.classList.remove("btn-disabled");
-    btnExtractMeta.classList.remove("btn-disabled");
+    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta].filter(Boolean)
+      .forEach((button) => button.classList.remove("btn-disabled"));
   }
 }
 
@@ -442,78 +746,39 @@ function appendKBLog(msg, level) {
   kbLogContent.scrollTop = kbLogContent.scrollHeight;
 }
 
-btnBuildIncremental.addEventListener("click", () => runKBBuild(false));
-btnBuildRebuild.addEventListener("click", () => runKBBuild(true));
-btnExtractMeta.addEventListener("click", () => runExtractMetadata());
+if (btnBuildIncremental) btnBuildIncremental.addEventListener("click", () => runKBBuild(false));
+if (btnBuildRebuild) btnBuildRebuild.addEventListener("click", () => runKBBuild(true));
+if (btnExtractMeta) btnExtractMeta.addEventListener("click", () => runExtractMetadata());
 
-// 上传 xlsx 并切片
-btnUploadXlsx.addEventListener("click", () => xlsxInput.click());
+// 上传 xlsx，上传完成后保持待构建状态
+btnSidebarUpload.addEventListener("click", () => xlsxInput.click());
 xlsxInput.addEventListener("change", () => {
   if (xlsxInput.files.length > 0) {
-    runUploadXlsx(xlsxInput.files[0]);
+    runUploadXlsx(Array.from(xlsxInput.files));
   }
 });
 
-async function runUploadXlsx(file) {
-  if (kbAbortController) {
-    kbAbortController.abort();
-  }
-  kbAbortController = new AbortController();
-
+// 解耦上传：普通 JSON 响应，上传后不自动构建
+async function runUploadXlsx(files) {
   setKBBtnsDisabled(true);
   kbLog.style.display = "block";
   kbLogContent.innerHTML = "";
-  appendKBLog(`[上传切片] ${file.name}`, "info");
-
+  appendKBLog(`[上传] 已选择 ${files.length} 个 Excel 文件，正在保存...`, "info");
   try {
     const formData = new FormData();
-    formData.append("file", file);
-
-    const resp = await fetch(`${API_BASE}/kb/upload`, {
-      method: "POST",
-      body: formData,
-      signal: kbAbortController.signal,
+    files.forEach((file) => formData.append("files", file));
+    const resp = await fetch(`${API_BASE}/kb/upload`, { method: "POST", body: formData });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    (data.knowledge_bases || []).forEach((kb) => {
+      appendKBLog(`✅ ${kb.kb_name} 已上传，状态：待构建，kb_id=${kb.kb_id}`, "done");
     });
-
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const payload = line.slice(6);
-          if (payload === "[DONE]") {
-            appendKBLog("✅ 上传切片完成", "done");
-            xlsxInput.value = "";
-            await refreshKBStatus();
-            return;
-          }
-          try {
-            const event = JSON.parse(payload);
-            const level = event.level || "info";
-            appendKBLog(event.msg || "", level);
-          } catch (e) {
-            appendKBLog(payload, "info");
-          }
-        }
-      }
-    }
-  } catch (e) {
-    if (e.name === "AbortError") {
-      appendKBLog("⚠️ 操作已取消", "error");
-    } else {
-      appendKBLog(`❌ 错误: ${e.message}`, "error");
-    }
+    await refreshKnowledgeBases();
+  } catch (error) {
+    appendKBLog(`❌ 上传失败: ${error.message}`, "error");
   } finally {
-    setKBBtnsDisabled(false);
-    kbAbortController = null;
     xlsxInput.value = "";
+    setKBBtnsDisabled(false);
   }
 }
 
@@ -553,6 +818,13 @@ async function sendMessage(selectedDiagnosis) {
   const query = userInput.value.trim();
   if (!query || isProcessing) return;
 
+  const selected_kbs = [...selectedKnowledgeBaseIds];
+  if (!selected_kbs.length) {
+    addSystemMessage("请至少选择一个知识库");
+    updateStatus("⚠️ 请先选择知识库");
+    return;
+  }
+
   console.log("[DEBUG] sendMessage 开始, query:", query);
 
   // 先取消上一个未清理的请求
@@ -588,6 +860,7 @@ async function sendMessage(selectedDiagnosis) {
         query: query,
         session_id: SESSION_ID,
         selected_diagnosis: selectedDiagnosis || null,
+        selected_kbs,
       }),
       signal: chatAbortController.signal,
     });
@@ -1304,6 +1577,7 @@ function startNewConversation() {
 
   currentConversationId = generateConvId();
   SESSION_ID = generateSessionId();
+  refreshKnowledgeBases();
 
   const history = getChatHistory();
   history.unshift({
@@ -1331,6 +1605,7 @@ function loadConversation(convId) {
   if (entry && entry.session_id) {
     SESSION_ID = entry.session_id;
   }
+  refreshKnowledgeBases();
 
   const messages = getChatMessages(convId);
   console.log("[DEBUG] loadConversation: 加载了", messages.length, "条消息");
@@ -1950,6 +2225,7 @@ async function saveLlmConfigFromPanel() {
   });
   // 页面加载后立即加载配置，确保 Agent 页面打开时模型下拉框就有内容
   loadConfig();
+  refreshKnowledgeBases();
 });
 
 function addAssistantMessage(content) {

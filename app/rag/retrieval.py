@@ -1,5 +1,6 @@
 """Milvus scalar-filtered Dense + Sparse retrieval with dynamic fallback."""
 
+import json
 from typing import Dict, List, Optional, Tuple
 
 from pymilvus import AnnSearchRequest, RRFRanker
@@ -12,6 +13,7 @@ from .sparse_vector import text_to_sparse_vector
 COLLECTION_NAME = get_collection_name()
 OUTPUT_FIELDS = [
     "id",
+    "kb_id",
     "modality",
     "level_1",
     "level_2",
@@ -43,14 +45,20 @@ def ensure_collection_loaded(client, timeout: int = 120) -> Dict:
     return state_info
 
 
-def build_filter_expression(filters: Dict[str, str]) -> str:
+def build_filter_expression(filters: Dict[str, str],
+                            selected_kbs: Optional[List[str]] = None) -> str:
     """Build an AND expression from validated modality and level fields."""
     allowed = ("modality", *LEVEL_FIELDS)
-    return " and ".join(
+    parts = [
         f'{field} == "{_escape(filters[field])}"'
         for field in allowed
         if filters.get(field)
-    )
+    ]
+    if selected_kbs:
+        safe_ids = [str(kb_id)[:64] for kb_id in selected_kbs if str(kb_id).strip()]
+        if safe_ids:
+            parts.insert(0, f"kb_id in {json.dumps(safe_ids, ensure_ascii=False)}")
+    return " and ".join(parts)
 
 
 def build_fallback_filters(plan: Dict) -> List[Dict[str, str]]:
@@ -97,9 +105,10 @@ def hybrid_search(
     top_k: int,
     client,
     stage: int = 0,
+    selected_kbs: Optional[List[str]] = None,
 ) -> List[Dict]:
     """Run Dense and Sparse ANN requests under one scalar filter."""
-    filter_expr = build_filter_expression(filters)
+    filter_expr = build_filter_expression(filters, selected_kbs)
     dense_request = AnnSearchRequest(
         data=[query_vector],
         anns_field="dense_vector",
@@ -134,6 +143,7 @@ def retrieve_with_fallback(
     top_k: int,
     client,
     min_candidates: Optional[int] = None,
+    selected_kbs: Optional[List[str]] = None,
 ) -> Tuple[List[Dict], Dict]:
     """Retrieve with strict filters and progressively remove deep levels."""
     ensure_collection_loaded(client)
@@ -142,7 +152,7 @@ def retrieve_with_fallback(
     stage_details = []
 
     for stage, filters in enumerate(build_fallback_filters(plan)):
-        filter_expr = build_filter_expression(filters)
+        filter_expr = build_filter_expression(filters, selected_kbs)
         results = hybrid_search(
             semantic_query=plan.get("semantic_query", plan.get("query", "")),
             keyword_query=plan.get("keyword_query", plan.get("query", "")),
@@ -151,6 +161,7 @@ def retrieve_with_fallback(
             top_k=top_k,
             client=client,
             stage=stage,
+            selected_kbs=selected_kbs,
         )
         stage_details.append({
             "stage": stage,

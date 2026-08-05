@@ -7,12 +7,14 @@ import os
 import queue
 import shutil
 import time
+import uuid
+from typing import List, Optional
 from pathlib import Path
 
 import yaml
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, UploadFile, File, Query
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pymilvus import MilvusClient
@@ -28,13 +30,13 @@ from config import (
     get_rerank_api_key, get_rerank_model, get_rerank_base_url,
     get_max_rounds, reload_config,
 )
-from data_pipeline.build_vector_db import build_db
-from data_pipeline.extract_metadata import extract_all, save_json
-from data_pipeline.process_reports import main as process_reports
+from data_pipeline.build_vector_db import build_db, ensure_collection_schema
+from data_pipeline.extract_metadata import extract_all
+from data_pipeline.process_reports import process_uploaded_excels
 
 from .schemas import (
     ChatRequest, ConfigSaveRequest, TestModelRequest,
-    KBBuildRequest, ClearSessionRequest,
+    KBBuildRequest, ClearSessionRequest, KBUploadResponse, KBBuildResponse,
 )
 from .llm_client import chat_stream
 from .pipeline import run_pipeline
@@ -67,6 +69,19 @@ def web_main(port=8000):
 
     app = FastAPI(title="影像报告生成Agent v2")
     store = SessionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "sessions.db"))
+
+    @app.on_event("startup")
+    async def validate_milvus_schema_on_startup():
+        """Fail fast on an incompatible legacy Collection; create if absent."""
+        client = _new_milvus_client()
+        try:
+            result = ensure_collection_schema(client)
+            logger.info(
+                "Milvus Schema 检查完成: collection=%s, created=%s",
+                COLLECTION_NAME, result.get("created", False),
+            )
+        finally:
+            client.close()
 
     front_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "front")
     if os.path.isdir(front_dir):
@@ -113,6 +128,7 @@ def web_main(port=8000):
                 "client": client,
                 "last_report": last_report,
                 "last_ambiguity": last_ambiguity,
+                "selected_kbs": session_data["state"].get("selected_kbs", []),
             }
         else:
             # ── 创建新会话 ──
@@ -132,6 +148,7 @@ def web_main(port=8000):
                 "client": client,
                 "last_report": [""],
                 "last_ambiguity": [None],
+                "selected_kbs": [],
             }
 
     @app.post("/api/chat", summary="对话", description="发送用户输入并获取流式回复")
@@ -139,9 +156,22 @@ def web_main(port=8000):
         query = request.query.strip()
         session_id = request.session_id
         selected_diagnosis = request.selected_diagnosis
+        selected_kbs = list(dict.fromkeys(request.selected_kbs))
 
         if not query:
             return {"error": "query 不能为空"}
+        if not selected_kbs:
+            raise HTTPException(status_code=400, detail="请先勾选至少一个知识库")
+        active_kbs = {
+            kb["kb_id"]: kb for kb in store.list_knowledge_bases(status="active")
+            if kb["kb_id"] in selected_kbs
+        }
+        invalid_kbs = [kb_id for kb_id in selected_kbs if kb_id not in active_kbs]
+        if invalid_kbs:
+            raise HTTPException(
+                status_code=400,
+                detail=f"知识库不存在或不可用: {', '.join(invalid_kbs)}",
+            )
 
         logger.info(f"收到查询: session={session_id}, query={query[:50]}..., selected_diagnosis={selected_diagnosis}")
         session = _get_or_create_session(session_id)
@@ -190,6 +220,8 @@ def web_main(port=8000):
                         _emit_sync,
                         selected_diagnosis=selected_diagnosis,
                         last_ambiguity=last_ambiguity,
+                        selected_kbs=selected_kbs,
+                        knowledge_bases=list(active_kbs.values()),
                     )
 
                     if result:
@@ -203,7 +235,10 @@ def web_main(port=8000):
                     # ── 持久化：保存对话记录、会话状态和思考过程 ──
                     try:
                         store.save_turn(session_id, turn_index, query, result or "")
-                        store.save_state(session_id, entity_tracker.slots, last_report[0])
+                        store.save_state(
+                            session_id, entity_tracker.slots, last_report[0],
+                            selected_kbs=selected_kbs,
+                        )
                         # 保存思考过程
                         if thinking_events:
                             store.save_thinking(session_id, turn_index, thinking_events)
@@ -305,10 +340,39 @@ def web_main(port=8000):
         except Exception:
             logger.warning("查询 Milvus 知识库状态失败", exc_info=True)
         markdown_dir = get_markdown_dir()
-        md_count = len([f for f in os.listdir(slices_dir) if f.endswith(".md")]) if os.path.isdir(slices_dir) else 0
-        metadata_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "report_template", "metadata.json")
-        meta_exists = os.path.exists(metadata_path)
+        md_count = len(list(Path(markdown_dir).rglob("*.md"))) if os.path.isdir(markdown_dir) else 0
+        meta_exists = any(kb.get("metadata_tree") for kb in store.list_knowledge_bases())
         return {"total": total, "md_count": md_count, "db_path": DB_PATH, "metadata_exists": meta_exists}
+
+    @app.get("/api/kbs", summary="知识库列表")
+    async def list_knowledge_bases():
+        items = store.list_knowledge_bases()
+        public_items = [
+            {key: value for key, value in item.items() if key != "source_path"}
+            for item in items
+        ]
+        return {"knowledge_bases": public_items}
+
+    @app.get("/api/kbs/{kb_id}/chunks", summary="知识库切片列表")
+    async def list_knowledge_base_chunks(
+        kb_id: str,
+        page: int = Query(default=1, ge=1, description="页码，从 1 开始"),
+        size: int = Query(default=50, ge=1, le=100, description="每页数量，最大 100"),
+    ):
+        if not store.get_knowledge_base(kb_id):
+            raise HTTPException(status_code=404, detail="知识库不存在")
+        result = await asyncio.to_thread(
+            store.list_knowledge_base_chunks, kb_id, page, size,
+        )
+        return {
+            "code": 0,
+            "data": {
+                "total": result["total"],
+                "items": result["items"],
+                "page": page,
+                "size": size,
+            },
+        }
 
     @app.get("/api/kb/files", summary="知识库文件列表", description="获取已上传的报告模板文件及其切片信息")
     async def kb_files():
@@ -336,7 +400,9 @@ def web_main(port=8000):
     async def kb_build(request: KBBuildRequest):
         rebuild = request.rebuild
         batch_size = request.batch_size
-        slices_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "app", "data_pipeline", "xlsx_slices")
+        if not store.get_knowledge_base(request.kb_id):
+            raise HTTPException(status_code=404, detail="知识库不存在")
+        markdown_dir = str(Path(get_markdown_dir()) / request.kb_id)
 
         async def event_stream():
             loop = asyncio.get_event_loop()
@@ -346,7 +412,10 @@ def web_main(port=8000):
                 event_queue.put_nowait(json.dumps(data, ensure_ascii=False))
 
             def run():
-                build_db(markdown_dir, batch_size=batch_size, rebuild=rebuild, progress_callback=_emit_log)
+                build_db(
+                    markdown_dir, batch_size=batch_size, rebuild=rebuild,
+                    kb_id=request.kb_id, progress_callback=_emit_log,
+                )
                 event_queue.put_nowait("[DONE]")
 
             loop.run_in_executor(None, run)
@@ -363,10 +432,10 @@ def web_main(port=8000):
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    @app.post("/api/kb/extract-metadata", summary="提取元数据", description="从报告模板中提取元数据到 metadata.json")
-    async def kb_extract_metadata():
-        metadata_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "report_template")
-        metadata_path = os.path.join(metadata_dir, "metadata.json")
+    @app.post("/api/kb/extract-metadata", summary="提取元数据", description="提取指定知识库目录树并保存到 SQLite")
+    async def kb_extract_metadata(kb_id: str = Query(..., description="知识库 ID")):
+        if not store.get_knowledge_base(kb_id):
+            raise HTTPException(status_code=404, detail="知识库不存在")
 
         async def event_stream():
             loop = asyncio.get_event_loop()
@@ -377,8 +446,8 @@ def web_main(port=8000):
 
             def run():
                 _emit_log({"level": "info", "msg": "正在从 Markdown 提取元数据..."})
-                metadata = extract_all(Path(get_markdown_dir()))
-                save_json(metadata, Path(metadata_path))
+                metadata = extract_all(Path(get_markdown_dir()) / kb_id, kb_id=kb_id)
+                store.update_knowledge_base(kb_id, metadata_tree=metadata)
                 modality_count = len(metadata.get("检查类型", {}))
                 _emit_log({
                     "level": "done",
@@ -400,47 +469,126 @@ def web_main(port=8000):
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
 
-    @app.post("/api/kb/upload", summary="上传报告模板", description="上传 .xlsx 报告模板文件并自动切片")
-    async def kb_upload(file: UploadFile = File(...)):
-        if not file.filename.endswith(".xlsx"):
-            return {"error": "只支持 .xlsx 文件"}
+    @app.post("/api/kb/upload", response_model=KBUploadResponse,
+              summary="上传报告模板", description="只保存 Excel，每个文件建立独立知识库")
+    async def kb_upload(
+        files: List[UploadFile] = File(default=[]),
+        file: Optional[UploadFile] = File(default=None),
+    ):
+        uploads = list(files)
+        # 兼容旧版前端/客户端使用单数 file 字段。
+        if file is not None:
+            uploads.append(file)
+        if not uploads:
+            raise HTTPException(status_code=400, detail="至少选择一个 .xlsx 文件")
+        invalid = [upload.filename for upload in uploads
+                   if not upload.filename or not upload.filename.lower().endswith(".xlsx")]
+        if invalid:
+            raise HTTPException(status_code=400, detail="只支持 .xlsx 文件")
 
-        report_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "report_template")
-        slices_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "xlsx_slices")
-        os.makedirs(report_dir, exist_ok=True)
-        os.makedirs(slices_dir, exist_ok=True)
+        report_root = Path(__file__).resolve().parents[1] / "data_pipeline" / "report_template"
+        report_root.mkdir(parents=True, exist_ok=True)
+        knowledge_bases = []
+        for upload in uploads:
+            kb_id = uuid.uuid4().hex
+            kb_name = Path(upload.filename).stem[:255]
+            safe_name = Path(upload.filename).name
+            filepath = report_root / kb_id / safe_name
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            contents = await upload.read()
+            filepath.write_bytes(contents)
+            record = store.create_knowledge_base(
+                kb_id, kb_name, status="uploaded", source_path=str(filepath),
+            )
+            knowledge_bases.append(record)
+        return {"knowledge_bases": knowledge_bases}
 
-        filepath = os.path.join(report_dir, file.filename)
+    def _build_knowledge_base_task(kb_id: str) -> None:
+        """Background worker for one KB; all failures are persisted as failed."""
+        last_persisted_progress = 0
 
-        async def event_stream():
-            loop = asyncio.get_event_loop()
-            event_queue = queue.Queue()
+        def persist_progress(progress: int, message: str = "") -> None:
+            """Persist at most once per 5% step from this background thread."""
+            nonlocal last_persisted_progress
+            progress = min(100, max(0, int(progress)))
+            if progress < 100 and progress - last_persisted_progress < 5:
+                return
+            store.update_knowledge_base_progress(kb_id, progress)
+            last_persisted_progress = progress
+            if message:
+                logger.info("知识库构建进度 [%s] %s%%: %s", kb_id, progress, message)
 
-            def _emit_log(data):
-                event_queue.put_nowait(json.dumps(data, ensure_ascii=False))
+        try:
+            store.update_knowledge_base(kb_id, status="processing", progress=0)
+            kb = store.get_knowledge_base(kb_id)
+            if not kb:
+                raise FileNotFoundError(f"知识库不存在: {kb_id}")
+            source_path = Path(kb.get("source_path") or "")
+            if not source_path.is_file():
+                raise FileNotFoundError(f"原始 Excel 不存在: {source_path}")
+            markdown_root = Path(get_markdown_dir())
+            parse_result = process_uploaded_excels(
+                [str(source_path)], markdown_root, kb_id,
+            )
+            if parse_result["errors"]:
+                error_preview = "; ".join(parse_result["errors"][:5])
+                raise RuntimeError(f"Excel 解析存在错误: {error_preview}")
+            persist_progress(10, "Excel 解析与 Markdown 切片完成")
+            chunk_count = store.replace_knowledge_base_chunks(
+                kb_id, parse_result["chunks"],
+            )
+            if chunk_count == 0:
+                raise ValueError("Excel 中没有可用的知识库切片")
+            persist_progress(15, f"SQLite 已保存 {chunk_count} 条切片原文")
+            kb_markdown_dir = markdown_root / kb_id
+            metadata = extract_all(kb_markdown_dir, kb_id=kb_id)
+            store.update_knowledge_base(kb_id, metadata_tree=metadata)
+            persist_progress(20, "目录元数据提取完成")
+            build_db(
+                str(kb_markdown_dir),
+                kb_id=kb_id,
+                build_progress_callback=persist_progress,
+            )
+            store.update_knowledge_base(kb_id, status="active", progress=100)
+        except Exception:
+            logger.exception("知识库构建失败: %s", kb_id)
+            # 不覆盖 progress，保留失败前最后一次成功持久化的进度。
+            store.update_knowledge_base(kb_id, status="failed")
 
-            def run():
-                _emit_log({"level": "info", "msg": f"上传文件: {file.filename}"})
-                with open(filepath, "wb") as f:
-                    shutil.copyfileobj(file.file, f)
-                _emit_log({"level": "info", "msg": "正在整理 Markdown 报告..."})
-                process_reports()
-                _emit_log({"level": "done", "msg": "Markdown 报告整理完成"})
-                event_queue.put_nowait("[DONE]")
+    @app.post("/api/kb/{kb_id}/build", response_model=KBBuildResponse,
+              summary="构建知识库", description="异步切片、向量化并写入 Milvus")
+    async def build_knowledge_base(kb_id: str, background_tasks: BackgroundTasks):
+        kb = store.get_knowledge_base(kb_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+        if kb["status"] == "processing":
+            raise HTTPException(status_code=409, detail="知识库正在构建")
+        store.update_knowledge_base(kb_id, status="processing", progress=0)
+        background_tasks.add_task(_build_knowledge_base_task, kb_id)
+        return {"kb_id": kb_id, "status": "processing", "progress": 0}
 
-            loop.run_in_executor(None, run)
-
-            while True:
-                try:
-                    event = await loop.run_in_executor(None, event_queue.get, True, 120)
-                    if event == "[DONE]":
-                        yield "data: [DONE]\n\n"
-                        break
-                    yield f"data: {event}\n\n"
-                except queue.Empty:
-                    break
-
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+    @app.delete("/api/kb/{kb_id}", summary="删除知识库")
+    async def delete_knowledge_base(kb_id: str):
+        kb = store.get_knowledge_base(kb_id)
+        if not kb:
+            raise HTTPException(status_code=404, detail="知识库不存在")
+        client = _new_milvus_client()
+        try:
+            if client.has_collection(COLLECTION_NAME):
+                safe_kb_id = kb_id.replace("\\", "").replace('"', "")
+                client.delete(
+                    collection_name=COLLECTION_NAME,
+                    filter=f'kb_id == "{safe_kb_id}"',
+                )
+                client.flush(COLLECTION_NAME)
+        finally:
+            client.close()
+        store.delete_knowledge_base(kb_id)
+        # SQLite 与 Milvus 删除成功后，清理该知识库的原始文件和切片目录。
+        app_data_pipeline = Path(__file__).resolve().parents[1] / "data_pipeline"
+        shutil.rmtree(app_data_pipeline / "report_template" / kb_id, ignore_errors=True)
+        shutil.rmtree(app_data_pipeline / "output_markdown" / kb_id, ignore_errors=True)
+        return {"status": "ok", "kb_id": kb_id}
 
     @app.delete("/api/session", summary="删除会话", description="删除指定会话及其所有数据")
     async def delete_session(session_id: str = Query(default="default", description="会话 ID")):

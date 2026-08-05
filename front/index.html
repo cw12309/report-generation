@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=10" />
+    <link rel="stylesheet" href="/static/style.css?v=20" />
   </head>
   <body>
     <div class="app">
-      <!-- 左侧导航 -->
+      <!-- 全局一级导航：固定保留在最左侧 -->
       <nav class="sidebar" id="sidebar">
         <div class="sidebar-brand">🏥</div>
         <div class="sidebar-nav">
@@ -35,7 +35,9 @@
         </div>
       </nav>
 
-      <!-- 右侧主区域 -->
+      <!-- 主工作区 -->
+      <div id="main-workspace">
+      <!-- 主内容区 -->
       <div class="main">
         <!-- Agent 页面 -->
         <div class="page active" id="pageAgent">
@@ -68,6 +70,10 @@
                   title="配置模型"
                 >
                   ⚙️ 配置模型
+                </button>
+                <button id="btnOpenKbSelector" class="btn btn-outline agent-tool-btn">
+                  📚 选择知识库
+                  <span id="kbSelectedCount" class="badge">0</span>
                 </button>
               </div>
 
@@ -152,72 +158,40 @@
         <div class="page" id="pageKB">
           <header class="header">
             <h1>知识库管理</h1>
-            <p class="subtitle">管理报告模板、向量库与元数据</p>
+            <p class="subtitle">上传报告模板、构建向量库并查看知识库详情</p>
           </header>
 
-          <div class="kb-body">
-            <div class="kb-status">
-              <div class="kb-stat">
-                <span class="kb-stat-label">向量总数</span>
-                <span class="kb-stat-value" id="kbTotal">-</span>
+          <div class="kb-manage-layout">
+            <aside class="kb-manage-sidebar">
+              <div class="kb-manage-sidebar-header">
+                <span>知识库列表</span>
+                <button id="btnSidebarUpload" class="kb-btn">上传 Excel</button>
               </div>
-              <div class="kb-stat">
-                <span class="kb-stat-label">切片文件</span>
-                <span class="kb-stat-value" id="kbMdCount">-</span>
+              <div id="manageKbList" class="kb-manage-list">
+                <div class="kb-manage-empty">正在加载知识库...</div>
               </div>
-              <div class="kb-stat">
-                <span class="kb-stat-label">元数据</span>
-                <span class="kb-stat-value" id="kbMeta">-</span>
+              <input
+                type="file"
+                id="xlsxInput"
+                accept=".xlsx"
+                multiple
+                style="display: none"
+              />
+              <div class="kb-log kb-manage-log" id="kbLog" style="display: none">
+                <div class="kb-log-header">📋 执行日志</div>
+                <div class="kb-log-content" id="kbLogContent"></div>
               </div>
-            </div>
+            </aside>
 
-            <div class="kb-files" id="kbFiles">
-              <div class="kb-files-header">📁 服务器文件</div>
-              <div class="kb-files-list" id="kbFilesList"></div>
-            </div>
-
-            <div class="kb-actions">
-              <button
-                id="btnUploadXlsx"
-                class="btn btn-primary"
-                title="上传 xlsx 模板文件，自动切片为 md 文件"
-              >
-                📤 上传xlsx
-              </button>
-              <button
-                id="btnBuildIncremental"
-                class="btn btn-primary"
-                title="扫描新增切片，向量化后追加到向量库"
-              >
-                增量构建
-              </button>
-              <button
-                id="btnBuildRebuild"
-                class="btn btn-danger"
-                title="清空向量库，全量重新向量化"
-              >
-                全量重建
-              </button>
-              <button
-                id="btnExtractMeta"
-                class="btn btn-outline"
-                title="从 xlsx 提取元数据，生成 metadata.json"
-              >
-                提取元数据
-              </button>
-            </div>
-
-            <input
-              type="file"
-              id="xlsxInput"
-              accept=".xlsx"
-              style="display: none"
-            />
-
-            <div class="kb-log" id="kbLog" style="display: none">
-              <div class="kb-log-header">📋 执行日志</div>
-              <div class="kb-log-content" id="kbLogContent"></div>
-            </div>
+            <section id="kbDetailArea" class="kb-detail-area">
+              <div class="kb-detail-header">
+                <h3 id="detailKbName">请在左侧选择知识库</h3>
+                <span id="detailKbCount" class="kb-chunk-count"></span>
+              </div>
+              <div id="kbChunkList" class="kb-chunk-list">
+                <div class="kb-empty-tip">点击左侧列表查看具体的切片内容...</div>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -463,8 +437,38 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
 
-    <script src="/static/app.js?v=23"></script>
+    <div
+      id="agentKbModal"
+      class="agent-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="agentKbModalTitle"
+      aria-hidden="true"
+      hidden
+    >
+      <div class="agent-modal-overlay"></div>
+      <div class="agent-modal-dialog">
+        <div class="agent-modal-header">
+          <h3 id="agentKbModalTitle">选择对话知识库</h3>
+          <button type="button" class="close-btn" id="btnCloseKbSelector" aria-label="关闭">
+            &times;
+          </button>
+        </div>
+        <div class="agent-modal-body">
+          <p class="modal-tip">请勾选本次对话需要启用的科室/知识库规范：</p>
+          <div id="agentKbSelectorList" class="kb-chip-list">
+            <span class="kb-chip-empty">正在加载知识库...</span>
+          </div>
+        </div>
+        <div class="agent-modal-footer">
+          <button id="btnConfirmKbSelector" class="btn btn-primary">确定</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=35"></script>
   </body>
 </html>

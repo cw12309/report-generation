@@ -1,11 +1,11 @@
 # Eval 模块
 
-`eval/` 用于集中维护自动化评测代码与数据集，与运行时后端和普通单元测试隔离。当前已实现 Retrieval Eval，后续可继续增加 Generation Eval、医学事实一致性指标和评测报告输出。
+`app/eval/` 是应用内独立的自动化评测子模块，集中维护评测代码与数据集。当前已实现 Retrieval Eval，后续可继续增加 Generation Eval、医学事实一致性指标和评测报告输出。
 
 ## 目录
 
 ```text
-eval/
+app/eval/
 ├── __init__.py
 ├── metrics.py
 ├── run_retrieval_eval.py
@@ -37,31 +37,31 @@ eval/
 在项目根目录执行：
 
 ```powershell
-python eval/run_retrieval_eval.py
+python app/eval/run_retrieval_eval.py
 ```
 
 也支持模块方式：
 
 ```powershell
-python -m eval.run_retrieval_eval
+python -m app.eval.run_retrieval_eval
 ```
 
 仅校验 JSON 结构和 MD5 格式，不连接外部服务：
 
 ```powershell
-python eval/run_retrieval_eval.py --validate-only
+python app/eval/run_retrieval_eval.py --validate-only
 ```
 
 从已激活知识库的 SQLite 切片中随机抽样，并调用当前配置的 LLM 自动生成 50 条测试用例：
 
 ```powershell
-python eval/generate_test_cases.py
+python app/eval/generate_test_cases.py
 ```
 
 可调整生成数量和最小切片长度：
 
 ```powershell
-python eval/generate_test_cases.py --count 20 --min-length 150
+python app/eval/generate_test_cases.py --count 20 --min-length 150
 ```
 
 脚本排除测试集中已经使用的 Chunk ID，逐条显示生成进度，并以原子替换方式追加 `type=auto_generated` 的测试用例。若部分 LLM 请求失败或 Query 重复，脚本会保留成功结果并提示再次运行补足。
@@ -69,8 +69,8 @@ python eval/generate_test_cases.py --count 20 --min-length 150
 指定其他数据集或知识库：
 
 ```powershell
-python eval/run_retrieval_eval.py `
-  --dataset eval/datasets/retrieval_test_cases.json `
+python app/eval/run_retrieval_eval.py `
+  --dataset app/eval/datasets/retrieval_test_cases.json `
   --kb-id 69590101e80e4517943669bae956a5e6 `
   --candidate-top-k 50 `
   --rerank-top-k 10
@@ -127,7 +127,9 @@ Content-Type: application/json
 
 `expected_chunk_ids` 也接受英文或中文逗号分隔的字符串。后端校验 32 位 MD5、去重并转为小写，通过原子文件替换写入数据集，同时添加 `metadata: {"type": "manual"}`。
 
-Web UI 不要求手抄 MD5。打开“新增用例”弹窗时会调用 `GET /api/kb/chunks`，从 SQLite `knowledge_base_chunks` 读取所有 active 知识库切片的 50 字预览；用户选中切片后，前端把对应 `chunk_id` 作为 `expected_chunk_ids` 提交。直接调用 API 时仍兼容数组或逗号分隔字符串。
+Web UI 不要求手抄 MD5。“新增用例”弹窗先通过 `GET /api/kb/filter-options` 提供知识库、检查类型及 Level 1～4 级联筛选，再用 300ms 防抖搜索把文本和精确条件组合提交到 `GET /api/kb/chunks`。页面始终只渲染最多 20 个结果，避免数千条 `<option>` 导致 DOM 卡顿。用户选中切片后，前端把对应 `chunk_id` 作为 `expected_chunk_ids` 提交。
+
+级联顺序为 `kb_name → exam_type(modality) → level1 → level2 → level3 → level4`。选项接口返回剔除 NULL 和空字符串后的去重数组；搜索接口执行 `combined_text LIKE ?`，并对所有已选择的结构化字段追加参数化精确匹配。人工用例保存的数据格式不变，仍只写入 Query、稳定 MD5 Chunk ID 和 `metadata.type=manual`。
 
 前端自动生成使用 SSE 接口：
 

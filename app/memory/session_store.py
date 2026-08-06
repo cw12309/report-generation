@@ -506,18 +506,52 @@ class SessionStore:
             ).fetchall()
         return {"total": int(total), "items": [dict(row) for row in rows]}
 
-    def list_active_chunk_options(self, preview_length: int = 50) -> list[dict]:
-        """Return compact chunk options from active knowledge bases for Eval UI."""
+    def list_active_chunk_options(
+        self,
+        query: str = "",
+        limit: int = 20,
+        preview_length: int = 150,
+        kb_name: str = "",
+        exam_type: str = "",
+        level1: str = "",
+        level2: str = "",
+        level3: str = "",
+        level4: str = "",
+    ) -> list[dict]:
+        """Search compact chunk options from active knowledge bases for Eval UI."""
         preview_length = max(20, min(200, int(preview_length)))
+        limit = max(1, min(100, int(limit)))
+        search_query = str(query or "").strip()
+        where_sql = "WHERE kb.status = 'active'"
+        params: list[Any] = []
+        if search_query:
+            where_sql += " AND c.combined_text LIKE ?"
+            params.append(f"%{search_query}%")
+        exact_filters = (
+            ("kb.kb_name", kb_name),
+            ("c.modality", exam_type),
+            ("c.level_1", level1),
+            ("c.level_2", level2),
+            ("c.level_3", level3),
+            ("c.level_4", level4),
+        )
+        for column, value in exact_filters:
+            normalized_value = str(value or "").strip()
+            if normalized_value:
+                where_sql += f" AND TRIM({column}) = ?"
+                params.append(normalized_value)
+        params.append(limit)
         with self._get_conn() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT c.chunk_id, c.kb_id, kb.kb_name, c.combined_text
                 FROM knowledge_base_chunks AS c
                 INNER JOIN knowledge_bases AS kb ON kb.kb_id = c.kb_id
-                WHERE kb.status = 'active'
+                {where_sql}
                 ORDER BY kb.created_at DESC, c.chunk_index ASC
-                """
+                LIMIT ?
+                """,
+                params,
             ).fetchall()
 
         options = []
@@ -533,6 +567,75 @@ class SessionStore:
                 "kb_name": str(row["kb_name"]),
             })
         return options
+
+    def list_active_chunk_filter_options(
+        self,
+        kb_name: str = "",
+        exam_type: str = "",
+        level1: str = "",
+        level2: str = "",
+        level3: str = "",
+    ) -> dict[str, list[str]]:
+        """Return prefix-filtered DISTINCT values for the Eval cascading filters."""
+        selected = {
+            "kb_name": str(kb_name or "").strip(),
+            "exam_type": str(exam_type or "").strip(),
+            "level1": str(level1 or "").strip(),
+            "level2": str(level2 or "").strip(),
+            "level3": str(level3 or "").strip(),
+        }
+        option_specs = (
+            ("kb_names", "kb.kb_name", ()),
+            ("exam_types", "c.modality", (("kb.kb_name", "kb_name"),)),
+            ("level1", "c.level_1", (
+                ("kb.kb_name", "kb_name"),
+                ("c.modality", "exam_type"),
+            )),
+            ("level2", "c.level_2", (
+                ("kb.kb_name", "kb_name"),
+                ("c.modality", "exam_type"),
+                ("c.level_1", "level1"),
+            )),
+            ("level3", "c.level_3", (
+                ("kb.kb_name", "kb_name"),
+                ("c.modality", "exam_type"),
+                ("c.level_1", "level1"),
+                ("c.level_2", "level2"),
+            )),
+            ("level4", "c.level_4", (
+                ("kb.kb_name", "kb_name"),
+                ("c.modality", "exam_type"),
+                ("c.level_1", "level1"),
+                ("c.level_2", "level2"),
+                ("c.level_3", "level3"),
+            )),
+        )
+
+        result: dict[str, list[str]] = {}
+        with self._get_conn() as conn:
+            for result_key, value_column, prefix_filters in option_specs:
+                where_parts = [
+                    "kb.status = 'active'",
+                    f"NULLIF(TRIM({value_column}), '') IS NOT NULL",
+                ]
+                params: list[str] = []
+                for filter_column, selected_key in prefix_filters:
+                    selected_value = selected[selected_key]
+                    if selected_value:
+                        where_parts.append(f"TRIM({filter_column}) = ?")
+                        params.append(selected_value)
+                rows = conn.execute(
+                    f"""
+                    SELECT DISTINCT TRIM({value_column}) AS value
+                    FROM knowledge_base_chunks AS c
+                    INNER JOIN knowledge_bases AS kb ON kb.kb_id = c.kb_id
+                    WHERE {' AND '.join(where_parts)}
+                    ORDER BY value COLLATE NOCASE
+                    """,
+                    params,
+                ).fetchall()
+                result[result_key] = [str(row["value"]) for row in rows]
+        return result
 
     # ── 工具方法 ────────────────────────────────────────────
 

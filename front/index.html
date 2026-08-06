@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=31" />
+    <link rel="stylesheet" href="/static/style.css?v=33" />
   </head>
   <body>
     <div class="app">
@@ -649,7 +649,7 @@
       hidden
     >
       <div class="eval-case-modal-overlay" data-eval-modal-close></div>
-      <div class="eval-case-modal-dialog">
+      <div class="eval-case-modal-dialog eval-case-entry-dialog">
         <div class="eval-case-modal-header">
           <div>
             <span class="eval-case-modal-icon">＋</span>
@@ -677,12 +677,66 @@
                 required
               />
             </label>
-            <label class="eval-case-field" for="select-chunk-id">
+            <div class="eval-case-field">
               <span>预期知识库切片</span>
-              <select id="select-chunk-id" required disabled>
-                <option value="">正在加载知识库切片...</option>
-              </select>
-            </label>
+              <div class="kb-filters-row" aria-label="知识库切片级联筛选">
+                <label class="kb-filter-control">
+                  <span>知识库</span>
+                  <select id="filterKbName">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+                <label class="kb-filter-control">
+                  <span>检查类型</span>
+                  <select id="filterExamType">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+                <label class="kb-filter-control">
+                  <span>Level 1</span>
+                  <select id="filterLevel1">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+                <label class="kb-filter-control">
+                  <span>Level 2</span>
+                  <select id="filterLevel2">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+                <label class="kb-filter-control">
+                  <span>Level 3</span>
+                  <select id="filterLevel3">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+                <label class="kb-filter-control">
+                  <span>Level 4</span>
+                  <select id="filterLevel4">
+                    <option value="">全部</option>
+                  </select>
+                </label>
+              </div>
+              <div id="chunk-autocomplete" class="chunk-autocomplete">
+                <input
+                  type="text"
+                  id="input-chunk-search"
+                  placeholder="输入文本关键词搜索切片..."
+                  autocomplete="off"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls="chunk-search-results"
+                  aria-expanded="false"
+                />
+                <input type="hidden" id="selected-chunk-id" />
+                <div
+                  id="chunk-search-results"
+                  class="autocomplete-dropdown"
+                  role="listbox"
+                  hidden
+                ></div>
+              </div>
+            </div>
             <p class="eval-case-help">
               请选择最符合该 Query 完美答案的知识库切片，系统会自动使用其 Chunk ID。
             </p>
@@ -792,6 +846,6 @@
 
     <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/static/app.js?v=45"></script>
+    <script src="/static/app.js?v=47"></script>
   </body>
 </html>

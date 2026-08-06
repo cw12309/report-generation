@@ -559,9 +559,47 @@ def web_main(port=8000):
         }
 
     @app.get("/api/kb/chunks", summary="评测用例可选知识库切片")
-    async def list_active_knowledge_base_chunk_options():
-        """Return compact SQLite chunk previews without querying Milvus."""
-        return await asyncio.to_thread(store.list_active_chunk_options, 50)
+    async def list_active_knowledge_base_chunk_options(
+        query: str = Query(default="", max_length=200, description="切片正文搜索词"),
+        limit: int = Query(default=20, ge=1, le=100, description="最多返回数量"),
+        kb_name: str = Query(default="", max_length=255, description="知识库名称"),
+        exam_type: str = Query(default="", max_length=128, description="检查类型"),
+        level1: str = Query(default="", max_length=255, description="一级分类"),
+        level2: str = Query(default="", max_length=255, description="二级分类"),
+        level3: str = Query(default="", max_length=255, description="三级分类"),
+        level4: str = Query(default="", max_length=255, description="四级分类"),
+    ):
+        """Search compact SQLite chunk previews without querying Milvus."""
+        return await asyncio.to_thread(
+            store.list_active_chunk_options,
+            query=query,
+            limit=limit,
+            preview_length=150,
+            kb_name=kb_name,
+            exam_type=exam_type,
+            level1=level1,
+            level2=level2,
+            level3=level3,
+            level4=level4,
+        )
+
+    @app.get("/api/kb/filter-options", summary="评测切片级联筛选选项")
+    async def list_active_knowledge_base_chunk_filter_options(
+        kb_name: str = Query(default="", max_length=255, description="知识库名称"),
+        exam_type: str = Query(default="", max_length=128, description="检查类型"),
+        level1: str = Query(default="", max_length=255, description="一级分类"),
+        level2: str = Query(default="", max_length=255, description="二级分类"),
+        level3: str = Query(default="", max_length=255, description="三级分类"),
+    ):
+        """Return DISTINCT options constrained by the selected parent levels."""
+        return await asyncio.to_thread(
+            store.list_active_chunk_filter_options,
+            kb_name=kb_name,
+            exam_type=exam_type,
+            level1=level1,
+            level2=level2,
+            level3=level3,
+        )
 
     @app.get("/api/kb/files", summary="知识库文件列表", description="获取已上传的报告模板文件及其切片信息")
     async def kb_files():

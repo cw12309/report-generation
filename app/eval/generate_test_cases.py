@@ -1,8 +1,8 @@
 """Use the configured LLM to generate Retrieval Eval cases from SQLite chunks.
 
 Examples:
-    python eval/generate_test_cases.py
-    python eval/generate_test_cases.py --count 20 --min-length 150
+    python app/eval/generate_test_cases.py
+    python app/eval/generate_test_cases.py --count 20 --min-length 150
 """
 
 import argparse
@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any
 
 EVAL_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = EVAL_DIR.parent
-APP_DIR = PROJECT_ROOT / "app"
+APP_DIR = EVAL_DIR.parent
+PROJECT_ROOT = APP_DIR.parent
 for import_root in (PROJECT_ROOT, APP_DIR):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))

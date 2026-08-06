@@ -190,14 +190,6 @@ RAG 阶段会发送：
 
 前端把 `rerank` 结果附加到正式回答的“参考切片”折叠面板。`source` 优先使用 Milvus 返回的 32 位 `chunk_id`，因此可与 SQLite 切片直接对应，并在 Collection 重建后保持稳定。
 
-命令行执行真实 Hybrid Search + Rerank：
-
-```powershell
-python debug_retrieval.py "CT"
-```
-
-脚本默认检索 SQLite 中全部 `active` 知识库，Hybrid Search 使用配置的 `rag_top_k` 候选池，再调用真实 Rerank API 输出 Top 3；每条结果显示 `chunk_id/source`、Rerank 分数和前 50 个字符。
-
 只验证 Hybrid Search 和 SQLite/Milvus `chunk_id` 对应关系、不调用 Rerank 时可运行：
 
 ```powershell
@@ -221,4 +213,6 @@ Milvus 重启或 Collection 被 Release 后，下一次检索会尝试恢复加�
 python -m unittest app.test.test_rag_planning
 ```
 
-正式检索评测位于独立 `eval/` 模块：`eval/run_retrieval_eval.py` 执行真实 Hybrid Search + Rerank，数据集存放在 `eval/datasets/retrieval_test_cases.json`，当前统计 Hit@1/3/5。Web 评测中心支持逐 Query SSE 进度、协作式取消和测试集维护；黄金标签使用稳定的 32 位 `chunk_id`。
+正式检索评测位于 `app/eval/` 模块：`app/eval/run_retrieval_eval.py` 执行真实 Hybrid Search + Rerank，数据集存放在 `app/eval/datasets/retrieval_test_cases.json`，当前统计 Hit@1/3/5。Web 评测中心支持逐 Query SSE 进度、协作式取消和测试集维护；黄金标签使用稳定的 32 位 `chunk_id`。
+
+人工维护黄金标签时，前端通过 SQLite 级联筛选接口按知识库、`modality` 和 `level_1～level_4` 缩小范围，再以异步文本搜索选择 Chunk。该管理链路不改变正式 RAG 的 Milvus 三通道召回逻辑，只用于更准确地定位预期 `chunk_id`。

@@ -12,7 +12,7 @@
 - Rerank 精排：粗排候选池默认 50 条，最终保留 10 条供报告生成。
 - 流式对话：FastAPI SSE 推送状态、召回、Rerank、Token、正式报告和完成事件。
 - 来源溯源：正式 AI 气泡底部展示可折叠的参考切片。
-- 独立评测中心：支持 Hit@1/3/5、逐 Query SSE 进度、协作式取消、人工/LLM 自动生成用例、测试集原子清空与单删；人工标注可直接从 SQLite active 切片下拉选择。
+- 独立评测中心：支持 Hit@1/3/5、逐 Query SSE 进度、协作式取消、人工/LLM 自动生成用例、测试集原子清空与单删；人工标注可通过六级级联筛选和异步文本搜索定位 SQLite active 切片。
 - 当前会话记忆：保留 STM 和 EntityTracker，不学习、不注入跨会话用户偏好。
 - 会话与选择持久化：SQLite 保存服务端会话，浏览器 LocalStorage 保存聊天 UI 和知识库勾选状态。
 
@@ -158,7 +158,8 @@ python python_start.py
 | `POST` | `/api/kb/upload` | 上传一个或多个 Excel，每个文件创建一个 KB |
 | `POST` | `/api/kb/{kb_id}/build` | 后台构建指定知识库 |
 | `GET` | `/api/kbs/{kb_id}/chunks` | 分页读取 SQLite 切片原文 |
-| `GET` | `/api/kb/chunks` | 获取 active 知识库的 Chunk ID 与 50 字内容预览 |
+| `GET` | `/api/kb/filter-options` | 接收知识库、检查类型及 Level 1～3 父级条件，返回六级去重选项 |
+| `GET` | `/api/kb/chunks?query=关键词&limit=20` | 结合文本及知识库/检查类型/Level 1～4 精确条件搜索 active 切片 |
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体和对应本地目录 |
 | `POST` | `/api/chat` | SSE 流式对话，必须携带 `selected_kbs` |
 | `POST` | `/api/eval/run` | SSE 流式运行 Retrieval Eval，逐条返回进度并在完成事件中返回指标 |
@@ -168,6 +169,8 @@ python python_start.py
 | `GET` | `/api/eval/dataset` | 读取测试集用例列表，不执行检索 |
 | `DELETE` | `/api/eval/dataset` | 原子清空全部测试用例 |
 | `DELETE` | `/api/eval/dataset/{chunk_id}` | 按期望 Chunk ID 原子删除对应测试用例 |
+
+评测切片搜索支持以下可选参数：`query`、`limit`、`kb_name`、`exam_type`、`level1`、`level2`、`level3`、`level4`。其中 `exam_type` 映射 SQLite 的 `modality`，Level 参数分别映射 `level_1～level_4`；文本条件使用参数化 `LIKE`，结构化条件使用参数化精确匹配并通过 `AND` 组合。`filter-options` 接收 `kb_name`、`exam_type`、`level1～level3`，用于计算后续层级的可用选项。
 
 ## 数据目录
 
@@ -211,24 +214,16 @@ git diff --check
 python app/test/verify_chunk_id_retrieval.py
 ```
 
-真实 Hybrid Search + Rerank 调试：
-
-```powershell
-python debug_retrieval.py "CT"
-```
-
-脚本输出 Top 3 的稳定 `chunk_id/source`、Rerank 分数和切片文本摘要。
-
 运行自动化 Retrieval Eval：
 
 ```powershell
-python eval/run_retrieval_eval.py
+python app/eval/run_retrieval_eval.py
 ```
 
 只校验评测数据集：
 
 ```powershell
-python eval/run_retrieval_eval.py --validate-only
+python app/eval/run_retrieval_eval.py --validate-only
 ```
 
 ## 详细文档
@@ -238,4 +233,4 @@ python eval/run_retrieval_eval.py --validate-only
 - [RAG 检索](app/rag/README.md)
 - [当前会话记忆](app/memory/README.md)
 - [前端](front/README.md)
-- [自动化评测](eval/README.md)
+- [自动化评测](app/eval/README.md)

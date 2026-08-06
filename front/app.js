@@ -1,4 +1,4 @@
-console.log("[APP] app.js v45 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v47 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -61,7 +61,18 @@ const btnAddEvalCase = document.getElementById("btnAddEvalCase");
 const evalCaseModal = document.getElementById("evalCaseModal");
 const evalCaseForm = document.getElementById("evalCaseForm");
 const evalCaseQuery = document.getElementById("evalCaseQuery");
-const selectEvalChunkId = document.getElementById("select-chunk-id");
+const chunkAutocomplete = document.getElementById("chunk-autocomplete");
+const inputChunkSearch = document.getElementById("input-chunk-search");
+const selectedChunkIdInput = document.getElementById("selected-chunk-id");
+const chunkSearchResults = document.getElementById("chunk-search-results");
+const chunkFilterControls = [
+  { param: "kb_name", optionsKey: "kb_names", element: document.getElementById("filterKbName") },
+  { param: "exam_type", optionsKey: "exam_types", element: document.getElementById("filterExamType") },
+  { param: "level1", optionsKey: "level1", element: document.getElementById("filterLevel1") },
+  { param: "level2", optionsKey: "level2", element: document.getElementById("filterLevel2") },
+  { param: "level3", optionsKey: "level3", element: document.getElementById("filterLevel3") },
+  { param: "level4", optionsKey: "level4", element: document.getElementById("filterLevel4") },
+];
 const evalCaseError = document.getElementById("evalCaseError");
 const btnCloseEvalCase = document.getElementById("btnCloseEvalCase");
 const btnCancelEvalCase = document.getElementById("btnCancelEvalCase");
@@ -122,7 +133,12 @@ let evalProgressHideTimer = null;
 let evalCancelResetTimer = null;
 let evalRunAbortController = null;
 let isEvalCancelRequested = false;
-let evalChunkOptionsRequestId = 0;
+let chunkSearchDebounceTimer = null;
+let chunkSearchAbortController = null;
+let chunkSearchRequestId = 0;
+let isChunkSearchOpen = false;
+let chunkFilterAbortController = null;
+let chunkFilterRequestId = 0;
 
 // API 基础地址
 const API_BASE = "/api";
@@ -337,59 +353,233 @@ function showToast(message, type = "success") {
   }, 2600);
 }
 
-async function loadEvalChunkOptions() {
-  if (!selectEvalChunkId) return;
-  const requestId = ++evalChunkOptionsRequestId;
-  selectEvalChunkId.disabled = true;
-  selectEvalChunkId.replaceChildren(new Option("正在加载知识库切片...", ""));
+function hideChunkSearchResults() {
+  isChunkSearchOpen = false;
+  if (chunkSearchResults) chunkSearchResults.hidden = true;
+  inputChunkSearch?.setAttribute("aria-expanded", "false");
+}
+
+function renderChunkSearchMessage(message, state = "empty") {
+  if (!chunkSearchResults) return;
+  const messageEl = document.createElement("div");
+  messageEl.className = `autocomplete-message ${state}`;
+  messageEl.textContent = message;
+  chunkSearchResults.replaceChildren(messageEl);
+  chunkSearchResults.hidden = !isChunkSearchOpen;
+  inputChunkSearch?.setAttribute("aria-expanded", String(isChunkSearchOpen));
+}
+
+function resetChunkSearch() {
+  window.clearTimeout(chunkSearchDebounceTimer);
+  chunkSearchAbortController?.abort();
+  chunkSearchAbortController = null;
+  if (inputChunkSearch) {
+    inputChunkSearch.value = "";
+    inputChunkSearch.disabled = false;
+    inputChunkSearch.classList.remove("has-selection");
+  }
+  if (selectedChunkIdInput) selectedChunkIdInput.value = "";
+  chunkSearchResults?.replaceChildren();
+  hideChunkSearchResults();
+}
+
+function resetChunkFilters() {
+  chunkFilterAbortController?.abort();
+  chunkFilterAbortController = null;
+  chunkFilterControls.forEach(({ element }) => {
+    if (element) {
+      element.value = "";
+      element.disabled = false;
+    }
+  });
+}
+
+function appendSelectedChunkFilters(params, maxIndex = chunkFilterControls.length - 1) {
+  chunkFilterControls.forEach(({ param, element }, index) => {
+    if (index > maxIndex) return;
+    const value = element?.value.trim() || "";
+    if (value) params.set(param, value);
+  });
+}
+
+function updateChunkFilterSelect(control, values) {
+  const select = control.element;
+  if (!select) return false;
+  const previousValue = select.value;
+  const normalizedValues = Array.isArray(values)
+    ? values.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+  const fragment = document.createDocumentFragment();
+  fragment.appendChild(new Option("全部", ""));
+  normalizedValues.forEach((value) => fragment.appendChild(new Option(value, value)));
+  select.replaceChildren(fragment);
+  select.value = normalizedValues.includes(previousValue) ? previousValue : "";
+  return Boolean(previousValue && !select.value);
+}
+
+async function loadChunkFilterOptions(
+  maxKnownIndex = chunkFilterControls.length - 2,
+  retryAfterReset = true,
+) {
+  const requestId = ++chunkFilterRequestId;
+  chunkFilterAbortController?.abort();
+  const controller = new AbortController();
+  chunkFilterAbortController = controller;
+  const params = new URLSearchParams({ _t: String(Date.now()) });
+  // filter-options only needs the selected parent path through Level 3.
+  appendSelectedChunkFilters(params, Math.min(maxKnownIndex, 4));
+  document.querySelector(".kb-filters-row")?.classList.add("is-loading");
 
   try {
-    const response = await fetch(`${API_BASE}/kb/chunks?_t=${Date.now()}`, {
+    const response = await fetch(`${API_BASE}/kb/filter-options?${params.toString()}`, {
       method: "GET",
       headers: { "Accept": "application/json" },
       cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    if (requestId !== chunkFilterRequestId) return false;
+    let selectionWasReset = false;
+    chunkFilterControls.forEach((control) => {
+      selectionWasReset = updateChunkFilterSelect(
+        control,
+        payload[control.optionsKey],
+      ) || selectionWasReset;
+    });
+    if (selectionWasReset && retryAfterReset) {
+      // A stale child value was removed. Fetch once more with the normalized
+      // path so its descendants show the correct broader option set.
+      return loadChunkFilterOptions(chunkFilterControls.length - 2, false);
+    }
+    return true;
+  } catch (error) {
+    if (error.name === "AbortError" || requestId !== chunkFilterRequestId) return false;
+    console.error("[Eval] 加载切片级联筛选失败", error);
+    setEvalCaseError(`筛选条件加载失败：${error.message}`);
+    return false;
+  } finally {
+    if (requestId === chunkFilterRequestId) {
+      document.querySelector(".kb-filters-row")?.classList.remove("is-loading");
+    }
+    if (chunkFilterAbortController === controller) {
+      chunkFilterAbortController = null;
+    }
+  }
+}
+
+function scheduleChunkSearch({ openResults = false } = {}) {
+  window.clearTimeout(chunkSearchDebounceTimer);
+  if (openResults) {
+    isChunkSearchOpen = true;
+    inputChunkSearch?.setAttribute("aria-expanded", "true");
+  }
+  chunkSearchDebounceTimer = window.setTimeout(
+    () => searchEvalChunks(inputChunkSearch?.value || ""),
+    300,
+  );
+}
+
+function selectEvalChunk(chunk) {
+  const chunkId = String(chunk.chunk_id || "").trim().toLowerCase();
+  if (!chunkId || !inputChunkSearch || !selectedChunkIdInput) return;
+  selectedChunkIdInput.value = chunkId;
+  inputChunkSearch.value = String(chunk.content_preview || "（无内容预览）");
+  inputChunkSearch.classList.add("has-selection");
+  setEvalCaseError();
+  hideChunkSearchResults();
+}
+
+function renderChunkSearchResults(chunks) {
+  if (!chunkSearchResults) return;
+  if (!chunks.length) {
+    renderChunkSearchMessage("没有找到匹配的 active 知识库切片", "empty");
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  chunks.forEach((chunk) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "autocomplete-item";
+    item.setAttribute("role", "option");
+
+    const header = document.createElement("span");
+    header.className = "autocomplete-item-header";
+
+    const kbBadge = document.createElement("span");
+    kbBadge.className = "autocomplete-kb-badge";
+    kbBadge.textContent = String(chunk.kb_name || "知识库");
+
+    const chunkId = document.createElement("span");
+    chunkId.className = "autocomplete-item-id";
+    chunkId.textContent = String(chunk.chunk_id || "");
+    header.append(kbBadge, chunkId);
+
+    const preview = document.createElement("span");
+    preview.className = "autocomplete-item-text";
+    preview.textContent = String(chunk.content_preview || "（无内容预览）");
+
+    item.append(header, preview);
+    item.addEventListener("click", () => selectEvalChunk(chunk));
+    fragment.appendChild(item);
+  });
+  chunkSearchResults.replaceChildren(fragment);
+  chunkSearchResults.hidden = !isChunkSearchOpen;
+  inputChunkSearch?.setAttribute("aria-expanded", String(isChunkSearchOpen));
+}
+
+async function searchEvalChunks(searchTerm = "") {
+  if (!chunkSearchResults) return;
+  const requestId = ++chunkSearchRequestId;
+  chunkSearchAbortController?.abort();
+  const controller = new AbortController();
+  chunkSearchAbortController = controller;
+  renderChunkSearchMessage("正在搜索知识库切片...", "loading");
+
+  const params = new URLSearchParams({
+    query: String(searchTerm || "").trim(),
+    limit: "20",
+    _t: String(Date.now()),
+  });
+  appendSelectedChunkFilters(params);
+  try {
+    const response = await fetch(`${API_BASE}/kb/chunks?${params.toString()}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+      signal: controller.signal,
     });
     const payload = await response.json().catch(() => []);
     if (!response.ok) {
       throw new Error(payload.detail || `HTTP ${response.status}`);
     }
-    if (requestId !== evalChunkOptionsRequestId) return;
-
-    const chunks = Array.isArray(payload) ? payload : [];
-    const fragment = document.createDocumentFragment();
-    fragment.appendChild(new Option(
-      chunks.length ? "请选择知识库切片..." : "暂无可用的知识库切片",
-      "",
-    ));
-    chunks.forEach((chunk) => {
-      const option = new Option(
-        String(chunk.content_preview || "（无内容预览）"),
-        String(chunk.chunk_id || ""),
-      );
-      option.title = `${chunk.kb_name || "知识库"} · ${chunk.chunk_id || ""}`;
-      fragment.appendChild(option);
-    });
-    selectEvalChunkId.replaceChildren(fragment);
-    selectEvalChunkId.disabled = chunks.length === 0;
-    if (!chunks.length) {
-      setEvalCaseError("当前没有可选择的 active 知识库切片，请先完成知识库构建。");
-    }
+    if (requestId !== chunkSearchRequestId) return;
+    renderChunkSearchResults(Array.isArray(payload) ? payload.slice(0, 20) : []);
   } catch (error) {
-    if (requestId !== evalChunkOptionsRequestId) return;
-    console.error("[Eval] 加载知识库切片失败", error);
-    selectEvalChunkId.replaceChildren(new Option("知识库切片加载失败", ""));
-    selectEvalChunkId.disabled = true;
-    setEvalCaseError(`知识库切片加载失败：${error.message}`);
+    if (error.name === "AbortError" || requestId !== chunkSearchRequestId) return;
+    console.error("[Eval] 搜索知识库切片失败", error);
+    renderChunkSearchMessage(`搜索失败：${error.message}`, "error");
+  } finally {
+    if (chunkSearchAbortController === controller) {
+      chunkSearchAbortController = null;
+    }
   }
 }
 
 function openEvalCaseModal() {
   if (!evalCaseModal) return;
   evalCaseForm?.reset();
+  resetChunkSearch();
+  resetChunkFilters();
   setEvalCaseError();
   evalCaseModal.hidden = false;
   evalCaseModal.setAttribute("aria-hidden", "false");
-  loadEvalChunkOptions();
+  loadChunkFilterOptions(-1).then((loaded) => {
+    if (loaded && !evalCaseModal.hidden) scheduleChunkSearch();
+  });
   requestAnimationFrame(() => evalCaseQuery?.focus());
 }
 
@@ -397,6 +587,10 @@ function closeEvalCaseModal() {
   if (!evalCaseModal || isSavingEvalCase) return;
   evalCaseModal.hidden = true;
   evalCaseModal.setAttribute("aria-hidden", "true");
+  window.clearTimeout(chunkSearchDebounceTimer);
+  chunkSearchAbortController?.abort();
+  chunkFilterAbortController?.abort();
+  hideChunkSearchResults();
   setEvalCaseError();
 }
 
@@ -408,9 +602,10 @@ function setEvalCaseSaving(saving) {
   }
   if (btnCloseEvalCase) btnCloseEvalCase.disabled = saving;
   if (btnCancelEvalCase) btnCancelEvalCase.disabled = saving;
-  if (selectEvalChunkId) {
-    selectEvalChunkId.disabled = saving || selectEvalChunkId.options.length <= 1;
-  }
+  if (inputChunkSearch) inputChunkSearch.disabled = saving;
+  chunkFilterControls.forEach(({ element }) => {
+    if (element) element.disabled = saving;
+  });
 }
 
 function markEvalDatasetUpdated(total, message) {
@@ -426,7 +621,7 @@ async function saveEvalCase(event) {
   if (isSavingEvalCase) return;
 
   const query = evalCaseQuery?.value.trim() || "";
-  const selectedChunkId = selectEvalChunkId?.value.trim().toLowerCase() || "";
+  const selectedChunkId = selectedChunkIdInput?.value.trim().toLowerCase() || "";
   if (!query) {
     setEvalCaseError("请输入测试 Query。");
     evalCaseQuery?.focus();
@@ -434,12 +629,12 @@ async function saveEvalCase(event) {
   }
   if (!selectedChunkId) {
     setEvalCaseError("请选择一个预期知识库切片。");
-    selectEvalChunkId?.focus();
+    inputChunkSearch?.focus();
     return;
   }
   if (!/^[0-9a-f]{32}$/.test(selectedChunkId)) {
     setEvalCaseError("所选切片缺少合法的 32 位 Chunk ID，请刷新后重试。");
-    selectEvalChunkId?.focus();
+    inputChunkSearch?.focus();
     return;
   }
 
@@ -485,9 +680,47 @@ btnCancelEvalCase?.addEventListener("click", closeEvalCaseModal);
 evalCaseModal?.querySelector("[data-eval-modal-close]")
   ?.addEventListener("click", closeEvalCaseModal);
 evalCaseForm?.addEventListener("submit", saveEvalCase);
+inputChunkSearch?.addEventListener("input", () => {
+  isChunkSearchOpen = true;
+  inputChunkSearch.setAttribute("aria-expanded", "true");
+  if (selectedChunkIdInput) selectedChunkIdInput.value = "";
+  inputChunkSearch.classList.remove("has-selection");
+  setEvalCaseError();
+  scheduleChunkSearch({ openResults: true });
+});
+inputChunkSearch?.addEventListener("focus", () => {
+  isChunkSearchOpen = true;
+  inputChunkSearch.setAttribute("aria-expanded", "true");
+  if (chunkSearchResults?.childElementCount) {
+    chunkSearchResults.hidden = false;
+  } else {
+    searchEvalChunks(inputChunkSearch.value);
+  }
+});
+chunkFilterControls.forEach(({ element }) => {
+  element?.addEventListener("change", async () => {
+    if (selectedChunkIdInput) selectedChunkIdInput.value = "";
+    if (inputChunkSearch?.classList.contains("has-selection")) {
+      inputChunkSearch.value = "";
+      inputChunkSearch.classList.remove("has-selection");
+    }
+    setEvalCaseError();
+    const loaded = await loadChunkFilterOptions();
+    if (loaded) scheduleChunkSearch({ openResults: true });
+  });
+});
+document.addEventListener("click", (event) => {
+  if (chunkAutocomplete && !chunkAutocomplete.contains(event.target)) {
+    hideChunkSearchResults();
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && evalCaseModal && !evalCaseModal.hidden) {
-    closeEvalCaseModal();
+    if (chunkSearchResults && !chunkSearchResults.hidden) {
+      hideChunkSearchResults();
+    } else {
+      closeEvalCaseModal();
+    }
   }
 });
 

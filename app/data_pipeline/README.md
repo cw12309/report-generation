@@ -88,7 +88,7 @@ knowledge_bases.metadata_tree
 
 Metadata Navigator 在聊天检索前只合并当前 `selected_kbs` 对应的 `metadata_tree`。
 
-评测中心人工新增用例时，`GET /api/kb/chunks` 直接从该表读取所有 active 知识库的稳定 `chunk_id` 和 50 字 `combined_text` 预览，供前端下拉选择；不需要反查 Milvus。
+评测中心人工新增用例时，`GET /api/kb/filter-options` 从该表和 `knowledge_bases` 计算知识库、检查类型及 Level 1～4 的级联去重值；`GET /api/kb/chunks?query=...&limit=20` 再组合文本与六个精确字段，参数化搜索 active 知识库的稳定 `chunk_id`，并返回 150 字 `combined_text` 预览。整个选择过程不需要反查 Milvus。
 
 直接运行 `extract_metadata.py` 仍可生成 JSON 文件用于排查：
 

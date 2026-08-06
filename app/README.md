@@ -33,7 +33,7 @@ Milvus Collection                  medical_reports（多个逻辑知识库，共
 - 会话持久化：SQLite 保存会话、实体槽位、上一份报告和当前选择的知识库。
 - 当前会话记忆：只保留 STM 和 EntityTracker，不学习或注入跨会话用户偏好。
 - 流式响应：聊天接口使用 SSE 推送思考过程、召回、Rerank、Token 和最终报告；前端在正式回答下附加参考切片。
-- 检索评测：`eval/` 读取 SQLite Chunk 和独立 JSON 测试集，支持 SSE 评测/取消、人工标注、LLM 自动生成及原子测试集 CRUD。
+- 检索评测：`app/eval/` 读取 SQLite Chunk 和独立 JSON 测试集，支持 SSE 评测/取消、人工标注、LLM 自动生成及原子测试集 CRUD。
 
 ## 启动
 
@@ -125,7 +125,8 @@ SQLite 使用“删除该 `kb_id` 的旧切片 + `executemany` 批量插入”�
 | --- | --- | --- |
 | `GET` | `/api/kbs` | 查询 SQLite 中的知识库列表和状态 |
 | `GET` | `/api/kbs/{kb_id}/chunks?page=1&size=50` | 分页查询 SQLite 切片原文，`size` 最大 100 |
-| `GET` | `/api/kb/chunks` | 为评测用例下拉框返回 active 知识库切片预览 |
+| `GET` | `/api/kb/filter-options` | 返回评测切片选择器的六级级联选项 |
+| `GET` | `/api/kb/chunks?query=关键词&limit=20` | 参数化组合文本与六个精确字段，搜索 active 知识库切片 |
 | `POST` | `/api/kb/upload` | 上传一个或多个 `.xlsx`，只保存文件并创建 `uploaded` 记录 |
 | `POST` | `/api/kb/{kb_id}/build` | 将指定知识库置为 `processing`，后台执行构建 |
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体及本地模板/切片目录 |
@@ -137,6 +138,10 @@ SQLite 使用“删除该 `kb_id` 的旧切片 + `executemany` 批量插入”�
 | `GET` | `/api/eval/dataset` | 获取当前评测用例列表和总数 |
 | `DELETE` | `/api/eval/dataset` | 将测试集原子覆盖为 `[]` |
 | `DELETE` | `/api/eval/dataset/{chunk_id}` | 删除包含指定期望 Chunk ID 的用例 |
+
+`/api/kb/filter-options` 接收可选的 `kb_name`、`exam_type`、`level1`、`level2`、`level3`，按父级路径分别返回 `kb_names`、`exam_types` 和 `level1～level4` 去重数组。`/api/kb/chunks` 额外接受 `level4`，把六个结构化条件与 `query` 文本条件组合后返回 Top 20。API 参数 `exam_type` 对应数据库字段 `modality`。
+
+上述 SQLite 查询中的用户值全部通过 `?` 占位符绑定；动态 SQL 只使用后端固定的字段映射，不接受客户端传入列名。选项查询使用 `TRIM` 并排除 NULL/空字符串。
 
 上传示例：
 
@@ -240,8 +245,8 @@ python app/data_pipeline/migrate_milvus_schema.py --check
 python app/data_pipeline/rebuild_all_knowledge_bases.py `
   --confirm "DROP medical_reports"
 
-# 真实 Hybrid Search + Rerank Top 3 调试
-python debug_retrieval.py "CT"
+# 真实 Hybrid Search + Rerank 自动评测
+python app/eval/run_retrieval_eval.py
 ```
 
 详细说明见 [`app/data_pipeline/README.md`](data_pipeline/README.md)。
@@ -268,7 +273,8 @@ app/
 ├── tools/                Tool Calling 工具注册与实现
 ├── rag/                  查询规划、Metadata Navigator、Milvus 检索和 Rerank
 ├── memory/               SessionStore、实体追踪、短期记忆
-├── data_pipeline/       Excel、Markdown、metadata 和向量库构建脚本
+├── data_pipeline/        Excel、Markdown、metadata 和向量库构建脚本
+├── eval/                 Retrieval Eval、指标、数据集与用例生成
 ├── prompt/               系统提示词与 PromptBuilder
 ├── scripts/              运维脚本（如 cleanup_disk.py）
 └── test/                 单元测试、检索评估和 API 测试

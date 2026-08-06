@@ -1,8 +1,8 @@
 """Run the real Hybrid Search + Rerank retrieval evaluation.
 
 Examples:
-    python eval/run_retrieval_eval.py
-    python eval/run_retrieval_eval.py --dataset eval/datasets/retrieval_test_cases.json
+    python app/eval/run_retrieval_eval.py
+    python app/eval/run_retrieval_eval.py --dataset app/eval/datasets/retrieval_test_cases.json
     python -m eval.run_retrieval_eval --validate-only
 """
 
@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 EVAL_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = EVAL_DIR.parent
-APP_DIR = PROJECT_ROOT / "app"
+APP_DIR = EVAL_DIR.parent
+PROJECT_ROOT = APP_DIR.parent
 for import_root in (PROJECT_ROOT, APP_DIR):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))

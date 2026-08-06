@@ -11,7 +11,6 @@ from pymilvus import MilvusClient
 
 from memory.entity_tracker import EntityTracker
 from memory.short_term import ShortTermMemory
-from memory.long_term import LongTermMemory
 from memory.session_store import SessionStore
 from config import get_db_path, get_collection_name, get_max_rounds, get_milvus_token
 
@@ -41,7 +40,6 @@ def main():
     SESSION_ID = f"rag_v2_{uuid.uuid4().hex[:8]}"
     stm = ShortTermMemory(max_rounds=get_max_rounds())
     entity_tracker = EntityTracker(llm_chat_fn=chat_stream)
-    ltm = LongTermMemory()
     token = get_milvus_token()
     client = MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
     client.load_collection(COLLECTION_NAME)
@@ -80,7 +78,7 @@ def main():
 
             result = asyncio.run(run_pipeline(
                 user_input, SESSION_ID,
-                stm, entity_tracker, ltm, client,
+                stm, entity_tracker, client,
                 last_report,
                 _emit,
             ))

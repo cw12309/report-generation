@@ -1,93 +1,219 @@
-# 医疗影像报告生成Agent v2
+# 医疗影像报告生成 Agent V2
 
-基于 RAG（检索增强生成）的医疗影像报告智能生成系统。用户上传 Excel 格式的影像报告模板，系统自动切片、双通道向量化并入库。输入检查信息后，系统通过多路召回 + Rerank 检索相关报告，由 LLM 整合生成规范化的影像学表现与诊断意见。
+基于 FastAPI、Tool Calling、RAG、SQLite 和 Milvus 的医疗影像报告生成系统。系统支持一次上传多个 Excel，但每个 Excel 都会成为一个独立的逻辑知识库；医生在对话时选择一个或多个已激活知识库，Agent 再执行带 `kb_id` 隔离的 Dense/Sparse 混合检索和 Rerank，最终流式生成报告。
 
-## 核心特性
+## 当前能力
 
-- **双通道向量化**：每个切片生成完整行向量和影像学表现向量，提升检索准确率
-- **多路召回**：向量检索 + 元数据过滤 + 关键词匹配，三路互补
-- **Rerank 重排**：使用 Rerank 模型对召回结果精排
-- **歧义检测**：自动检测多种相关诊断，提供交互式选择
-- **多轮对话**：支持上下文继承、意图切换、报告合并
-- **会话持久化**：SQLite 存储，服务重启后对话不丢失
-- **长期记忆**：自动学习用户偏好，个性化报告生成
-- **流式输出**：实时显示生成进度和思考过程
+- 多知识库逻辑隔离：所有向量共用 Milvus Collection `medical_reports`，通过 `kb_id` 标量过滤隔离。
+- 上传与构建解耦：上传只保存 Excel 并创建 `uploaded` 记录，构建由独立接口异步触发。
+- 双流存储：SQLite 保存知识库元数据和完整切片原文，Milvus 保存检索字段与向量；两端通过稳定的 32 位 MD5 `chunk_id` 对齐。
+- 增量重建：重新构建某个知识库时，只删除该 `kb_id` 的旧 Milvus 实体，不删除整个 Collection。
+- 混合检索：严格层级、仅模态、仅知识库三通道，每个通道包含 Dense 和 Sparse 请求，并使用 RRF 融合。
+- Rerank 精排：粗排候选池默认 50 条，最终保留 10 条供报告生成。
+- 流式对话：FastAPI SSE 推送状态、召回、Rerank、Token、正式报告和完成事件。
+- 来源溯源：正式 AI 气泡底部展示可折叠的参考切片。
+- 当前会话记忆：保留 STM 和 EntityTracker，不学习、不注入跨会话用户偏好。
+- 会话与选择持久化：SQLite 保存服务端会话，浏览器 LocalStorage 保存聊天 UI 和知识库勾选状态。
 
 ## 架构
 
+```text
+浏览器（原生 HTML / CSS / JavaScript）
+                 │ HTTP / SSE
+                 ▼
+FastAPI：app/chat/server.py
+  ├─ Agent 编排：app/chat/pipeline.py
+  ├─ Tool Calling：app/tools/
+  ├─ RAG：app/rag/
+  ├─ STM / EntityTracker：app/memory/
+  └─ Excel 构建流水线：app/data_pipeline/
+                 │
+       ┌─────────┴─────────┐
+       ▼                   ▼
+SQLite                  Milvus
+data/sessions.db        medical_reports
+会话、KB、切片原文       Dense/Sparse、标量字段
+        └──── 32 位 MD5 chunk_id 双向对应 ────┘
 ```
-前端 (Vue.js)  ←→  FastAPI 后端  ←→  LLM (qwen36-27b)
-                                    ←→  Milvus Lite (向量数据库)
-                                    ←→  SQLite (会话/记忆持久化)
+
+## 当前已验证数据基线
+
+截至 2026-08-06，远程 `medical_reports` 已按最新 Schema 完成一次全量重建：
+
+- 6 个知识库，状态均为 `active / 100%`；
+- SQLite `knowledge_base_chunks`：3143 条；
+- Markdown：3143 个；
+- Milvus：3143 条实体；
+- 三端 `chunk_id` 均为 32 位 MD5，3143 个 ID 全部唯一且集合一致；
+- `CT` Hybrid Search 烟测返回的 `source` 已确认等于 `chunk_id`，并能回查 SQLite 原文。
+
+## 快速启动
+
+### 1. 安装依赖
+
+建议使用 Python 3.11 或项目现有 Conda 环境：
+
+```powershell
+pip install -r requirements.txt
 ```
 
-## 部署
+运行测试如需 `pytest`，需额外安装：
 
-### 前置条件
+```powershell
+pip install pytest
+```
 
-- Docker & Docker Compose 已安装并运行
-- Embedding API 和 Chat API 服务可用
+### 2. 配置服务
 
-### 1. 配置环境变量
+主要配置位于项目根目录 `config.yml`：
+
+```yaml
+milvus:
+  uri: http://<milvus-host>:19530
+  token: ""
+
+retrieval:
+  collection_name: medical_reports
+  rag_top_k: 50
+  rerank_top_k: 10
+```
+
+LLM、Embedding、Rerank 可以在 `config.yml` 中配置，也可以使用环境变量覆盖：
+
+| 环境变量 | 作用 |
+| --- | --- |
+| `CHAT_URL` / `CHAT_MODEL` | 对话模型地址与模型名 |
+| `EMBED_URL` / `EMBED_MODEL` | Embedding 地址与模型名 |
+| `RERANK_URL` / `RERANK_MODEL` | Rerank 地址与模型名 |
+| `MILVUS_URI` | Milvus 地址，优先于 `config.yml` |
+| `SILICONFLOW_API_KEY` 或 `RERANK_API_KEY` | Rerank 密钥 |
+
+不要把真实 API Key 提交到版本库。
+
+### 3. 检查 Milvus Schema
+
+首次部署或从旧版升级时执行：
+
+```powershell
+python app/data_pipeline/migrate_milvus_schema.py --check
+```
+
+Collection 必须包含 `kb_id` 和 `chunk_id` 字段。旧 Collection 缺少字段且旧向量允许丢弃时，执行一次受控删除重建：
+
+```powershell
+python app/data_pipeline/migrate_milvus_schema.py `
+  --drop-and-create `
+  --confirm "DROP medical_reports"
+```
+
+该命令会删除 Collection 中的全部旧向量，执行前应确认数据可重建或已经备份。正常启动只校验 Schema，不会静默删除旧 Collection。
+
+若需要从 SQLite 登记的原始 Excel 一次性重建 Markdown、SQLite 切片和整个 Milvus Collection，使用：
+
+```powershell
+python app/data_pipeline/rebuild_all_knowledge_bases.py `
+  --batch-size 32 `
+  --confirm "DROP medical_reports"
+```
+
+该命令具有破坏性确认保护；只有全部本地 Excel 解析成功后才会删除旧 Collection。
+
+### 4. 启动 FastAPI
+
+```powershell
+python python_start.py
+```
+
+- Web 页面：<http://localhost:8000>
+- API 文档：<http://localhost:8000/docs>
+
+## 知识库使用流程
+
+```text
+1. 前端上传一个或多个 .xlsx
+   POST /api/kb/upload
+   └─ 每个文件生成独立 kb_id，状态 uploaded
+
+2. 在知识库管理页点击“构建”
+   POST /api/kb/{kb_id}/build
+   └─ processing → active / failed
+
+3. 构建任务
+   Excel → Markdown → SQLite 切片 → metadata_tree
+         → Dense/Sparse → Milvus（实体带 kb_id）
+
+4. Agent 页面选择 active 知识库
+   POST /api/chat
+   selected_kbs: ["kb_id_1", "kb_id_2"]
+```
+
+上传与构建是两个独立动作。上传完成不会自动生成 Markdown，也不会写入 Milvus。
+
+## 常用 API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/kbs` | 获取知识库列表、状态和进度 |
+| `POST` | `/api/kb/upload` | 上传一个或多个 Excel，每个文件创建一个 KB |
+| `POST` | `/api/kb/{kb_id}/build` | 后台构建指定知识库 |
+| `GET` | `/api/kbs/{kb_id}/chunks` | 分页读取 SQLite 切片原文 |
+| `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体和对应本地目录 |
+| `POST` | `/api/chat` | SSE 流式对话，必须携带 `selected_kbs` |
+
+## 数据目录
+
+```text
+data/sessions.db
+app/data_pipeline/report_template/{kb_id}/原文件.xlsx
+app/data_pipeline/output_markdown/{kb_id}/.../*.md
+```
+
+删除知识库时，两个以 `kb_id` 命名的目录会同步清理。清理未登记在 SQLite 的遗留文件前先预览：
+
+```powershell
+python app/scripts/cleanup_disk.py --dry-run
+python app/scripts/cleanup_disk.py
+```
+
+## Docker
+
+项目保留 `Dockerfile`、`docker-compose.yml` 和 `start.sh`。默认端口映射为宿主机 `7860` 到容器 `8000`：
 
 ```bash
-cp .env.example .env
-# 编辑 .env，填入实际的 API 地址和模型名称
-```
-
-`.env` 配置项：
-
-| 变量                  | 说明                 | 默认值                                         |
-| --------------------- | -------------------- | ---------------------------------------------- |
-| `EMBED_URL`           | Embedding API 地址   | `http://14.22.83.225:11002/v1/embeddings`      |
-| `EMBED_MODEL`         | 向量化模型名称       | `bge-m3`                                       |
-| `CHAT_URL`            | Chat API 地址        | `http://14.22.86.97:11001/v1/chat/completions` |
-| `CHAT_MODEL`          | 生成模型名称         | `qwen36-27b`                                   |
-| `RERANK_URL`          | Rerank API 地址      | `https://api.siliconflow.cn/v1/rerank`         |
-| `RERANK_MODEL`        | Rerank 模型名称      | `Qwen/Qwen3-VL-Reranker-8B`                    |
-| `SILICONFLOW_API_KEY` | SiliconFlow API 密钥 | （需填入）                                     |
-| `HOST_PORT`           | 宿主机映射端口       | `7860`                                         |
-
-### 2. 一键启动
-
-```bash
-sed -i 's/\r$//' start.sh
 chmod +x start.sh
 ./start.sh start
 ```
 
-启动后访问 `http://服务器IP:7860`
+访问 <http://localhost:7860>。当前 Compose 中仍保留部分历史本地数据卷配置；若生产环境使用远程 Milvus并要求上传文件跨容器重建后仍保留，应确认 `report_template`、`output_markdown` 和 `data/` 已映射到持久卷。
 
-### 3. 管理命令
+## 验证
 
-```bash
-./start.sh start     # 初始化并启动服务
-./start.sh stop      # 停止服务
-./start.sh restart   # 重启服务
-./start.sh rebuild   # 无缓存重新构建并启动
-./start.sh logs      # 查看实时日志
-./start.sh status    # 查看服务状态
-./start.sh init      # 仅初始化（不启动）
+```powershell
+python -m compileall -q app
+python -m app.test.test_memory
+python -m unittest app.test.test_rag_planning
+python app/data_pipeline/migrate_milvus_schema.py --check
+git diff --check
 ```
 
-## 本地开发
+只执行 Hybrid Search 并验证 `source/chunk_id` 可回查 SQLite：
 
-### 1. 安装依赖
-
-```bash
-pip install -r requirements.txt
+```powershell
+python app/test/verify_chunk_id_retrieval.py
 ```
 
-### 2. 启动服务
+真实 Hybrid Search + Rerank 调试：
 
-```bash
-python python_start.py
+```powershell
+python debug_retrieval.py "CT"
 ```
 
-访问 `http://localhost:7860`
+脚本输出 Top 3 的稳定 `chunk_id/source`、Rerank 分数和切片文本摘要。
 
 ## 详细文档
 
-- [后端架构](app/README.md)
-- [记忆系统](app/memory/README.md)
-- [工具调用](app/chat/README.md)
+- [应用层与 API](app/README.md)
+- [数据管线](app/data_pipeline/README.md)
+- [RAG 检索](app/rag/README.md)
+- [当前会话记忆](app/memory/README.md)
+- [前端](front/README.md)

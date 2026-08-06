@@ -21,7 +21,6 @@ from pymilvus import MilvusClient
 
 from memory.entity_tracker import EntityTracker
 from memory.short_term import ShortTermMemory
-from memory.long_term import LongTermMemory
 from memory.session_store import SessionStore
 from config import (
     get_db_path, get_collection_name, get_markdown_dir, get_milvus_token,
@@ -102,7 +101,6 @@ def web_main(port=8000):
             logger.info(f"恢复会话: {session_id}, 标题={session_data['title']}, 轮次={len(session_data['turns'])}")
             stm = ShortTermMemory(max_rounds=get_max_rounds())
             entity_tracker = EntityTracker(llm_chat_fn=chat_stream)
-            ltm = LongTermMemory()
             client = _new_milvus_client()
             client.load_collection(COLLECTION_NAME)
 
@@ -124,7 +122,6 @@ def web_main(port=8000):
             return {
                 "stm": stm,
                 "entity_tracker": entity_tracker,
-                "ltm": ltm,
                 "client": client,
                 "last_report": last_report,
                 "last_ambiguity": last_ambiguity,
@@ -135,7 +132,6 @@ def web_main(port=8000):
             logger.info(f"创建新会话: {session_id}")
             stm = ShortTermMemory(max_rounds=get_max_rounds())
             entity_tracker = EntityTracker(llm_chat_fn=chat_stream)
-            ltm = LongTermMemory()
             client = _new_milvus_client()
             client.load_collection(COLLECTION_NAME)
 
@@ -144,7 +140,6 @@ def web_main(port=8000):
             return {
                 "stm": stm,
                 "entity_tracker": entity_tracker,
-                "ltm": ltm,
                 "client": client,
                 "last_report": [""],
                 "last_ambiguity": [None],
@@ -215,7 +210,7 @@ def web_main(port=8000):
 
                     result = await run_pipeline(
                         query, session_id,
-                        stm, entity_tracker, session["ltm"], session["client"],
+                        stm, entity_tracker, session["client"],
                         last_report,
                         _emit_sync,
                         selected_diagnosis=selected_diagnosis,
@@ -248,11 +243,8 @@ def web_main(port=8000):
                             store.update_title(session_id, title)
                             logger.info(f"会话标题已更新: {session_id} → {title}")
                         
-                        # 同步到长期记忆（更新用户偏好）
-                        session["ltm"].sync_from_short_term(stm, session_id, entity_tracker)
-                        logger.info(f"长期记忆已同步: session={session_id}")
                     except Exception as e:
-                        logger.warning("保存会话/长期记忆失败: %s", e)
+                        logger.warning("保存会话失败: %s", e)
                         
                 except Exception as e:
                     logger.error("run_pipeline 执行异常", exc_info=True)

@@ -13,6 +13,11 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
+try:
+    from .chunk_id import generate_chunk_id
+except ImportError:  # 兼容直接执行 process_reports.py
+    from chunk_id import generate_chunk_id
+
 
 # 字段映射：原始列名 -> 标准字段名
 FIELD_MAPPING = {
@@ -106,12 +111,18 @@ def create_folder_structure(base_path: Path, data: Dict) -> Path:
     return current_path
 
 
-def create_markdown_content(data: Dict, kb_id: str = "") -> str:
+def create_markdown_content(
+    data: Dict,
+    kb_id: str = "",
+    chunk_id: str = "",
+) -> str:
     """生成Markdown文件内容"""
     # YAML Frontmatter
     frontmatter = "---\n"
     if kb_id:
         frontmatter += f"kb_id: {kb_id}\n"
+    if chunk_id:
+        frontmatter += f"chunk_id: {chunk_id}\n"
     for field in STANDARD_FIELDS:
         value = data.get(field, '')
         # 转义YAML中的特殊字符
@@ -259,13 +270,22 @@ def process_excel_file(file_path: str, base_output_path: Path, filename_counter:
                         
                         md_path = folder_path / md_filename
                         
-                        # 生成并保存Markdown内容
-                        md_content = create_markdown_content(normalized_data, kb_id=kb_id)
+                        combined_text = create_combined_text(normalized_data)
+                        chunk_id = generate_chunk_id(kb_id, md_filename, combined_text)
+
+                        # SQLite、Markdown 和 Milvus 共用同一个稳定 chunk_id。
+                        md_content = create_markdown_content(
+                            normalized_data,
+                            kb_id=kb_id,
+                            chunk_id=chunk_id,
+                        )
                         
                         with open(md_path, 'w', encoding='utf-8') as f:
                             f.write(md_content)
 
                         stats['chunks'].append({
+                            'chunk_id': chunk_id,
+                            'markdown_filename': md_filename,
                             'source_file': Path(file_path).name,
                             'sheet_name': str(sheet_name),
                             'source_row': int(idx + 2),
@@ -277,7 +297,7 @@ def process_excel_file(file_path: str, base_output_path: Path, filename_counter:
                             'module_name': normalized_data.get('module_name', ''),
                             'imaging_findings': imaging_findings,
                             'imaging_opinion': imaging_opinion,
-                            'combined_text': create_combined_text(normalized_data),
+                            'combined_text': combined_text,
                         })
                         
                         stats['processed_rows'] += 1
@@ -306,6 +326,8 @@ def process_uploaded_excels(file_paths: List[str], base_output_path: Path, kb_id
     if not file_paths:
         raise ValueError("至少需要一个 Excel 文件")
     base_output_path = Path(base_output_path) / kb_id
+    # 每次重新解析均完整替换该知识库的 Markdown，避免遗留旧切片。
+    shutil.rmtree(base_output_path, ignore_errors=True)
     base_output_path.mkdir(parents=True, exist_ok=True)
     filename_counter, content_cache, diff_records = {}, {}, []
     all_stats = []
@@ -317,7 +339,6 @@ def process_uploaded_excels(file_paths: List[str], base_output_path: Path, kb_id
     chunks = [chunk for stats in all_stats for chunk in stats['chunks']]
     for chunk_index, chunk in enumerate(chunks, start=1):
         chunk['chunk_index'] = chunk_index
-        chunk['chunk_id'] = f"{kb_id}:{chunk_index:08d}"
     return {
         "files": len(all_stats),
         "total_rows": sum(item["total_rows"] for item in all_stats),

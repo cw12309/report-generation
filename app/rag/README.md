@@ -1,104 +1,89 @@
 # RAG Retrieval
 
-该目录负责把自然语言查询转换为可验证的检索计划，并在 Milvus 中执行
-标量过滤、Dense/Sparse 双路召回、RRF 粗排和动态降级。`chat/pipeline.py`
-负责调用该流程，并对粗排候选执行外部 Rerank 精排。
+`app/rag/` 负责查询标准化、Query Rewrite、目录规划、Milvus 多通道 Dense/Sparse 召回和 RRF 融合。`app/chat/pipeline.py` 在召回后调用外部 Rerank，并把最终参考切片交给报告生成工具。
 
-## 模块职责
+## 模块
 
 ```text
-rag/
-├── query_rewrite.py       # 术语标准化、模糊判断和兼容查询改写
-├── query_planner.py       # 生成带置信度和来源的结构化检索计划
-├── metadata_navigator.py  # 读取层级元数据、披露候选值并校验 LLM 输出
-├── sparse_vector.py       # 建库与查询共用的词面 Sparse 向量
-├── retrieval.py           # 标量过滤、Dense/Sparse、RRF 和动态降级
+app/rag/
+├── query_rewrite.py       # 术语标准化、模糊判断和 LLM Query Rewrite
+├── query_planner.py       # 生成经过目录候选校验的结构化检索计划
+├── metadata_navigator.py  # 合并所选 KB 的 metadata_tree 并提供合法层级值
+├── sparse_vector.py       # 建库/查询共用的 Hash Sparse 向量
+├── retrieval.py           # kb_id 标量过滤、三通道 Dense/Sparse、RRF
 ├── rerank.py              # 外部 Rerank API
 └── README.md
 ```
 
-## 完整流程
+## 完整链路
 
 ```text
-用户问题 + Entity Tracker 历史槽位
-                  |
-                  v
-        Query Planner
-  modality + level_1~4 JSON
-                  |
-                  v
-       Metadata Navigator
-   逐层候选披露 + 合法值校验
-                  |
-                  v
-      最严格的标量过滤范围
-                  |
-          +-------+-------+
-          |               |
-          v               v
-    Dense HNSW      Sparse Inverted
-      COSINE               IP
-          |               |
-          +-------+-------+
-                  |
-                  v
-          Milvus RRFRanker
-             粗排 Top-K
-                  |
-       候选不足则逐级放宽
-                  |
-                  v
-        外部 Rerank 精排
-             最终 Top-K
+原始 Query
+  ├─ EntityTracker：当前会话实体提取与上下文补全
+  ├─ standardize_query()：术语标准化
+  └─ needs_rewrite() 为真时调用 rewrite_query()
+             │
+             ▼
+MetadataNavigator
+  └─ 只合并 selected_kbs 中 active KB 的 SQLite metadata_tree
+             │
+             ▼
+Query Planner
+  ├─ semantic_query：Dense
+  ├─ keyword_query：Sparse
+  └─ modality + level_1～4：标量过滤
+             │
+             ▼
+三通道 × Dense/Sparse（最多 6 个 AnnSearchRequest）
+  ├─ strict：kb_id + modality + level_1～4
+  ├─ modality：kb_id + modality
+  └─ kb_only：仅 kb_id
+             │
+             ▼
+Milvus RRFRanker → 去重并截断 Top-50
+             │
+             ▼
+外部 Rerank → Top-10 → LLM 报告生成
 ```
 
-## 层级元数据
+## Query Rewrite
 
-运行：
+Pipeline 会先用规则更新 EntityTracker 和标准化术语。只有 `needs_rewrite()` 判定需要改写时才调用 LLM；失败时记录 warning 并回退到未改写 Query。
 
-```powershell
-python app/data_pipeline/extract_metadata.py
+OpenAI 兼容地址会被规范化为：
+
+```text
+<base_url>/chat/completions
 ```
 
-生成的 `metadata.json` 只记录目录层级，不记录模块名称或 Markdown 文件：
+如果配置已经以 `/chat/completions` 结尾，不会重复拼接。改写后的 Query 不替代 `selected_kbs` 或已验证的标量约束。
 
-```json
-{
-  "检查类型": {
-    "CT": {
-      "一级目录": {
-        "头颅": {
-          "三级目录": {
-            "颅脑平扫": {}
-          }
-        }
-      }
-    }
-  }
-}
+## Metadata Navigator
+
+正式服务不依赖全局 `metadata.json`。每个知识库的目录树保存在：
+
+```text
+SQLite knowledge_bases.metadata_tree
 ```
 
-空层级会跳过。例如原数据的 `level_2` 为空时，`三级目录` 可以直接位于
-对应的 `一级目录` 节点下。
+`MetadataNavigator.from_knowledge_bases()` 只接收聊天请求中已选择且状态为 `active` 的知识库，并在内存中合并目录树。
 
-`MetadataNavigator` 会将目录树转换为合法路径集合，并支持：
+Navigator 会：
 
-- 获取全部 `modality`。
-- 在已确定上级条件下获取某一级候选值。
-- 从当前问题中匹配最长的合法目录值。
-- 校验 LLM 输出是否存在于对应路径。
+- 枚举合法 `modality`；
+- 根据上级目录逐层披露候选值；
+- 从 Query 中匹配最长合法目录值；
+- 丢弃 LLM 生成但不存在于候选树中的层级值。
 
 ## Query Planner
 
-`build_query_plan()` 按以下优先级确定字段：
+字段来源优先级：
 
-1. 当前问题中明确出现并存在于元数据的值。
-2. Entity Tracker 历史槽位中的检查类型和部位。
-3. LLM 从 Metadata Navigator 披露的候选值中选择的值。
+1. 当前 Query 中明确出现并存在于目录树的值；
+2. EntityTracker 当前会话槽位；
+3. LLM 从 Navigator 披露的候选值中选择的值。
 
-LLM 不能自由生成目录值。任何不在当前层级候选集合中的输出都会被丢弃。
-
-输出示例：
+计划示例：
 
 ```json
 {
@@ -112,53 +97,37 @@ LLM 不能自由生成目录值。任何不在当前层级候选集合中的输�
     "level_3": "颅脑平扫"
   },
   "slots": {
-    "modality": {
-      "value": "CT",
-      "confidence": 1.0,
-      "source": "current_query"
-    },
-    "level_1": {
-      "value": "头颅",
-      "confidence": 1.0,
-      "source": "current_query"
-    },
-    "level_2": {
-      "value": "",
-      "confidence": 0.0,
-      "source": ""
-    },
-    "level_3": {
-      "value": "颅脑平扫",
-      "confidence": 1.0,
-      "source": "current_query"
-    },
-    "level_4": {
-      "value": "",
-      "confidence": 0.0,
-      "source": ""
-    }
+    "modality": {"value": "CT", "confidence": 1.0, "source": "current_query"},
+    "level_1": {"value": "头颅", "confidence": 1.0, "source": "current_query"}
   }
 }
 ```
 
-`semantic_query` 保留完整自然语言，用于 Dense 向量。`keyword_query` 会移除
-已识别的 modality 和目录层级，用于 Sparse 词面向量。
+`semantic_query` 保留完整语义；`keyword_query` 尽量保留诊断词和低频医学词项供 Sparse 分支使用。
 
-## 标量过滤
+## 安全标量过滤
 
-只有经过 Metadata Navigator 校验的字段才会进入过滤表达式：
+过滤字段只允许：
 
 ```text
-modality == "CT"
-and level_1 == "头颅"
-and level_3 == "颅脑平扫"
+modality, level_1, level_2, level_3, level_4
 ```
 
-同一个过滤表达式同时附加到 Dense 和 Sparse 的 `AnnSearchRequest`。
+`kb_id` 来自后端验证后的 `selected_kbs`。字符串在拼接表达式前会移除反斜杠和双引号。
 
-## Dense/Sparse 双路召回
+示例：
 
-Dense 请求：
+```text
+kb_id in ["kb_id_1", "kb_id_2"]
+and modality == "CT"
+and level_1 == "头颅"
+```
+
+同一通道的 Dense 和 Sparse `AnnSearchRequest` 使用完全相同的表达式。
+
+## Dense / Sparse
+
+Dense：
 
 ```python
 AnnSearchRequest(
@@ -170,7 +139,7 @@ AnnSearchRequest(
 )
 ```
 
-Sparse 请求：
+Sparse：
 
 ```python
 AnnSearchRequest(
@@ -182,63 +151,74 @@ AnnSearchRequest(
 )
 ```
 
-Milvus 使用 `RRFRanker()` 融合两路排名并返回粗排候选。
+当前 Sparse 是中文单字、二元组及英文数字词项的 Hash Sparse，不是标准 BM25，也没有 IDF 和文档长度归一化。
 
-## 动态降级
+## 三通道融合
 
-如果严格范围内的累计候选少于目标数量，按照目录深度逐级放宽：
+| 通道 | 过滤范围 | 作用 |
+| --- | --- | --- |
+| `strict` | `kb_id + modality + level_1～4` | 高精度层级命中 |
+| `modality` | `kb_id + modality` | 防止错误层级过滤导致漏召回 |
+| `kb_only` | 仅 `kb_id` | 保留所选知识库范围内的语义兜底 |
 
-```text
-modality + level_1 + level_2 + level_3 + level_4
-modality + level_1 + level_2 + level_3
-modality + level_1 + level_2
-modality + level_1
-modality
+过滤条件完全相同的通道会去重。所有有效请求在一次 `hybrid_search()` 中由 `RRFRanker()` 融合，不再使用“累计 5 条就停止放宽”的旧漏斗逻辑。
+
+Milvus 通常按 PK 返回唯一结果，代码优先使用跨 SQLite/Markdown/Milvus 一致的 `chunk_id` 去重，并在达到 `top_k` 时截断；旧数据没有该字段时才回退到 Milvus `id` 或文本。
+
+## 候选池与 Rerank
+
+当前 `config.yml` 默认：
+
+```yaml
+retrieval:
+  rag_top_k: 50
+  rerank_top_k: 10
 ```
 
-`modality` 不会在目录降级过程中移除。每一阶段都会记录：
+- Milvus RRF 最多返回 50 条候选；
+- 外部 Rerank 对候选 `combined_text` 重新评分；
+- 最终 10 条进入 LLM 上下文；
+- Rerank 异常时回退为 RRF 前 10 条。
 
-```json
-{
-  "stage": 1,
-  "filters": {
-    "modality": "CT",
-    "level_1": "头颅"
-  },
-  "filter_expr": "modality == \"CT\" and level_1 == \"头颅\"",
-  "result_count": 20
-}
+## SSE 与来源
+
+RAG 阶段会发送：
+
+- `query_plan`：结构化检索计划；
+- `recall`：候选数和三通道过滤详情；
+- `rerank`：分数、诊断、来源和切片文本。
+
+前端把 `rerank` 结果附加到正式回答的“参考切片”折叠面板。`source` 优先使用 Milvus 返回的 32 位 `chunk_id`，因此可与 SQLite 切片直接对应，并在 Collection 重建后保持稳定。
+
+命令行执行真实 Hybrid Search + Rerank：
+
+```powershell
+python debug_retrieval.py "CT"
 ```
 
-严格阶段已经召回的实体会优先保留，后续宽松阶段按照 Milvus `id` 去重。
+脚本默认检索 SQLite 中全部 `active` 知识库，Hybrid Search 使用配置的 `rag_top_k` 候选池，再调用真实 Rerank API 输出 Top 3；每条结果显示 `chunk_id/source`、Rerank 分数和前 50 个字符。
 
-## Rerank 精排
+只验证 Hybrid Search 和 SQLite/Milvus `chunk_id` 对应关系、不调用 Rerank 时可运行：
 
-RRF 粗排候选返回 `chat/pipeline.py` 后，使用配置的 Rerank 服务对
-`combined_text` 进行精排。Rerank 不访问 Milvus，只对已经召回的候选重新
-评分并返回最终 Top-K。
+```powershell
+python app/test/verify_chunk_id_retrieval.py
+```
 
-如果 Rerank 服务异常，流程会退化为使用 RRF 粗排的前若干条结果。
+## Collection Load
 
-## 前端事件
+每次检索前 `ensure_collection_loaded()` 会：
 
-检索过程中会发送：
+1. 查询 Collection Load State；
+2. 未加载时主动 Load；
+3. 再次验证；
+4. 仍失败时抛出明确异常。
 
-- `query_plan`：完整结构化检索计划。
-- `recall`：候选数量以及所有动态降级阶段。
-- `rerank`：精排分数、来源和诊断名称。
+Milvus 重启或 Collection 被 Release 后，下一次检索会尝试恢复加载。
 
-这些事件可用于检查某个查询实际使用了哪些标量条件，以及是否发生降级。
+## 测试
 
-## Collection 加载
+```powershell
+python -m unittest app.test.test_rag_planning
+```
 
-每次召回前都会调用 `ensure_collection_loaded()`：
-
-1. 读取 Collection Load State。
-2. 未加载时主动调用 `load_collection()`。
-3. 再次校验状态。
-4. 仍未加载则抛出明确错误。
-
-因此 Milvus 重启或 Collection 被 Attu Release 后，下一次检索会尝试自动
-恢复加载状态。
-
+检索效果评估脚本位于 `app/test/eval_retrieval*.py`。正式比较 Recall@K、MRR 或 nDCG 前，需要使用稳定来源标注建立黄金数据集。

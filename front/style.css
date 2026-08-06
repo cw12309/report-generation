@@ -45,7 +45,8 @@ body {
 .sidebar {
   width: 72px;
   min-width: 72px;
-  background: #1a1a2e;
+  background-color: #f0f2f5;
+  border-right: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -76,7 +77,7 @@ body {
   border: none;
   border-radius: 8px;
   background: transparent;
-  color: #888;
+  color: #5c5c5c;
   cursor: pointer;
   transition: all 0.2s;
   font-size: 12px;
@@ -84,13 +85,15 @@ body {
 }
 
 .sidebar-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: #ccc;
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #333333;
 }
 
 .sidebar-btn.active {
-  background: rgba(64, 150, 255, 0.2);
-  color: #4096ff;
+  background-color: #ffffff;
+  color: var(--primary);
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .sidebar-icon {
@@ -199,8 +202,8 @@ body {
 .chat-history-sidebar {
   width: 240px;
   min-width: 240px;
-  background: #fafafa;
-  border-right: 1px solid var(--border);
+  background-color: #f9fafb;
+  border-right: 1px solid #e5e7eb;
   display: flex;
   flex-direction: column;
 }
@@ -312,6 +315,8 @@ body {
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  background-color: #ffffff;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
 }
 
 /* 头部 */
@@ -650,6 +655,116 @@ body {
 .message.assistant .bubble {
   background: var(--ai-bubble);
   border-bottom-left-radius: 2px;
+}
+
+.message.assistant.is-streaming .bubble::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  background: var(--primary);
+  animation: assistant-cursor 0.85s steps(1, end) infinite;
+}
+
+@keyframes assistant-cursor {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0; }
+}
+
+.assistant-stream-content {
+  min-height: 1.4em;
+}
+
+.assistant-stream-content > :first-child {
+  margin-top: 0;
+}
+
+.assistant-stream-content > :last-child {
+  margin-bottom: 0;
+}
+
+.answer-references {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+  color: #374151;
+  font-size: 12px;
+}
+
+.answer-references > summary {
+  width: fit-content;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.answer-reference-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.answer-reference-item {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.answer-reference-item > summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.answer-reference-item > summary::-webkit-details-marker {
+  display: none;
+}
+
+.reference-index {
+  display: inline-flex;
+  flex: 0 0 20px;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  border-radius: 50%;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.reference-diagnosis {
+  min-width: 0;
+  overflow: hidden;
+  flex: 1;
+  color: #374151;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reference-source {
+  flex: 0 0 auto;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.reference-text {
+  padding: 9px 12px 11px;
+  border-top: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #4b5563;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 歧义选项按钮 */
@@ -1367,7 +1482,7 @@ body {
   min-height: 0;
   overflow: hidden;
   border-right: 1px solid #e5e7eb;
-  background: #f8fafc;
+  background-color: #f9fafb;
 }
 
 .kb-manage-sidebar-header {
@@ -1509,7 +1624,8 @@ body {
   min-height: 0;
   overflow: hidden;
   padding: 24px;
-  background: #fff;
+  background-color: #ffffff;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
 }
 
 .kb-detail-header {
@@ -1733,8 +1849,8 @@ body {
 .config-nav {
   width: 200px;
   min-width: 200px;
-  background: #f7f8fa;
-  border-right: 1px solid var(--border);
+  background-color: #f9fafb;
+  border-right: 1px solid #e5e7eb;
   padding: 16px 0;
   display: flex;
   flex-direction: column;
@@ -1785,6 +1901,8 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 20px 24px;
+  background-color: #ffffff;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.02);
 }
 
 .config-group {

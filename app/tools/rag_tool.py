@@ -2,7 +2,7 @@
 
 Schema: rag_search
 - 封装多路召回 + Rerank + 结构化报告生成
-- 注入 LTM 偏好和 Entity 上下文
+- 注入 EntityTracker 当前会话上下文
 - 返回结构化报告 JSON
 """
 
@@ -128,7 +128,6 @@ RAG_SEARCH_SCHEMA = {
 
 def create_rag_search_handler(
     chat_fn: Callable,
-    ltm,
     entity_tracker,
     get_embedding_fn: Callable,
     search_reports_fn: Callable,
@@ -141,7 +140,6 @@ def create_rag_search_handler(
 
     Args:
         chat_fn: LLM 对话函数，签名 (messages, max_tokens, temperature, _emit, debug, caller) -> str
-        ltm: LongTermMemory 实例，用于注入偏好
         entity_tracker: EntityTracker 实例，用于注入上下文和参数补全
         get_embedding_fn: 向量化函数
         search_reports_fn: RAG 检索函数
@@ -242,7 +240,6 @@ def create_rag_search_handler(
 
             sys_prompt = PromptBuilder.build(
                 "structure",
-                ltm_prefs=ltm.get_preference_prompt() if ltm else None,
                 entity_context=entity_tracker.to_context_prompt() if entity_tracker else None,
                 last_report=last_report[0] if last_report and last_report[0] else None,
             )

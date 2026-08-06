@@ -47,7 +47,30 @@ let isProcessing = false;
 let currentReader = null; // 当前 SSE 读取器
 let chatAbortController = null; // 当前请求的 AbortController
 let knowledgeBases = [];
-let selectedKnowledgeBaseIds = new Set();
+const SELECTED_KBS_STORAGE_KEY = "selectedKnowledgeBaseIds";
+
+function loadSelectedKnowledgeBaseIds() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SELECTED_KBS_STORAGE_KEY) || "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((id) => typeof id === "string" && id) : []);
+  } catch (error) {
+    console.warn("[KB] 恢复知识库选择失败，将使用空选择", error);
+    return new Set();
+  }
+}
+
+function persistSelectedKnowledgeBaseIds() {
+  try {
+    localStorage.setItem(
+      SELECTED_KBS_STORAGE_KEY,
+      JSON.stringify([...selectedKnowledgeBaseIds]),
+    );
+  } catch (error) {
+    console.warn("[KB] 保存知识库选择失败", error);
+  }
+}
+
+let selectedKnowledgeBaseIds = loadSelectedKnowledgeBaseIds();
 let selectedManageKbId = null;
 let kbPollTimer = null;
 let kbChunkAbortController = null;
@@ -478,9 +501,16 @@ function renderAgentKbSelector(data = knowledgeBases) {
   if (!agentKbSelectorList) return;
   const active = data.filter((kb) => kb.status === "active");
   const activeIds = new Set(active.map((kb) => kb.kb_id));
-  selectedKnowledgeBaseIds = new Set(
+  const validSelectedIds = new Set(
     [...selectedKnowledgeBaseIds].filter((kbId) => activeIds.has(kbId)),
   );
+  if (
+    validSelectedIds.size !== selectedKnowledgeBaseIds.size
+    || [...validSelectedIds].some((kbId) => !selectedKnowledgeBaseIds.has(kbId))
+  ) {
+    selectedKnowledgeBaseIds = validSelectedIds;
+    persistSelectedKnowledgeBaseIds();
+  }
   updateKbSelectedCount();
 
   if (!active.length) {
@@ -499,6 +529,7 @@ function renderAgentKbSelector(data = knowledgeBases) {
     input.addEventListener("change", () => {
       if (input.checked) selectedKnowledgeBaseIds.add(input.value);
       else selectedKnowledgeBaseIds.delete(input.value);
+      persistSelectedKnowledgeBaseIds();
       updateKbSelectedCount();
     });
   });
@@ -570,6 +601,7 @@ async function deleteKnowledgeBase(kbId) {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
     selectedKnowledgeBaseIds.delete(kbId);
+    persistSelectedKnowledgeBaseIds();
     if (selectedManageKbId === kbId) selectedManageKbId = null;
     await refreshKnowledgeBases();
   } catch (error) {
@@ -840,6 +872,7 @@ async function sendMessage(selectedDiagnosis) {
   // 思考过程容器
   const thinking = addThinkingContainer();
   addThinkingStep(thinking, "👤", "用户提问", query);
+  const assistantStream = createAssistantStreamState();
   console.log("[DEBUG] thinking container 已创建");
 
   // 创建 AbortController（60秒超时）
@@ -895,6 +928,7 @@ async function sendMessage(selectedDiagnosis) {
           const data = line.slice(6);
           if (data === "[DONE]") {
             console.log("[DEBUG] 收到 [DONE], 共处理事件数:", eventCount);
+            completeAssistantStream(assistantStream);
             streamDone = true;
             break;
           }
@@ -902,13 +936,15 @@ async function sendMessage(selectedDiagnosis) {
             const event = JSON.parse(data);
             eventCount++;
             console.log("[DEBUG] 事件 #" + eventCount + " type=" + event.type, event);
-            handleStreamEvent(event, thinking);
+            handleStreamEvent(event, thinking, assistantStream);
           } catch (e) {
             console.warn("[DEBUG] JSON 解析失败:", data.substring(0, 100), e);
           }
         }
       }
+      if (streamDone) break;
     }
+    completeAssistantStream(assistantStream);
   } catch (e) {
     console.error("[DEBUG] 请求异常:", e.name, e.message);
     if (e.name === "AbortError") {
@@ -919,6 +955,7 @@ async function sendMessage(selectedDiagnosis) {
     if (thinking && thinking.parentNode) {
       thinking.remove();
     }
+    abortAssistantStream(assistantStream);
   } finally {
     clearTimeout(timeoutId);
 
@@ -961,7 +998,7 @@ async function sendMessage(selectedDiagnosis) {
   console.log("[DEBUG] sendMessage 结束");
 }
 
-function handleStreamEvent(event, thinking) {
+function handleStreamEvent(event, thinking, assistantStream) {
   switch (event.type) {
     case "status":
       updateStatusText(event.message);
@@ -999,6 +1036,7 @@ function handleStreamEvent(event, thinking) {
 
     case "rerank":
       addRerankDetail(thinking, event);
+      collectAssistantReferences(assistantStream, event.results);
       break;
 
     case "search_result":
@@ -1006,7 +1044,7 @@ function handleStreamEvent(event, thinking) {
       break;
 
     case "token":
-      addTokenStream(thinking, event.content);
+      appendAssistantToken(assistantStream, event.content);
       break;
 
     case "reasoning":
@@ -1015,16 +1053,17 @@ function handleStreamEvent(event, thinking) {
 
     case "report":
       finishThinking(thinking);
-      addReportMessage(event.content);
+      completeAssistantStream(assistantStream, event.content, "📑 结构化报告");
       break;
 
     case "message":
       finishThinking(thinking);
-      addAssistantMessage(event.content);
+      completeAssistantStream(assistantStream, event.content, "💬 助手");
       break;
 
     case "error":
       finishThinking(thinking);
+      abortAssistantStream(assistantStream);
       addSystemMessage(`❌ ${event.message}`);
       break;
 
@@ -1055,6 +1094,8 @@ function handleStreamEvent(event, thinking) {
       break;
 
     case "done":
+      finishThinking(thinking);
+      completeAssistantStream(assistantStream);
       // 在思考容器底部追加耗时信息（即使已折叠也会保留）
       if (thinking) {
         const timeInfo = document.createElement("div");
@@ -1259,23 +1300,14 @@ function addMemoryRetrievalDetail(container, data) {
     <span class="thinking-step-label">记忆检索 <span style="color:#888;font-size:11px">(基于 "${escapeHtml(data.query || '')}")</span></span>
     <div class="thinking-detail-block">`;
 
-  if (data.ltm && data.ltm.length > 0) {
-    html += `<div class="thinking-highlight">📌 相关用户偏好 (LTM): ${data.ltm.length} 条</div>`;
-    data.ltm.forEach(function (item) {
-      html += `<div style="margin-left:12px;color:#7c3aed;">• ${escapeHtml(item)}</div>`;
-    });
-  } else {
-    html += `<div style="color:#888;">📌 相关用户偏好 (LTM): 无</div>`;
-  }
-
   if (data.stm && data.stm.length > 0) {
-    html += `<div class="thinking-highlight" style="margin-top:8px;">💬 相关历史对话 (STM): ${data.stm.length} 条</div>`;
+    html += `<div class="thinking-highlight">💬 当前会话相关对话 (STM): ${data.stm.length} 条</div>`;
     data.stm.forEach(function (item) {
       var short = item.length > 80 ? item.slice(0, 80) + "..." : item;
       html += `<div style="margin-left:12px;color:#059669;">• ${escapeHtml(short)}</div>`;
     });
   } else {
-    html += `<div style="color:#888;margin-top:8px;">💬 相关历史对话 (STM): 无</div>`;
+    html += `<div style="color:#888;">💬 当前会话相关对话 (STM): 无</div>`;
   }
 
   html += `</div>`;
@@ -1442,18 +1474,136 @@ function updateStatusText(text) {
   statusText.textContent = text;
 }
 
-function addTokenStream(container, content) {
-  const body = container.querySelector(".thinking-body");
-  let tokenEl = body.querySelector(".token-stream");
-  if (!tokenEl) {
-    tokenEl = document.createElement("div");
-    tokenEl.className = "thinking-detail-block token-stream";
-    tokenEl.style.cssText =
-      "white-space:pre-wrap;font-family:monospace;font-size:13px;color:#333;background:#fff;border:1px solid #e8e8e8;border-radius:6px;max-height:300px;overflow-y:auto;";
-    body.appendChild(tokenEl);
+function createAssistantStreamState() {
+  return {
+    messageEl: null,
+    roleEl: null,
+    contentEl: null,
+    referencesEl: null,
+    rawText: "",
+    references: [],
+    referenceKeys: new Set(),
+    completed: false,
+  };
+}
+
+function ensureStreamingAssistantBubble(state) {
+  if (state.messageEl) return state.messageEl;
+
+  const messageEl = document.createElement("div");
+  messageEl.className = "message assistant is-streaming";
+
+  const roleEl = document.createElement("div");
+  roleEl.className = "message-role";
+  roleEl.textContent = "💬 助手";
+
+  const bubbleEl = document.createElement("div");
+  bubbleEl.className = "bubble";
+
+  const contentEl = document.createElement("div");
+  contentEl.className = "assistant-stream-content";
+  bubbleEl.appendChild(contentEl);
+  messageEl.append(roleEl, bubbleEl);
+  chatContainer.appendChild(messageEl);
+
+  state.messageEl = messageEl;
+  state.roleEl = roleEl;
+  state.contentEl = contentEl;
+  scrollToBottom();
+  return messageEl;
+}
+
+function appendAssistantToken(state, content) {
+  if (!state || typeof content !== "string" || !content) return;
+  ensureStreamingAssistantBubble(state);
+  state.completed = false;
+  state.messageEl.classList.add("is-streaming");
+  state.rawText += content;
+  state.contentEl.innerHTML = renderMarkdown(state.rawText);
+  scrollToBottom();
+}
+
+function collectAssistantReferences(state, results) {
+  if (!state || !Array.isArray(results)) return;
+
+  results.forEach((result) => {
+    const reference = {
+      source: String(result?.source ?? ""),
+      diagnosis: String(result?.diagnosis ?? ""),
+      text: String(result?.text ?? ""),
+    };
+    const key = `${reference.source}\u0000${reference.diagnosis}\u0000${reference.text}`;
+    if (!state.referenceKeys.has(key)) {
+      state.referenceKeys.add(key);
+      state.references.push(reference);
+    }
+  });
+
+  if (state.completed && state.messageEl) {
+    renderAssistantReferences(state);
   }
-  tokenEl.textContent += content;
-  tokenEl.scrollTop = tokenEl.scrollHeight;
+}
+
+function renderAssistantReferences(state) {
+  if (!state?.messageEl || !state.references.length) return;
+
+  state.referencesEl?.remove();
+  const referencesEl = document.createElement("details");
+  referencesEl.className = "answer-references";
+
+  const summary = document.createElement("summary");
+  summary.textContent = `参考切片 (${state.references.length})`;
+  referencesEl.appendChild(summary);
+
+  const list = document.createElement("div");
+  list.className = "answer-reference-list";
+  state.references.forEach((reference, index) => {
+    const item = document.createElement("details");
+    item.className = "answer-reference-item";
+
+    const itemSummary = document.createElement("summary");
+    const number = document.createElement("span");
+    number.className = "reference-index";
+    number.textContent = String(index + 1);
+    const diagnosis = document.createElement("span");
+    diagnosis.className = "reference-diagnosis";
+    diagnosis.textContent = reference.diagnosis || `参考切片 ${index + 1}`;
+    const source = document.createElement("span");
+    source.className = "reference-source";
+    source.textContent = reference.source ? `来源 ${reference.source}` : "来源未标注";
+    itemSummary.append(number, diagnosis, source);
+
+    const text = document.createElement("div");
+    text.className = "reference-text";
+    text.textContent = reference.text || "暂无切片原文";
+    item.append(itemSummary, text);
+    list.appendChild(item);
+  });
+
+  referencesEl.appendChild(list);
+  state.messageEl.querySelector(".bubble")?.appendChild(referencesEl);
+  state.referencesEl = referencesEl;
+}
+
+function completeAssistantStream(state, finalContent, roleLabel) {
+  if (!state) return;
+  if (typeof finalContent === "string") state.rawText = finalContent;
+  if (!state.messageEl && !state.rawText) return;
+
+  ensureStreamingAssistantBubble(state);
+  if (roleLabel) state.roleEl.textContent = roleLabel;
+  state.contentEl.innerHTML = renderMarkdown(state.rawText);
+  state.messageEl.classList.remove("is-streaming");
+  state.completed = true;
+  renderAssistantReferences(state);
+  scrollToBottom();
+}
+
+function abortAssistantStream(state) {
+  if (!state?.messageEl) return;
+  state.messageEl.classList.remove("is-streaming");
+  state.completed = true;
+  renderAssistantReferences(state);
 }
 
 function finishThinking(container) {

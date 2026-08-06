@@ -1,6 +1,6 @@
 # 医疗影像报告生成 Agent V2（应用层）
 
-`app/` 是医疗影像报告生成 Agent 的后端应用代码，负责 FastAPI 服务、Tool Calling、RAG 检索、会话记忆，以及 Excel 知识库的上传和构建。
+`app/` 是医疗影像报告生成 Agent 的后端应用代码，负责 FastAPI 服务、Tool Calling、RAG 检索、当前会话上下文，以及 Excel 知识库的上传和构建。
 
 ## 当前架构
 
@@ -13,25 +13,26 @@ app/chat/server.py                 FastAPI 路由
         ├─ app/chat/pipeline.py     Agent 编排与流式对话
         ├─ app/tools/               rag_search / edit_report / refine_report
         ├─ app/rag/                 Milvus Dense + Sparse 检索、RRF、Rerank
-        ├─ app/memory/              SessionStore、实体追踪、短期/长期记忆
+        ├─ app/memory/              SessionStore、实体追踪、短期记忆
         └─ app/data_pipeline/       Excel → Markdown → metadata → Milvus
 
 SQLite（data/sessions.db）          会话、知识库元数据与切片原文
 Milvus Collection                  medical_reports（多个逻辑知识库，共用一个 Collection）
 ```
 
-多知识库通过 Milvus 标量字段 `kb_id` 进行逻辑隔离，不拆分 Collection。当前采用双流存储：SQLite 保存知识库元数据和完整切片原文，负责管理、分页和前端详情展示；Milvus 保存检索标量、Dense/Sparse 向量和受长度约束的检索文本，专门负责 RAG 召回。
+多知识库通过 Milvus 标量字段 `kb_id` 进行逻辑隔离，不拆分 Collection。当前采用双流存储：SQLite 保存知识库元数据和完整切片原文，负责管理、分页和前端详情展示；Milvus 保存检索标量、Dense/Sparse 向量和受长度约束的检索文本，专门负责 RAG 召回。两端通过 `MD5(kb_id + 文件名 + combined_text)` 生成的 32 位 `chunk_id` 精确对应。
 
 ## 主要功能
 
 - Tool Calling：模型可选择检索生成、编辑报告、重写报告或直接回复。
-- Dense/Sparse 混合检索：Milvus 双路召回，RRF 粗排，外部 Rerank 精排，并支持动态降级。
+- Dense/Sparse 混合检索：严格、仅模态、仅知识库三种范围并行召回，Milvus RRF 粗排后由外部 Rerank 精排。
 - 多知识库选择：聊天请求携带 `selected_kbs`，检索和 Metadata Navigator 只使用勾选的知识库。
 - 上传与构建解耦：上传只落盘并登记，构建由单独接口异步触发。
 - 切片详情：Excel 解析结果批量写入 SQLite，知识库页面可以分页查看检查类型、层级、模块、影像学表现和意见。
 - 构建进度：`knowledge_bases.progress` 保存 0～100 的真实阶段进度，前端以行内状态展示。
 - 会话持久化：SQLite 保存会话、实体槽位、上一份报告和当前选择的知识库。
-- 流式响应：聊天接口使用 SSE 推送思考过程、召回信息和报告内容。
+- 当前会话记忆：只保留 STM 和 EntityTracker，不学习或注入跨会话用户偏好。
+- 流式响应：聊天接口使用 SSE 推送思考过程、召回、Rerank、Token 和最终报告；前端在正式回答下附加参考切片。
 
 ## 启动
 
@@ -49,7 +50,7 @@ python python_start.py
 
 ```yaml
 milvus:
-  uri: http://220.154.3.166:19530
+  uri: http://<milvus-host>:19530
   token:
 retrieval:
   collection_name: medical_reports
@@ -59,13 +60,13 @@ retrieval:
 
 ## 首次部署：检查 Milvus Schema
 
-当前 Collection 必须包含 `kb_id`（VARCHAR）字段及其标量索引。启动服务时会自动校验，但首次部署建议先手动检查：
+当前 Collection 必须包含 `kb_id`（VARCHAR）和 `chunk_id`（VARCHAR(32)）字段及其标量索引。启动服务时会自动校验，但首次部署建议先手动检查：
 
 ```powershell
 python app/data_pipeline/migrate_milvus_schema.py --check
 ```
 
-如果检查结果显示 `kb_id field: MISSING`，需要在确认旧数据可丢弃后执行一次删除重建：
+如果检查结果显示 `kb_id field: MISSING` 或 `chunk_id field: MISSING`，需要在确认旧数据可重建后执行一次删除重建：
 
 ```powershell
 python app/data_pipeline/migrate_milvus_schema.py `
@@ -89,7 +90,7 @@ python app/data_pipeline/migrate_milvus_schema.py `
   └─ Excel → output_markdown/{kb_id}/...
   └─ 批量替换 SQLite knowledge_base_chunks（完整原文）
   └─ 提取 metadata_tree 并保存 SQLite
-  └─ 向量化并增量写入 medical_reports（每条实体带 kb_id）
+  └─ 向量化并增量写入 medical_reports（每条实体带 kb_id + chunk_id）
   └─ 成功：active；异常：failed
 ```
 
@@ -159,7 +160,7 @@ curl.exe -X POST http://localhost:8000/api/kb/upload `
     "size": 50,
     "items": [
       {
-        "chunk_id": "kb_id_1:00000001",
+        "chunk_id": "850001fc663caf5a7353b9938aecd06d",
         "chunk_index": 1,
         "modality": "CT",
         "level_1": "头颅",
@@ -172,14 +173,16 @@ curl.exe -X POST http://localhost:8000/api/kb/upload `
 }
 ```
 
-旧版本已经构建的知识库在 SQLite 中没有切片记录，需要在前端执行一次“重新构建”后才能展示详情。
+旧部署中尚未写入 SQLite 切片或仍使用 `kb_id:序号` ID 的知识库，需要执行一次“重新构建”后才能获得稳定 MD5 `chunk_id` 和切片详情。当前已验证数据基线中的 6 个知识库均已完成迁移。
 
 ## 前端页面结构
 
 - 全局左侧导航：Agent、知识库管理、配置等一级页面切换。
-- Agent 页面：知识库选择器位于工具栏弹窗，只展示 `active` 知识库；计数徽章显示当前选择数量。
+- 一级导航采用浅色布局；Agent、知识库和配置页分别拥有自己的局部二级侧栏。
+- Agent 页面：知识库选择器位于工具栏弹窗，只展示 `active` 知识库；计数徽章显示当前选择数量，选择状态保存在 LocalStorage。
 - 知识库页面：左侧为上传、状态、构建和删除操作；右侧为所选知识库的切片详情。
 - 点击知识库后立即请求切片分页接口；构建进度到达 SQLite 入库阶段或构建完成时，当前详情会自动刷新。
+- SSE 的第一个 Token 创建正式助手气泡，最终 `report/message` 更新同一个气泡；`rerank` 来源显示为可折叠参考切片。
 
 ## 当前 RAG 检索参数
 
@@ -190,7 +193,7 @@ curl.exe -X POST http://localhost:8000/api/kb/upload `
 | Dense 索引 | HNSW，COSINE，查询 `ef=64` |
 | Sparse | 中文单字、二元组和英文数字词项的 Hash Sparse，IP |
 | 融合 | Milvus `RRFRanker` |
-| 粗排候选 | `rag_top_k=20` |
+| 粗排候选 | `rag_top_k=50` |
 | 精排 | `Qwen/Qwen3-VL-Reranker-8B` |
 | 精排结果 | `rerank_top_k=10` |
 
@@ -204,13 +207,13 @@ Sparse 分支已经参与 Hybrid Search，但当前实现不是标准 BM25：它
 
 1. 使用稳定 `chunk_id` 建立真实黄金评测集，统计 Dense/Sparse/Hybrid 的 Recall@20/50，以及 Rerank 后的 MRR、nDCG。
 2. 修正并验证 Query Rewrite 的完整 `/chat/completions` 调用地址，记录原始、标准化、改写后的 Query 和最终过滤表达式。
-3. 将严格层级、仅模态、仅 `kb_id` 三种范围并行召回后统一融合，避免元数据硬过滤误杀；不要累计 5 条候选就提前停止回退。
-4. 将 Rerank 前候选池从 20 实验性提高到 50，最终上下文仍保持 Top 10，并用评测数据衡量延迟与收益。
+3. 持续评估严格层级、仅模态、仅 `kb_id` 三通道的单路命中率和融合贡献，必要时根据规划置信度调整权重。
+4. 当前 Rerank 前候选池已提高到 50、最终上下文保持 Top 10；继续用评测数据比较 50/80 候选的延迟与收益。
 5. 用 Milvus BM25（服务端版本支持时）或 BGE-M3 Sparse lexical weights 替换当前 Hash Sparse，并评估降低 `drop_ratio` 对医学低频词的收益。
 6. 增加受控医学同义词和缩写扩展，保留原始 Query 作为独立召回通道，避免 LLM 改写漂移。
 7. 最后评估 HNSW `ef=128/256`、RRF权重和字段级多向量表示。
 
-现有检索评测文件仍包含占位 `expected_source`，在形成可靠的 `chunk_id` 标注集之前，不能用它判断真实召回率。
+现有检索评测文件仍包含占位 `expected_source`；现在检索已稳定返回 MD5 `chunk_id`，下一步应基于这些 ID 完成黄金集标注后再判断真实召回率。
 
 ## 数据管线命令
 
@@ -223,6 +226,13 @@ python app/data_pipeline/process_reports.py --input-file D:\data\head.xlsx `
 
 # 检查 Milvus Schema
 python app/data_pipeline/migrate_milvus_schema.py --check
+
+# 全量重建 SQLite / Markdown / Milvus（会删除整个 Collection）
+python app/data_pipeline/rebuild_all_knowledge_bases.py `
+  --confirm "DROP medical_reports"
+
+# 真实 Hybrid Search + Rerank Top 3 调试
+python debug_retrieval.py "CT"
 ```
 
 详细说明见 [`app/data_pipeline/README.md`](data_pipeline/README.md)。
@@ -248,7 +258,7 @@ app/
 ├── chat/                 FastAPI、请求模型和 Agent 编排
 ├── tools/                Tool Calling 工具注册与实现
 ├── rag/                  查询规划、Metadata Navigator、Milvus 检索和 Rerank
-├── memory/               SessionStore、实体追踪、短期/长期记忆
+├── memory/               SessionStore、实体追踪、短期记忆
 ├── data_pipeline/       Excel、Markdown、metadata 和向量库构建脚本
 ├── prompt/               系统提示词与 PromptBuilder
 ├── scripts/              运维脚本（如 cleanup_disk.py）
@@ -259,6 +269,16 @@ app/
 
 ```powershell
 python -m compileall -q app
+python -m app.test.test_memory
+python -m unittest app.test.test_rag_planning
+# 若已安装 pytest：
 python -m pytest app/test/test_knowledge_base_chunks.py -q
 git diff --check
 ```
+
+## 模块文档
+
+- [数据管线](data_pipeline/README.md)
+- [RAG 检索](rag/README.md)
+- [当前会话记忆](memory/README.md)
+- [前端](../front/README.md)

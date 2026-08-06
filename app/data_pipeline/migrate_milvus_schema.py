@@ -5,6 +5,7 @@ exact confirmation string because it permanently removes the collection.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -64,9 +65,31 @@ def main() -> int:
             print("Indexes:")
             for index in indexes:
                 print(f"  - {index}")
-            has_kb = any(field.get("name") == "kb_id" for field in fields)
+            field_names = {field.get("name") for field in fields}
+            has_kb = "kb_id" in field_names
+            has_chunk = "chunk_id" in field_names
             print(f"kb_id field: {'OK' if has_kb else 'MISSING'}")
-            return 0 if has_kb else 2
+            print(f"chunk_id field: {'OK' if has_chunk else 'MISSING'}")
+            if has_chunk:
+                stats = milvus.get_collection_stats(name)
+                row_count = int(stats.get("row_count", 0))
+                print(f"Row count: {row_count}")
+                samples = milvus.query(
+                    collection_name=name,
+                    filter='chunk_id != ""',
+                    output_fields=["chunk_id", "kb_id"],
+                    limit=3,
+                )
+                valid_md5 = bool(samples) and all(
+                    re.fullmatch(r"[0-9a-f]{32}", str(item.get("chunk_id", "")))
+                    for item in samples
+                )
+                print(f"chunk_id sample format: {'OK' if valid_md5 else 'INVALID'}")
+                for item in samples:
+                    print(f"  - {item.get('chunk_id')} ({item.get('kb_id')})")
+            else:
+                valid_md5 = False
+            return 0 if has_kb and has_chunk and valid_md5 else 2
 
         expected = f"DROP {name}"
         if args.confirm != expected:
@@ -76,7 +99,10 @@ def main() -> int:
             milvus.drop_collection(name)
             print(f"已删除旧 Collection: {name}")
         create_collection(milvus)
-        print(f"已创建新 Collection: {name}（包含 kb_id 和 INVERTED 索引）")
+        print(
+            f"已创建新 Collection: {name}"
+            "（包含 kb_id、chunk_id 和 INVERTED 索引）"
+        )
         return 0
     finally:
         milvus.close()

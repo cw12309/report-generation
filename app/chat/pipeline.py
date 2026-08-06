@@ -111,7 +111,7 @@ def search_reports(
 # 工具注册
 # =============================================================================
 def _build_tool_registry(
-    ltm, entity_tracker, client, last_report, _emit, selected_diagnosis=None,
+    entity_tracker, client, last_report, _emit, selected_diagnosis=None,
     last_ambiguity=None, selected_kbs=None, knowledge_bases=None,
 ):
     """构建并注册工具到 ToolRegistry。
@@ -119,7 +119,6 @@ def _build_tool_registry(
     将 chat_stream 包装为符合 Tool Handler 签名的函数传入各工具。
 
     Args:
-        ltm: LongTermMemory 实例
         entity_tracker: EntityTracker 实例
         client: MilvusClient 实例
         last_report: 上一轮报告的可变引用
@@ -150,7 +149,6 @@ def _build_tool_registry(
 
     rag_handler = create_rag_search_handler(
         chat_fn=_chat_fn,
-        ltm=ltm,
         entity_tracker=entity_tracker,
         get_embedding_fn=get_embedding,
         search_reports_fn=_search_reports_fn,
@@ -170,7 +168,6 @@ def _build_tool_registry(
 
     refine_handler = create_refine_report_handler(
         chat_fn=_chat_fn,
-        ltm=ltm,
         entity_tracker=entity_tracker,
         _emit_fn=_emit,
         last_report=last_report,
@@ -184,7 +181,7 @@ def _build_tool_registry(
 # 主流程：run_pipeline
 # =============================================================================
 @traceable(run_type="chain", name="Agent_Main_Pipeline")
-async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last_report,
+async def run_pipeline(query, session_id, stm, entity_tracker, client, last_report,
                        _emit, selected_diagnosis=None, last_ambiguity=None,
                        selected_kbs=None, knowledge_bases=None):
     """Tool Calling 架构主流程
@@ -193,7 +190,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last
     1. Phase 1 (Pre-LLM): 实体提取 → 意图检测 → 上下文消解
     2. 切换意图: 清空 STM 和 last_report (彻底清洗)
     3. Phase 2 (Tool Calling): LLM 自主决定调用工具或直接回复
-    4. Phase 3 (Post-LLM): 更新 STM，记录用户偏好
+    4. Phase 3 (Post-LLM): 更新 STM 和当前会话实体
     """
     logger.info(f"── run_pipeline 开始: session={session_id}, query={query[:50]}..., selected_diagnosis={selected_diagnosis}")
 
@@ -312,30 +309,27 @@ async def run_pipeline(query, session_id, stm, entity_tracker, ltm, client, last
     # ── Phase 2: Tool Calling 主循环 ──
     # 构建工具注册中心
     registry = _build_tool_registry(
-        ltm, entity_tracker, client, last_report, _emit,
+        entity_tracker, client, last_report, _emit,
         selected_diagnosis=selected_diagnosis, last_ambiguity=last_ambiguity,
         selected_kbs=selected_kbs, knowledge_bases=knowledge_bases,
     )
     tools_schema = registry.get_tools_schema()
     logger.info(f"已注册工具: {list(registry._tools.keys())}")
 
-    # ── 记忆检索注入：按需检索最相关的 LTM 偏好和 STM 历史 ──
+    # ── 记忆检索注入：仅检索当前会话的 STM 历史 ──
     retriever = MemoryRetriever(get_embedding)
-    retriever.index_ltm(ltm.get_preferences())
     retriever.index_stm(history)
-    relevant = retriever.search_relevant(enhanced, top_k_ltm=3, top_k_stm=3)
-    logger.info(f"记忆检索: LTM={len(relevant['ltm'])}条, STM={len(relevant['stm'])}条")
+    relevant = retriever.search_relevant(enhanced, top_k_stm=3)
+    logger.info(f"记忆检索: STM={len(relevant['stm'])}条")
     if _emit:
         _emit("memory_retrieval", {
-            "ltm": relevant["ltm"],
             "stm": relevant["stm"],
             "query": enhanced[:50],
         })
 
-    # 构建系统消息：注入检索后的相关 LTM 偏好 + Entity 上下文
+    # 构建系统消息：仅注入 EntityTracker 的当前会话上下文
     sys_prompt = PromptBuilder.build(
         "tool_orchestrator",
-        ltm_prefs=relevant["ltm"],
         entity_context=entity_tracker.to_context_prompt(),
     )
 

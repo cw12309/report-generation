@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=20" />
+    <link rel="stylesheet" href="/static/style.css?v=23" />
   </head>
   <body>
     <div class="app">
@@ -29,414 +29,462 @@
             <span class="sidebar-label">配置</span>
           </button>
           <button class="sidebar-btn" data-page="monitor" title="会话记录">
-          <span class="sidebar-icon">📊</span>
-          <span class="sidebar-label">记录</span>
-        </button>
+            <span class="sidebar-icon">📊</span>
+            <span class="sidebar-label">记录</span>
+          </button>
         </div>
       </nav>
 
       <!-- 主工作区 -->
       <div id="main-workspace">
-      <!-- 主内容区 -->
-      <div class="main">
-        <!-- Agent 页面 -->
-        <div class="page active" id="pageAgent">
-          <div class="agent-layout">
-            <!-- 历史对话侧边栏 -->
-            <aside class="chat-history-sidebar" id="chatHistorySidebar">
-              <div class="new-chat-btn-container">
-                <button id="btnNewChat" class="btn btn-primary new-chat-btn">
-                  <span>开启新对话</span>
-                </button>
-              </div>
-              <div class="chat-history-title">历史对话</div>
-              <div class="chat-history-list" id="chatHistoryList">
-                <div class="chat-history-empty">暂无历史对话</div>
-              </div>
-            </aside>
-
-            <!-- 聊天主区域 -->
-            <div class="agent-main">
-              <header class="header">
-                <h1>影像报告生成Agent</h1>
-              </header>
-
-              <div class="toolbar">
-                <button id="btnClear" class="btn btn-outline">清空会话</button>
-                <button id="btnMemory" class="btn btn-outline">短期记忆</button>
-                <button
-                  id="btnConfigModel"
-                  class="btn btn-outline"
-                  title="配置模型"
-                >
-                  ⚙️ 配置模型
-                </button>
-                <button id="btnOpenKbSelector" class="btn btn-outline agent-tool-btn">
-                  📚 选择知识库
-                  <span id="kbSelectedCount" class="badge">0</span>
-                </button>
-              </div>
-
-              <div class="memory-panel" id="memoryPanel" style="display: none">
-                <div class="memory-panel-header">
-                  <h3>短期记忆详情</h3>
-                  <button class="memory-panel-close" id="btnMemoryClose">
-                    ✕
+        <!-- 主内容区 -->
+        <div class="main">
+          <!-- Agent 页面 -->
+          <div class="page active" id="pageAgent">
+            <div class="agent-layout">
+              <!-- 历史对话侧边栏 -->
+              <aside class="chat-history-sidebar" id="chatHistorySidebar">
+                <div class="new-chat-btn-container">
+                  <button id="btnNewChat" class="btn btn-primary new-chat-btn">
+                    <span>开启新对话</span>
                   </button>
                 </div>
-                <div class="memory-panel-body" id="memoryPanelBody">
-                  <div class="memory-loading">加载中...</div>
+                <div class="chat-history-title">历史对话</div>
+                <div class="chat-history-list" id="chatHistoryList">
+                  <div class="chat-history-empty">暂无历史对话</div>
                 </div>
-              </div>
+              </aside>
 
-              <div class="chat-container" id="chatContainer">
-                <div class="empty-state">
-                  <div class="empty-icon">📋</div>
-                  <p>输入CT/MRI等检查关键词，生成结构化影像报告</p>
-                  <p class="hint">例如：CT脑出血、MRI膝关节、脑梗</p>
-                </div>
-              </div>
+              <!-- 聊天主区域 -->
+              <div class="agent-main">
+                <header class="header">
+                  <h1>影像报告生成Agent</h1>
+                </header>
 
-              <div class="input-area">
-                <textarea
-                  id="userInput"
-                  placeholder="输入检查关键词，如：CT脑出血、脑梗..."
-                  rows="2"
-                  autofocus
-                ></textarea>
-                <button id="btnSend" class="btn btn-primary">
-                  <span class="btn-text">发送</span>
-                  <span class="btn-loading" style="display: none"
-                    >⏳ 生成中...</span
+                <div class="toolbar">
+                  <button id="btnClear" class="btn btn-outline">
+                    清空会话
+                  </button>
+                  <button id="btnMemory" class="btn btn-outline">
+                    短期记忆
+                  </button>
+                  <button
+                    id="btnConfigModel"
+                    class="btn btn-outline"
+                    title="配置模型"
                   >
-                </button>
-              </div>
+                    ⚙️ 配置模型
+                  </button>
+                  <button
+                    id="btnOpenKbSelector"
+                    class="btn btn-outline agent-tool-btn"
+                  >
+                    📚 选择知识库
+                    <span id="kbSelectedCount" class="badge">0</span>
+                  </button>
+                </div>
 
-              <div class="status-bar" id="statusBar">
-                <span id="statusText">就绪</span>
-                <span class="context-usage" id="contextUsage" style="display: none;">
-                  上下文使用率: <span id="contextPercent">0</span>%
-                </span>
+                <div
+                  class="memory-panel"
+                  id="memoryPanel"
+                  style="display: none"
+                >
+                  <div class="memory-panel-header">
+                    <h3>短期记忆详情</h3>
+                    <button class="memory-panel-close" id="btnMemoryClose">
+                      ✕
+                    </button>
+                  </div>
+                  <div class="memory-panel-body" id="memoryPanelBody">
+                    <div class="memory-loading">加载中...</div>
+                  </div>
+                </div>
+
+                <div class="chat-container" id="chatContainer">
+                  <div class="empty-state">
+                    <div class="empty-icon">📋</div>
+                    <p>输入CT/MRI等检查关键词，生成结构化影像报告</p>
+                    <p class="hint">例如：CT脑出血、MRI膝关节、脑梗</p>
+                  </div>
+                </div>
+
+                <div class="input-area">
+                  <textarea
+                    id="userInput"
+                    placeholder="输入检查关键词，如：CT脑出血、脑梗..."
+                    rows="2"
+                    autofocus
+                  ></textarea>
+                  <button id="btnSend" class="btn btn-primary">
+                    <span class="btn-text">发送</span>
+                    <span class="btn-loading" style="display: none"
+                      >⏳ 生成中...</span
+                    >
+                  </button>
+                </div>
+
+                <div class="status-bar" id="statusBar">
+                  <span id="statusText">就绪</span>
+                  <span
+                    class="context-usage"
+                    id="contextUsage"
+                    style="display: none"
+                  >
+                    上下文使用率: <span id="contextPercent">0</span>%
+                  </span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- 模型选择弹窗 -->
-        <div class="llm-config-panel" id="llmConfigPanel" style="display: none">
-          <div class="llm-config-header">
-            <h3>当前激活模型配置</h3>
-            <button class="llm-config-close" id="btnLlmConfigClose">✕</button>
-          </div>
-          <div class="llm-config-body" id="llmConfigBody">
-            <div class="llm-config-row">
-              <label class="llm-config-label">对话大语言模型</label>
-              <select id="activeChatLlm" class="llm-config-select"></select>
+          <!-- 模型选择弹窗 -->
+          <div
+            class="llm-config-panel"
+            id="llmConfigPanel"
+            style="display: none"
+          >
+            <div class="llm-config-header">
+              <h3>当前激活模型配置</h3>
+              <button class="llm-config-close" id="btnLlmConfigClose">✕</button>
             </div>
-            <div class="llm-config-row">
-              <label class="llm-config-label">向量化模型</label>
-              <select id="activeEmbedding" class="llm-config-select"></select>
-            </div>
-            <div class="llm-config-row">
-              <label class="llm-config-label">重排模型</label>
-              <select id="activeRerank" class="llm-config-select"></select>
-            </div>
-            <div class="llm-config-actions">
-              <span id="llmConfigHint" class="llm-config-hint"></span>
-              <button
-                type="button"
-                class="btn btn-sm btn-primary"
-                id="btnSaveLlmConfig"
-              >
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 知识库页面 -->
-        <div class="page" id="pageKB">
-          <header class="header">
-            <h1>知识库管理</h1>
-            <p class="subtitle">上传报告模板、构建向量库并查看知识库详情</p>
-          </header>
-
-          <div class="kb-manage-layout">
-            <aside class="kb-manage-sidebar">
-              <div class="kb-manage-sidebar-header">
-                <span>知识库列表</span>
-                <button id="btnSidebarUpload" class="kb-btn">上传 Excel</button>
+            <div class="llm-config-body" id="llmConfigBody">
+              <div class="llm-config-row">
+                <label class="llm-config-label">对话大语言模型</label>
+                <select id="activeChatLlm" class="llm-config-select"></select>
               </div>
-              <div id="manageKbList" class="kb-manage-list">
-                <div class="kb-manage-empty">正在加载知识库...</div>
+              <div class="llm-config-row">
+                <label class="llm-config-label">向量化模型</label>
+                <select id="activeEmbedding" class="llm-config-select"></select>
               </div>
-              <input
-                type="file"
-                id="xlsxInput"
-                accept=".xlsx"
-                multiple
-                style="display: none"
-              />
-              <div class="kb-log kb-manage-log" id="kbLog" style="display: none">
-                <div class="kb-log-header">📋 执行日志</div>
-                <div class="kb-log-content" id="kbLogContent"></div>
+              <div class="llm-config-row">
+                <label class="llm-config-label">重排模型</label>
+                <select id="activeRerank" class="llm-config-select"></select>
               </div>
-            </aside>
-
-            <section id="kbDetailArea" class="kb-detail-area">
-              <div class="kb-detail-header">
-                <h3 id="detailKbName">请在左侧选择知识库</h3>
-                <span id="detailKbCount" class="kb-chunk-count"></span>
-              </div>
-              <div id="kbChunkList" class="kb-chunk-list">
-                <div class="kb-empty-tip">点击左侧列表查看具体的切片内容...</div>
-              </div>
-            </section>
-          </div>
-        </div>
-
-        <!-- 配置页面 -->
-        <div class="page" id="pageConfig">
-          <header class="header">
-            <h1>系统配置</h1>
-            <p class="subtitle">
-              多模型配置管理，选择一个激活使用，支持添加/删除
-            </p>
-          </header>
-
-          <div class="config-body">
-            <nav class="config-nav" id="configNav">
-              <div class="config-nav-title">配置分类</div>
-              <button class="config-nav-item active" data-config="llm">
-                大语言模型配置
-              </button>
-              <button class="config-nav-item" data-config="retrieval">
-                检索与向量化配置
-              </button>
-              <button class="config-nav-item" data-config="system">
-                系统与功能配置
-              </button>
-            </nav>
-            <div class="config-main" id="configForm">
-              <!-- LLM 模型配置分组 -->
-              <div class="config-group" id="configGroupLlm">
-                <h2 class="config-group-title">大语言模型配置</h2>
-                <div class="config-group-content">
-                  <div class="config-section">
-                    <div class="config-section-header">
-                      <h3 class="config-section-title">LLM 模型列表</h3>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline"
-                        id="btnAddLlm"
-                      >
-                        + 添加 LLM
-                      </button>
-                    </div>
-                    <div class="model-list" id="modelListLlms">
-                      <!-- 动态生成 -->
-                    </div>
-                  </div>
-                  <div class="config-section-hint" id="configHintLlm"></div>
-                </div>
-              </div>
-
-              <!-- 检索配置分组 -->
-              <div
-                class="config-group"
-                id="configGroupRetrieval"
-                style="display: none"
-              >
-                <h2 class="config-group-title">检索与向量化配置</h2>
-                <div class="config-group-content">
-                  <!-- Embedding 模型列表 -->
-                  <div class="config-section">
-                    <div class="config-section-header">
-                      <h3 class="config-section-title">Embedding 模型列表</h3>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline"
-                        id="btnAddEmbedding"
-                      >
-                        + 添加 Embedding
-                      </button>
-                    </div>
-                    <div class="model-list" id="modelListEmbeddings">
-                      <!-- 动态生成 -->
-                    </div>
-                  </div>
-
-                  <!-- Rerank 模型列表 -->
-                  <div class="config-section">
-                    <div class="config-section-header">
-                      <h3 class="config-section-title">Rerank 模型列表</h3>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline"
-                        id="btnAddRerank"
-                      >
-                        + 添加 Rerank
-                      </button>
-                    </div>
-                    <div class="model-list" id="modelListReranks">
-                      <!-- 动态生成 -->
-                    </div>
-                  </div>
-
-                  <!-- 检索配置 -->
-                  <div class="config-section">
-                    <h3 class="config-section-title">检索参数配置</h3>
-                    <div class="config-row">
-                      <label class="config-label"
-                        >向量检索召回数 (RAG topK)</label
-                      >
-                      <input
-                        type="number"
-                        class="config-input config-input-sm"
-                        id="cfg_retrieval_rag_top_k"
-                      />
-                    </div>
-                    <div class="config-row">
-                      <label class="config-label">Rerank 后保留条数</label>
-                      <input
-                        type="number"
-                        class="config-input config-input-sm"
-                        id="cfg_retrieval_rerank_top_k"
-                      />
-                    </div>
-                    <div class="config-row">
-                      <label class="config-label">Milvus 集合名称</label>
-                      <input
-                        type="text"
-                        class="config-input"
-                        id="cfg_retrieval_collection_name"
-                      />
-                    </div>
-                    <div class="config-row">
-                      <label class="config-label">Milvus 数据库路径</label>
-                      <input
-                        type="text"
-                        class="config-input"
-                        id="cfg_retrieval_db_path"
-                        placeholder="相对于项目根目录"
-                      />
-                    </div>
-                  </div>
-                  <div
-                    class="config-section-hint"
-                    id="configHintRetrieval"
-                  ></div>
-                </div>
-              </div>
-
-              <!-- 系统配置分组 -->
-              <div
-                class="config-group"
-                id="configGroupSystem"
-                style="display: none"
-              >
-                <h2 class="config-group-title">系统与功能配置</h2>
-                <div class="config-group-content">
-                  <!-- 短期记忆配置 -->
-                  <div class="config-section">
-                    <h3 class="config-section-title">短期记忆配置</h3>
-                    <div class="config-row">
-                      <label class="config-label">最大轮数</label>
-                      <input
-                        type="number"
-                        class="config-input config-input-sm"
-                        id="cfg_stm_max_rounds"
-                      />
-                    </div>
-                    <div class="config-row">
-                      <label class="config-label">实体权重衰减因子</label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        class="config-input config-input-sm"
-                        id="cfg_stm_decay_factor"
-                      />
-                    </div>
-                  </div>
-                  <div class="config-section-hint" id="configHintSystem"></div>
-                </div>
-              </div>
-
-              <div class="config-actions">
-                <div class="config-hint" id="configHint">
-                  💾 修改配置后点击保存即可生效
-                </div>
+              <div class="llm-config-actions">
+                <span id="llmConfigHint" class="llm-config-hint"></span>
                 <button
                   type="button"
-                  id="btnSaveConfig"
-                  class="btn btn-primary"
+                  class="btn btn-sm btn-primary"
+                  id="btnSaveLlmConfig"
                 >
-                  💾 保存配置
+                  保存
                 </button>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- 监控页面 -->
-        <div class="page" id="pageMonitor">
-          <header class="header">
-            <h1>会话监控</h1>
-            <p class="subtitle">查看和管理所有用户会话</p>
-          </header>
+          <!-- 知识库页面 -->
+          <div class="page" id="pageKB">
+            <header class="header">
+              <h1>知识库管理</h1>
+              <p class="subtitle">上传报告模板、构建向量库并查看知识库详情</p>
+            </header>
 
-          <div class="monitor-body">
-            <div class="monitor-stats">
-              <div class="monitor-stat">
-                <span class="monitor-stat-label">总会话数</span>
-                <span class="monitor-stat-value" id="monitorTotalSessions">-</span>
-              </div>
-              <div class="monitor-stat">
-                <span class="monitor-stat-label">总对话轮次</span>
-                <span class="monitor-stat-value" id="monitorTotalTurns">-</span>
-              </div>
-              <div class="monitor-stat">
-                <span class="monitor-stat-label">最后更新</span>
-                <span class="monitor-stat-value" id="monitorLastUpdate">-</span>
+            <div class="kb-manage-layout">
+              <aside class="kb-manage-sidebar">
+                <div class="kb-manage-sidebar-header">
+                  <span>知识库列表</span>
+                  <button id="btnSidebarUpload" class="kb-btn">
+                    上传 Excel
+                  </button>
+                </div>
+                <div id="manageKbList" class="kb-manage-list">
+                  <div class="kb-manage-empty">正在加载知识库...</div>
+                </div>
+                <input
+                  type="file"
+                  id="xlsxInput"
+                  accept=".xlsx"
+                  multiple
+                  style="display: none"
+                />
+                <div
+                  class="kb-log kb-manage-log"
+                  id="kbLog"
+                  style="display: none"
+                >
+                  <div class="kb-log-header">📋 执行日志</div>
+                  <div class="kb-log-content" id="kbLogContent"></div>
+                </div>
+              </aside>
+
+              <section id="kbDetailArea" class="kb-detail-area">
+                <div class="kb-detail-header">
+                  <h3 id="detailKbName">请在左侧选择知识库</h3>
+                  <span id="detailKbCount" class="kb-chunk-count"></span>
+                </div>
+                <div id="kbChunkList" class="kb-chunk-list">
+                  <div class="kb-empty-tip">
+                    点击左侧列表查看具体的切片内容...
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <!-- 配置页面 -->
+          <div class="page" id="pageConfig">
+            <header class="header">
+              <h1>系统配置</h1>
+              <p class="subtitle">
+                多模型配置管理，选择一个激活使用，支持添加/删除
+              </p>
+            </header>
+
+            <div class="config-body">
+              <nav class="config-nav" id="configNav">
+                <div class="config-nav-title">配置分类</div>
+                <button class="config-nav-item active" data-config="llm">
+                  大语言模型配置
+                </button>
+                <button class="config-nav-item" data-config="retrieval">
+                  检索与向量化配置
+                </button>
+                <button class="config-nav-item" data-config="system">
+                  系统与功能配置
+                </button>
+              </nav>
+              <div class="config-main" id="configForm">
+                <!-- LLM 模型配置分组 -->
+                <div class="config-group" id="configGroupLlm">
+                  <h2 class="config-group-title">大语言模型配置</h2>
+                  <div class="config-group-content">
+                    <div class="config-section">
+                      <div class="config-section-header">
+                        <h3 class="config-section-title">LLM 模型列表</h3>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline"
+                          id="btnAddLlm"
+                        >
+                          + 添加 LLM
+                        </button>
+                      </div>
+                      <div class="model-list" id="modelListLlms">
+                        <!-- 动态生成 -->
+                      </div>
+                    </div>
+                    <div class="config-section-hint" id="configHintLlm"></div>
+                  </div>
+                </div>
+
+                <!-- 检索配置分组 -->
+                <div
+                  class="config-group"
+                  id="configGroupRetrieval"
+                  style="display: none"
+                >
+                  <h2 class="config-group-title">检索与向量化配置</h2>
+                  <div class="config-group-content">
+                    <!-- Embedding 模型列表 -->
+                    <div class="config-section">
+                      <div class="config-section-header">
+                        <h3 class="config-section-title">Embedding 模型列表</h3>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline"
+                          id="btnAddEmbedding"
+                        >
+                          + 添加 Embedding
+                        </button>
+                      </div>
+                      <div class="model-list" id="modelListEmbeddings">
+                        <!-- 动态生成 -->
+                      </div>
+                    </div>
+
+                    <!-- Rerank 模型列表 -->
+                    <div class="config-section">
+                      <div class="config-section-header">
+                        <h3 class="config-section-title">Rerank 模型列表</h3>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline"
+                          id="btnAddRerank"
+                        >
+                          + 添加 Rerank
+                        </button>
+                      </div>
+                      <div class="model-list" id="modelListReranks">
+                        <!-- 动态生成 -->
+                      </div>
+                    </div>
+
+                    <!-- 检索配置 -->
+                    <div class="config-section">
+                      <h3 class="config-section-title">检索参数配置</h3>
+                      <div class="config-row">
+                        <label class="config-label"
+                          >向量检索召回数 (RAG topK)</label
+                        >
+                        <input
+                          type="number"
+                          class="config-input config-input-sm"
+                          id="cfg_retrieval_rag_top_k"
+                        />
+                      </div>
+                      <div class="config-row">
+                        <label class="config-label">Rerank 后保留条数</label>
+                        <input
+                          type="number"
+                          class="config-input config-input-sm"
+                          id="cfg_retrieval_rerank_top_k"
+                        />
+                      </div>
+                      <div class="config-row">
+                        <label class="config-label">Milvus 集合名称</label>
+                        <input
+                          type="text"
+                          class="config-input"
+                          id="cfg_retrieval_collection_name"
+                        />
+                      </div>
+                      <div class="config-row">
+                        <label class="config-label">Milvus 数据库路径</label>
+                        <input
+                          type="text"
+                          class="config-input"
+                          id="cfg_retrieval_db_path"
+                          placeholder="相对于项目根目录"
+                        />
+                      </div>
+                    </div>
+                    <div
+                      class="config-section-hint"
+                      id="configHintRetrieval"
+                    ></div>
+                  </div>
+                </div>
+
+                <!-- 系统配置分组 -->
+                <div
+                  class="config-group"
+                  id="configGroupSystem"
+                  style="display: none"
+                >
+                  <h2 class="config-group-title">系统与功能配置</h2>
+                  <div class="config-group-content">
+                    <!-- 短期记忆配置 -->
+                    <div class="config-section">
+                      <h3 class="config-section-title">短期记忆配置</h3>
+                      <div class="config-row">
+                        <label class="config-label">最大轮数</label>
+                        <input
+                          type="number"
+                          class="config-input config-input-sm"
+                          id="cfg_stm_max_rounds"
+                        />
+                      </div>
+                      <div class="config-row">
+                        <label class="config-label">实体权重衰减因子</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          class="config-input config-input-sm"
+                          id="cfg_stm_decay_factor"
+                        />
+                      </div>
+                    </div>
+                    <div
+                      class="config-section-hint"
+                      id="configHintSystem"
+                    ></div>
+                  </div>
+                </div>
+
+                <div class="config-actions">
+                  <div class="config-hint" id="configHint">
+                    💾 修改配置后点击保存即可生效
+                  </div>
+                  <button
+                    type="button"
+                    id="btnSaveConfig"
+                    class="btn btn-primary"
+                  >
+                    💾 保存配置
+                  </button>
+                </div>
               </div>
             </div>
+          </div>
 
-            <div class="monitor-actions">
-              <button id="btnRefreshSessions" class="btn btn-outline">
-                🔄 刷新列表
-              </button>
-            </div>
+          <!-- 监控页面 -->
+          <div class="page" id="pageMonitor">
+            <header class="header">
+              <h1>会话监控</h1>
+              <p class="subtitle">查看和管理所有用户会话</p>
+            </header>
 
-            <div class="monitor-sessions">
-              <div class="monitor-sessions-header">
-                <span class="monitor-sessions-col monitor-col-id">会话 ID</span>
-                <span class="monitor-sessions-col monitor-col-title">标题</span>
-                <span class="monitor-sessions-col monitor-col-turns">轮次</span>
-                <span class="monitor-sessions-col monitor-col-time">创建时间</span>
-                <span class="monitor-sessions-col monitor-col-actions">操作</span>
+            <div class="monitor-body">
+              <div class="monitor-stats">
+                <div class="monitor-stat">
+                  <span class="monitor-stat-label">总会话数</span>
+                  <span class="monitor-stat-value" id="monitorTotalSessions"
+                    >-</span
+                  >
+                </div>
+                <div class="monitor-stat">
+                  <span class="monitor-stat-label">总对话轮次</span>
+                  <span class="monitor-stat-value" id="monitorTotalTurns"
+                    >-</span
+                  >
+                </div>
+                <div class="monitor-stat">
+                  <span class="monitor-stat-label">最后更新</span>
+                  <span class="monitor-stat-value" id="monitorLastUpdate"
+                    >-</span
+                  >
+                </div>
               </div>
-              <div class="monitor-sessions-list" id="monitorSessionsList">
-                <div class="monitor-empty">加载中...</div>
+
+              <div class="monitor-actions">
+                <button id="btnRefreshSessions" class="btn btn-outline">
+                  🔄 刷新列表
+                </button>
+              </div>
+
+              <div class="monitor-sessions">
+                <div class="monitor-sessions-header">
+                  <span class="monitor-sessions-col monitor-col-id"
+                    >会话 ID</span
+                  >
+                  <span class="monitor-sessions-col monitor-col-title"
+                    >标题</span
+                  >
+                  <span class="monitor-sessions-col monitor-col-turns"
+                    >轮次</span
+                  >
+                  <span class="monitor-sessions-col monitor-col-time"
+                    >创建时间</span
+                  >
+                  <span class="monitor-sessions-col monitor-col-actions"
+                    >操作</span
+                  >
+                </div>
+                <div class="monitor-sessions-list" id="monitorSessionsList">
+                  <div class="monitor-empty">加载中...</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 会话详情弹窗 -->
+          <div class="modal" id="sessionDetailModal" style="display: none">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+              <div class="modal-header">
+                <h3>会话详情</h3>
+                <button class="modal-close" id="btnCloseSessionDetail">
+                  ✕
+                </button>
+              </div>
+              <div class="modal-body" id="sessionDetailBody">
+                <div class="session-detail-info" id="sessionDetailInfo"></div>
+                <div class="session-detail-turns" id="sessionDetailTurns"></div>
               </div>
             </div>
           </div>
         </div>
-
-        <!-- 会话详情弹窗 -->
-        <div class="modal" id="sessionDetailModal" style="display: none">
-          <div class="modal-backdrop"></div>
-          <div class="modal-content">
-            <div class="modal-header">
-              <h3>会话详情</h3>
-              <button class="modal-close" id="btnCloseSessionDetail">✕</button>
-            </div>
-            <div class="modal-body" id="sessionDetailBody">
-              <div class="session-detail-info" id="sessionDetailInfo"></div>
-              <div class="session-detail-turns" id="sessionDetailTurns"></div>
-            </div>
-          </div>
-        </div>
-      </div>
       </div>
     </div>
 
@@ -453,7 +501,12 @@
       <div class="agent-modal-dialog">
         <div class="agent-modal-header">
           <h3 id="agentKbModalTitle">选择对话知识库</h3>
-          <button type="button" class="close-btn" id="btnCloseKbSelector" aria-label="关闭">
+          <button
+            type="button"
+            class="close-btn"
+            id="btnCloseKbSelector"
+            aria-label="关闭"
+          >
             &times;
           </button>
         </div>
@@ -464,11 +517,13 @@
           </div>
         </div>
         <div class="agent-modal-footer">
-          <button id="btnConfirmKbSelector" class="btn btn-primary">确定</button>
+          <button id="btnConfirmKbSelector" class="btn btn-primary">
+            确定
+          </button>
         </div>
       </div>
     </div>
 
-    <script src="/static/app.js?v=35"></script>
+    <script src="/static/app.js?v=37"></script>
   </body>
 </html>

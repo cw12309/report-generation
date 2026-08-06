@@ -1,7 +1,9 @@
 """Rebuild the medical report collection with dense and sparse vectors."""
 
 import argparse
+import logging
 import random
+import re
 import sys
 import time
 from pathlib import Path
@@ -33,6 +35,9 @@ from config import (  # noqa: E402
     get_milvus_token,
 )
 from rag.sparse_vector import text_to_sparse_vector  # noqa: E402
+from data_pipeline.chunk_id import generate_chunk_id  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def _section(content: str, heading: str) -> str:
@@ -45,7 +50,7 @@ def _section(content: str, heading: str) -> str:
     return body.strip()
 
 
-def parse_markdown(path: Path) -> Dict:
+def parse_markdown(path: Path, kb_id_override: Optional[str] = None) -> Dict:
     """Parse one generated Markdown report into the collection fields."""
     content = path.read_text(encoding="utf-8")
     metadata: Dict[str, str] = {}
@@ -69,8 +74,19 @@ def parse_markdown(path: Path) -> Dict:
         f"影像学表现：{findings}" if findings else "",
         f"影像学意见：{opinion}" if opinion else "",
     ]))
+    frontmatter_kb_id = metadata.get("kb_id", "")[:64]
+    kb_id = (kb_id_override or frontmatter_kb_id)[:64]
+    stored_chunk_id = metadata.get("chunk_id", "").lower()
+    stored_id_is_usable = bool(re.fullmatch(r"[0-9a-f]{32}", stored_chunk_id))
+    override_matches_frontmatter = not kb_id_override or kb_id == frontmatter_kb_id
+    chunk_id = (
+        stored_chunk_id
+        if stored_id_is_usable and override_matches_frontmatter
+        else generate_chunk_id(kb_id, path.name, combined_text)
+    )
     return {
-        "kb_id": metadata.get("kb_id", "")[:64],
+        "kb_id": kb_id,
+        "chunk_id": chunk_id,
         "modality": metadata.get("modality", "")[:32],
         "level_1": metadata.get("level_1", "")[:64],
         "level_2": metadata.get("level_2", "")[:64],
@@ -144,6 +160,7 @@ def create_collection(client: MilvusClient) -> None:
     schema = CollectionSchema(fields=[
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
         FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="chunk_id", dtype=DataType.VARCHAR, max_length=32),
         FieldSchema(name="modality", dtype=DataType.VARCHAR, max_length=32),
         FieldSchema(name="level_1", dtype=DataType.VARCHAR, max_length=64),
         FieldSchema(name="level_2", dtype=DataType.VARCHAR, max_length=64),
@@ -163,6 +180,7 @@ def create_collection(client: MilvusClient) -> None:
 
     indexes = client.prepare_index_params()
     indexes.add_index(field_name="kb_id", index_type="INVERTED", metric_type="")
+    indexes.add_index(field_name="chunk_id", index_type="INVERTED", metric_type="")
     indexes.add_index(field_name="modality", index_type="INVERTED", metric_type="")
     indexes.add_index(field_name="level_1", index_type="INVERTED", metric_type="")
     indexes.add_index(field_name="level_2", index_type="INVERTED", metric_type="")
@@ -204,7 +222,7 @@ def ensure_collection_schema(client: MilvusClient) -> dict:
     fields = schema.get("fields", []) if isinstance(schema, dict) else []
     field_names = {field.get("name") for field in fields}
     required_fields = {
-        "kb_id", "modality", "level_1", "level_2", "level_3", "level_4",
+        "kb_id", "chunk_id", "modality", "level_1", "level_2", "level_3", "level_4",
         "module_name", "imaging_findings", "imaging_opinion", "combined_text",
         "dense_vector", "sparse_vector",
     }
@@ -217,13 +235,23 @@ def ensure_collection_schema(client: MilvusClient) -> dict:
         )
     indexes = client.list_indexes(collection_name)
     index_names = {getattr(index, "field_name", None) or str(index) for index in indexes}
-    if "kb_id" not in index_names:
+    missing_scalar_indexes = [
+        field_name
+        for field_name in ("kb_id", "chunk_id")
+        if field_name not in index_names
+    ]
+    if missing_scalar_indexes:
         index_params = client.prepare_index_params()
-        index_params.add_index(
-            field_name="kb_id", index_type="INVERTED", metric_type=""
-        )
+        for field_name in missing_scalar_indexes:
+            index_params.add_index(
+                field_name=field_name, index_type="INVERTED", metric_type=""
+            )
         client.create_index(collection_name=collection_name, index_params=index_params)
-        logger.info("已补建 kb_id INVERTED 索引: %s", collection_name)
+        logger.info(
+            "已补建标量 INVERTED 索引 %s: %s",
+            missing_scalar_indexes,
+            collection_name,
+        )
     return {"created": False, "valid": True, "missing_fields": []}
 
 
@@ -255,10 +283,7 @@ def build_db(
         raise FileNotFoundError(f"Markdown目录不存在: {base_dir}")
 
     markdown_files = sorted(base_dir.rglob("*.md"))
-    reports = [parse_markdown(path) for path in markdown_files]
-    if kb_id:
-        for report in reports:
-            report["kb_id"] = kb_id[:64]
+    reports = [parse_markdown(path, kb_id_override=kb_id) for path in markdown_files]
     missing_kb = [path for path, report in zip(markdown_files, reports) if not report.get("kb_id")]
     if missing_kb:
         raise ValueError("Markdown 缺少 kb_id frontmatter，请传入 kb_id 或重新执行切片")
@@ -274,15 +299,6 @@ def build_db(
         if not client.has_collection(collection_name):
             create_collection(client)
             log(f"集合已创建: {collection_name}")
-        target_kbs = sorted({report["kb_id"] for report in reports})
-        for target_kb in target_kbs:
-            escaped_kb = target_kb.replace("\\", "").replace('"', "")
-            client.delete(
-                collection_name=collection_name,
-                filter=f'kb_id == "{escaped_kb}"',
-            )
-            log(f"已清理知识库旧实体: {target_kb}")
-
         def on_dense_progress(completed: int, total: int) -> None:
             progress = 20 + int((completed / total) * 50)
             report_progress(progress, f"Dense向量化: {completed}/{total}")
@@ -312,6 +328,16 @@ def build_db(
                 sparse_progress,
                 f"Sparse向量化: {index}/{total_reports}",
             )
+
+        # 向量全部生成成功后再删除旧实体，减少外部 Embedding 失败造成的数据窗口。
+        target_kbs = sorted({report["kb_id"] for report in reports})
+        for target_kb in target_kbs:
+            escaped_kb = target_kb.replace("\\", "").replace('"', "")
+            client.delete(
+                collection_name=collection_name,
+                filter=f'kb_id == "{escaped_kb}"',
+            )
+            log(f"已清理知识库旧实体: {target_kb}")
 
         for start in range(0, len(rows), 500):
             inserted = min(start + 500, len(rows))
@@ -366,6 +392,9 @@ def build_demo() -> int:
             f"影像学表现：{sample['imaging_findings']}",
             f"影像学意见：{sample['imaging_opinion']}",
         ])
+        sample["chunk_id"] = generate_chunk_id(
+            sample["kb_id"], f"{sample['module_name']}.md", sample["combined_text"]
+        )
         sample["dense_vector"] = [
             random_source.random() for _ in range(get_embed_dimension())
         ]

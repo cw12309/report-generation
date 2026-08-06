@@ -1,106 +1,144 @@
 # 前端
 
-纯静态页面，由 FastAPI 托管，无需构建工具。
+前端由原生 HTML、CSS 和 JavaScript 实现，由 FastAPI 作为静态资源托管，无需 Vue、React 或前端构建工具。
 
 ## 文件
 
-| 文件         | 说明                                                             |
-| ------------ | ---------------------------------------------------------------- |
-| `index.html` | 主页面，聊天界面 + 知识库管理面板 + 配置管理页                   |
-| `app.js`     | 交互逻辑，SSE 流式接收、Agent 思考面板、历史对话管理、知识库管理 |
-| `style.css`  | 全部样式                                                         |
+| 文件 | 说明 |
+| --- | --- |
+| `index.html` | 页面骨架、Agent/知识库/配置/监控视图和弹窗 |
+| `app.js` | 路由切换、SSE、会话历史、知识库管理和切片详情 |
+| `style.css` | macOS 风格浅色层级、页面布局、状态、气泡和引用样式 |
 
-## 功能
+## 页面结构
 
-- **聊天**：多轮对话，SSE 流式输出，支持 RAG 检索 / 编辑 / 重写 / 闲聊四种意图。当输入缺少检查类型（如只输入"脑出血"）时，自动追问用户补充 CT/MR 等
-- **歧义诊断选择**：当检索到多种相似诊断时，以按钮列表形式展示，用户点击后精确选择，避免 LLM 猜测
-- **历史对话**：左侧栏，支持开启新对话、切换历史对话、删除对话。对话数据以完整 HTML 形式保存到浏览器 localStorage，**刷新页面后无需调 API 即可恢复 UI**（含思考过程）
-- **短期记忆**：弹窗面板，查看当前对话轮数、实体、摘要，隔离不同对话
-- **Agent 思考**：折叠面板展示意图识别 → 检索查询 → 召回详情 → Rerank → 歧义检测 → 推理 → Token 流
-- **知识库管理**：上传 xlsx → 自动切片 → 构建向量库 → 提取元数据，全程 SSE 实时日志
-- **配置管理**：`config.yml` 一站式配置，支持在线修改模型、API Key、轮数等参数
-
-## SSE 事件类型
-
-| 事件类型           | 说明                   | 前端处理                   |
-| ------------------ | ---------------------- | -------------------------- |
-| `entity_update`    | 实体提取结果           | 更新思考面板               |
-| `memory_retrieval` | 记忆检索结果           | 更新思考面板               |
-| `intent`           | LLM 工具调用意图       | 更新思考面板               |
-| `search`           | 检索查询               | 更新思考面板               |
-| `recall`           | 多路召回详情           | 更新思考面板               |
-| `rerank`           | Rerank 重排序结果      | 更新思考面板               |
-| `ambiguous`        | 歧义检测，多个诊断选项 | 渲染按钮列表，等待用户选择 |
-| `tool_executed`    | 工具执行完成           | 更新思考面板               |
-| `reasoning`        | LLM 推理过程           | 更新思考面板               |
-| `report`           | 结构化报告             | 渲染报告内容               |
-| `message`          | 文本消息               | 流式渲染                   |
-| `error`            | 错误信息               | 显示错误提示               |
-| `status`           | 状态更新               | 更新思考面板进度           |
-| `done`             | SSE 流结束             | 关闭加载状态               |
-
-## 歧义交互流程
-
-```
-用户输入 "CT 脑出血"
-  → SSE 接收 type: "ambiguous"
-  → addAmbiguousOptions(event) 渲染按钮列表
-  → 每行显示：诊断名称 (Rerank分数%)
-
-用户点击按钮 "脑出血并破入脑室系统"
-  → window.selectAmbiguityOption(option)
-  → 取消当前请求，设置 selected_diagnosis 参数
-  → 重新发送 POST /api/chat { query, session_id, selected_diagnosis }
-  → 收到 type: "report" → 渲染结构化报告
-
-用户再次点击其他按钮 "基底节区脑出血"
-  → 同上流程 → 缓存命中 → 生成不同报告
-  → 可以多次点击不同按钮，每次都得到对应诊断的报告
+```text
+全局浅色一级导航
+├─ Agent
+│   ├─ 左侧：当前浏览器的历史对话
+│   └─ 主区：工具栏、知识库选择弹窗、聊天记录和输入框
+├─ 知识库
+│   ├─ 左侧：上传、KB 状态、构建/重建/删除和执行日志
+│   └─ 右侧：所选知识库的 SQLite 切片详情
+├─ 配置
+│   ├─ 左侧：配置分类
+│   └─ 右侧：模型与检索参数
+└─ 监控
+    └─ 服务端 SQLite 会话列表和详情
 ```
 
-## 部署
+全局导航背景为 `#f0f2f5`；各页面二级侧栏为 `#f9fafb`；主内容区为白色并带轻微左侧阴影。
 
-FastAPI 已配置静态文件挂载，前端文件放在 `front/` 目录下即可：
+## 知识库管理
 
-```python
-# rag_chat_v2.py 中已配置
-app.mount("/static", StaticFiles(directory="../front"), name="static")
+### 上传
+
+上传使用普通 `fetch` 和 `multipart/form-data`：
+
+```text
+POST /api/kb/upload
+files=<file1.xlsx>
+files=<file2.xlsx>
 ```
 
-访问 `http://localhost:8000` 即可使用。
+一次可以选择多个 Excel，但每个文件独立生成一个 `kb_id`。上传完成后状态为 `uploaded`，不会自动切片或写入 Milvus。
 
-## 对话存储机制
+### 状态与操作
 
-前端使用浏览器 **localStorage** 存储对话数据，与后端 SQLite 互补：
+| 状态 | 行内展示 | 操作 |
+| --- | --- | --- |
+| `uploaded` | 待构建 | 构建、删除 |
+| `processing` | Spinner、进度百分比 | 禁用构建和删除 |
+| `active` | 已激活 | 重新构建、删除、查看切片 |
+| `failed` | 构建失败 | 重新构建、删除 |
 
-| 存储键                | 内容                               | 用途                        |
-| --------------------- | ---------------------------------- | --------------------------- |
-| `chatHistory`         | `[{id, title, time}, ...]`         | 左侧栏对话列表              |
-| `chatMessages_conv_*` | `[{role, content, thinking}, ...]` | 对话完整 HTML（含思考过程） |
+构建调用：
 
-### 保存流程
-
-```
-SSE done 事件
-  → saveCurrentConversation()
-    → 遍历 .message 元素
-    → 提取 user/assistant/system 的 .bubble 内容
-    → assistant 消息前查找 .thinking-container → 保存到 thinking 字段
-    → 写入 localStorage
+```text
+POST /api/kb/{kb_id}/build
 ```
 
-### 恢复流程（刷新后）
+列表中存在 `processing` 知识库时，每 4 秒调用 `GET /api/kbs`；全部结束后停止轮询。进度采用行内展示，不使用阻塞式构建弹窗。
 
-```
-页面加载 → initChatHistory()
-  → 读取 localStorage chatHistory → 渲染左侧栏
-  → 用户点击某个对话 → loadConversation(convId)
-    → 读取 chatMessages_conv_xxx
-    → 遍历消息：assistant 消息前插入 thinking-container（思考过程）
-    → 渲染消息内容
-    → 不调任何后端 API
+### 切片详情
+
+点击管理列表中的知识库后调用：
+
+```text
+GET /api/kbs/{kb_id}/chunks?page=1&size=50
 ```
 
-### 存储位置
+右侧卡片展示检查类型、目录层级、模块、影像学表现和意见。旧知识库若 SQLite 中没有切片，需要重新构建后才能显示详情。
 
-localStorage 是浏览器内部管理，物理路径（Chrome）：`C:\Users\DELL\AppData\Local\Google\Chrome\User Data\Default\Local Storage\leveldb\`，不可直接读取。通过 F12 → Application → Local Storage 查看。
+## Agent 知识库选择
+
+知识库管理页不提供聊天复选框。Agent 工具栏中的“选择知识库”按钮打开独立弹窗，只渲染 `status === "active"` 的知识库。
+
+勾选 ID 保存在：
+
+```text
+localStorage["selectedKnowledgeBaseIds"]
+```
+
+页面刷新后会恢复仍然有效的 ID；知识库被删除或不再 active 时自动清理。发送聊天请求时附加：
+
+```json
+{
+  "query": "CT 头颅脑出血",
+  "session_id": "web_...",
+  "selected_kbs": ["kb_id_1", "kb_id_2"]
+}
+```
+
+没有选择知识库时，前端会拦截并提示“请至少选择一个知识库”，后端也会再次校验。
+
+## SSE 流式对话
+
+前端使用 `fetch()` + `ReadableStream.getReader()` 解析 `/api/chat` 返回的 `text/event-stream`。
+
+| 事件 | 用途 |
+| --- | --- |
+| `status` | 当前处理阶段 |
+| `intent` / `intent_switch` | Tool Calling 意图和意图切换 |
+| `query_rewrite` / `context_resolve` | 查询改写和当前会话上下文补全 |
+| `memory_retrieval` | 仅展示当前会话 STM 相关片段 |
+| `search` / `recall` | 检索查询和多通道召回详情 |
+| `rerank` | 收集分数、诊断、来源和切片原文 |
+| `token` | 实时追加到正式 AI 回答气泡 |
+| `reasoning` | 思考面板中的模型推理 |
+| `ambiguous` | 多诊断候选按钮 |
+| `report` | 最终结构化报告，覆盖当前流式气泡内容 |
+| `message` | 最终普通回复，覆盖当前流式气泡内容 |
+| `error` | 显示错误并结束流式光标 |
+| `done` / `[DONE]` | 完成当前流并保存会话 |
+
+第一个 `token` 会创建正式助手气泡，后续 Token 在同一个容器中重新进行安全 Markdown 渲染。最终 `report` 或 `message` 以服务端完整内容为准更新同一气泡，不再新增重复回答。
+
+`rerank` 事件会临时收集引用。回答完成后，气泡底部附加原生 `<details>` “参考切片”面板，每个来源可以继续展开查看具体原文。当前 `source` 是跨 SQLite、Markdown、Milvus 一致的 32 位 MD5 `chunk_id`，不再使用会随 Collection 重建变化的 Milvus 自增主键。
+
+## 对话历史与 LocalStorage
+
+| Key | 内容 |
+| --- | --- |
+| `chat_history_list` | 对话 ID、标题、session_id、时间 |
+| `chat_messages_{conversationId}` | 气泡 HTML 与思考过程 HTML |
+| `selectedKnowledgeBaseIds` | Agent 当前勾选的知识库 ID 数组 |
+
+引用折叠面板位于 `.bubble` 内，因此会随消息 HTML 一并保存和恢复。浏览器历史用于快速恢复 UI；服务端仍使用 SQLite 保存会话轮次、实体槽位和思考事件。
+
+## 歧义交互
+
+当后端发送 `ambiguous` 时，前端显示诊断候选。用户点击后会携带 `selected_diagnosis` 再次请求 `/api/chat`，后端可以复用当前会话内的检索缓存并生成对应报告。
+
+## 运行
+
+启动后端即可访问：
+
+```powershell
+python python_start.py
+```
+
+- 页面：<http://localhost:8000>
+- 前端资源挂载：`/static/*`
+
+修改 `app.js` 或 `style.css` 后，应同步提升 `index.html` 中的 `?v=` 版本，避免浏览器缓存旧资源。

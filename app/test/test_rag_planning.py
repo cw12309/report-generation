@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 APP_DIR = Path(__file__).resolve().parents[1]
 if str(APP_DIR) not in sys.path:
@@ -10,7 +11,11 @@ if str(APP_DIR) not in sys.path:
 
 from rag.metadata_navigator import MetadataNavigator
 from rag.query_planner import build_query_plan
-from rag.retrieval import build_fallback_filters, retrieve_with_fallback
+from rag.query_rewrite import normalize_chat_completions_url, rewrite_query
+from rag.retrieval import (
+    build_recall_channels,
+    retrieve_with_fallback,
+)
 
 
 TREE = {
@@ -34,16 +39,16 @@ TREE = {
 class FakeMilvusClient:
     def __init__(self):
         self.search_count = 0
+        self.last_request_count = 0
 
     def get_load_state(self, collection_name, timeout=None):
         return {"state": "Loaded"}
 
     def hybrid_search(self, **kwargs):
         self.search_count += 1
-        count = 1 if self.search_count == 1 else 3
+        self.last_request_count = len(kwargs.get("reqs", []))
         hits = []
-        for index in range(count):
-            entity_id = self.search_count * 10 + index
+        for index, entity_id in enumerate((11, 12, 12, 13)):
             hits.append({
                 "id": entity_id,
                 "distance": 1 / (index + 1),
@@ -103,7 +108,7 @@ class RagPlanningTest(unittest.TestCase):
         )
         self.assertEqual(plan["filters"], {"modality": "CT", "level_1": "头颅"})
 
-    def test_fallback_removes_deepest_levels_first(self):
+    def test_parallel_recall_channels(self):
         plan = {
             "filters": {
                 "modality": "CT",
@@ -112,15 +117,22 @@ class RagPlanningTest(unittest.TestCase):
             }
         }
         self.assertEqual(
-            build_fallback_filters(plan),
+            build_recall_channels(plan),
             [
-                {"modality": "CT", "level_1": "头颅", "level_3": "颅脑平扫"},
-                {"modality": "CT", "level_1": "头颅"},
-                {"modality": "CT"},
+                {
+                    "name": "strict",
+                    "filters": {
+                        "modality": "CT",
+                        "level_1": "头颅",
+                        "level_3": "颅脑平扫",
+                    },
+                },
+                {"name": "modality", "filters": {"modality": "CT"}},
+                {"name": "kb_only", "filters": {}},
             ],
         )
 
-    def test_retrieval_falls_back_when_candidates_are_insufficient(self):
+    def test_retrieval_fuses_all_channels_and_deduplicates(self):
         client = FakeMilvusClient()
         plan = {
             "query": "CT头颅脑出血",
@@ -138,10 +150,39 @@ class RagPlanningTest(unittest.TestCase):
             top_k=10,
             client=client,
             min_candidates=3,
+            selected_kbs=["kb_1"],
         )
-        self.assertEqual(client.search_count, 2)
-        self.assertEqual(len(candidates), 4)
-        self.assertEqual(len(details["stages"]), 2)
+        self.assertEqual(client.search_count, 1)
+        self.assertEqual(client.last_request_count, 6)
+        self.assertEqual(len(candidates), 3)
+        self.assertEqual(
+            [channel["channel"] for channel in details["channels"]],
+            ["strict", "modality", "kb_only"],
+        )
+        self.assertTrue(all("kb_1" in item["filter_expr"] for item in details["channels"]))
+
+    def test_rewrite_url_is_normalized(self):
+        self.assertEqual(
+            normalize_chat_completions_url("http://localhost:8001/v1"),
+            "http://localhost:8001/v1/chat/completions",
+        )
+        self.assertEqual(
+            normalize_chat_completions_url(
+                "http://localhost:8001/v1/chat/completions"
+            ),
+            "http://localhost:8001/v1/chat/completions",
+        )
+
+    @patch("rag.query_rewrite.requests.post", side_effect=RuntimeError("offline"))
+    def test_rewrite_failure_logs_warning_and_falls_back(self, _mock_post):
+        with self.assertLogs("rag.query_rewrite", level="WARNING") as captured:
+            result = rewrite_query(
+                "CT头颅",
+                chat_url="http://localhost:8001/v1",
+                chat_model="test-model",
+            )
+        self.assertEqual(result, "CT 头颅")
+        self.assertIn("已降级使用标准化原 Query", captured.output[0])
 
 
 if __name__ == "__main__":

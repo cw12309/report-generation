@@ -25,18 +25,31 @@
 - needs_rewrite: 查询有类型+部位但无诊断（如"CT头颅"、"MR膝关节"）
 """
 import json
+import logging
 import os
 import re
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from config import get_rewrite_base_url, get_rewrite_model, get_rewrite_api_key, get_metadata_path
 from prompt import load_prompt
 
-CHAT_URL = get_rewrite_base_url()
-CHAT_MODEL = get_rewrite_model()
+logger = logging.getLogger(__name__)
+
 CHAT_API_KEY = get_rewrite_api_key()
 
 METADATA_PATH = get_metadata_path()
+
+
+def normalize_chat_completions_url(url: str) -> str:
+    """Normalize an OpenAI-compatible base URL to its chat completions endpoint."""
+    if not url or not url.strip():
+        raise ValueError("Query Rewrite URL 不能为空")
+    parts = urlsplit(url.strip())
+    path = parts.path.rstrip("/")
+    if not path.endswith("/chat/completions"):
+        path = f"{path}/chat/completions"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 def _load_metadata():
@@ -377,8 +390,8 @@ def rewrite_query(query, chat_url=None, chat_model=None, timeout=10):
         str: 改写后的查询文本。如果改写失败，返回标准化后的查询。
     """
     standardized = standardize_query(query)
-    url = chat_url or CHAT_URL
-    model = chat_model or CHAT_MODEL
+    url = chat_url or get_rewrite_base_url()
+    model = chat_model or get_rewrite_model()
 
     keywords = parse_query_keywords(standardized)
     system_prompt = _build_rewrite_prompt(keywords)
@@ -398,6 +411,7 @@ def rewrite_query(query, chat_url=None, chat_model=None, timeout=10):
         headers["Authorization"] = f"Bearer {CHAT_API_KEY}"
 
     try:
+        url = normalize_chat_completions_url(url)
         resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
         resp.raise_for_status()
         data = resp.json()
@@ -405,7 +419,12 @@ def rewrite_query(query, chat_url=None, chat_model=None, timeout=10):
         if rewritten and len(rewritten) >= len(standardized):
             return rewritten
         return standardized
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Query Rewrite 请求失败，已降级使用标准化原 Query: url=%s, error=%s",
+            url,
+            exc,
+        )
         return standardized
 
 

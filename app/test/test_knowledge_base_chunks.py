@@ -2,6 +2,7 @@
 
 import sqlite3
 import sys
+import re
 from pathlib import Path
 
 import pytest
@@ -71,7 +72,10 @@ def test_excel_parser_returns_chunk_records(tmp_path):
     assert result["errors"] == []
     assert len(result["chunks"]) == 1
     chunk = result["chunks"][0]
-    assert chunk["chunk_id"] == "kb_excel:00000001"
+    assert re.fullmatch(r"[0-9a-f]{32}", chunk["chunk_id"])
     assert chunk["modality"] == "CT"
     assert chunk["source_row"] == 2
     assert "双肺见斑片状密度增高影" in chunk["combined_text"]
+
+    markdown = next((tmp_path / "markdown" / "kb_excel").rglob("*.md"))
+    assert f"chunk_id: {chunk['chunk_id']}" in markdown.read_text(encoding="utf-8")

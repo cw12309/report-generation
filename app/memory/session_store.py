@@ -20,6 +20,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
+from data_pipeline.chunk_id import generate_chunk_id
+
 logger = logging.getLogger(__name__)
 KNOWLEDGE_BASE_STATUSES = {"uploaded", "processing", "active", "failed", "disabled"}
 
@@ -434,8 +436,18 @@ class SessionStore:
         rows = []
         for index, chunk in enumerate(chunks, start=1):
             chunk_index = int(chunk.get("chunk_index") or index)
+            fallback_filename = str(
+                chunk.get("markdown_filename")
+                or chunk.get("source_file")
+                or f"chunk-{chunk_index}.md"
+            )
+            chunk_id = str(chunk.get("chunk_id") or generate_chunk_id(
+                kb_id,
+                fallback_filename,
+                str(chunk.get("combined_text") or ""),
+            ))
             rows.append((
-                str(chunk.get("chunk_id") or f"{kb_id}:{chunk_index:08d}"),
+                chunk_id,
                 kb_id,
                 chunk_index,
                 str(chunk.get("source_file") or ""),

@@ -25,7 +25,7 @@ milvus:
   uri: http://220.154.3.166:19530
   token:
 retrieval:
-  rag_top_k: 20
+  rag_top_k: 50
   rerank_top_k: 10
   collection_name: medical_reports
   db_path: ./app/data_pipeline/milvus_lite.db

@@ -1,207 +1,200 @@
 # Data Pipeline
 
-该目录负责将 Excel 医疗报告模板整理为 Markdown，并构建 Milvus
-Dense + Sparse 混合向量知识库。
+该目录负责把上传的 Excel 医疗影像模板转换为按 `kb_id` 隔离的 Markdown、SQLite 切片原文、层级目录树和 Milvus Dense/Sparse 向量。
 
-## 处理流程
+正常业务流程由 FastAPI 的独立上传/构建接口触发；命令行脚本主要用于首次迁移、排错和离线构建。
+
+## 当前流程
 
 ```text
-report_template/*.xlsx
-        |
-        v
-process_reports.py
-        |
-        v
-output_markdown/**/*.md
-        |
-        +----------------------+
-        |                      |
-        v                      v
-extract_metadata.py    build_vector_db.py
-        |                      |
-        v                      v
-metadata.json          Milvus: medical_reports
+POST /api/kb/upload
+  └─ report_template/{kb_id}/原文件.xlsx
+  └─ SQLite knowledge_bases.status = uploaded
+
+POST /api/kb/{kb_id}/build
+  ├─ process_reports.py
+  │    └─ output_markdown/{kb_id}/.../*.md
+  │    └─ 返回完整 chunks
+  ├─ SessionStore 批量替换 knowledge_base_chunks
+  ├─ extract_metadata.py 生成 metadata_tree 并写入 knowledge_bases
+  └─ build_vector_db.py
+       ├─ Dense Embedding
+       ├─ Sparse 向量
+       ├─ 向量生成成功后删除 Milvus 中该 kb_id 的旧实体
+       └─ 增量写入 medical_reports
 ```
 
-## 目录说明
+一次上传多个 Excel 时，后端为每个文件生成独立 `kb_id`。当前构建任务读取一个知识库对应的单个原始 Excel。
+
+## 目录
 
 ```text
-data_pipeline/
-├── report_template/       # 输入的 Excel 报告模板
-├── output_markdown/       # process_reports.py 生成的 Markdown
-├── process_reports.py     # Excel 转 Markdown
-├── extract_metadata.py    # 从 Markdown 提取元数据
-├── build_vector_db.py     # 构建 Dense + Sparse Milvus 知识库
+app/data_pipeline/
+├── report_template/{kb_id}/     # 上传的原始 Excel
+├── output_markdown/{kb_id}/     # 构建阶段生成的 Markdown
+├── chunk_id.py                  # 三端共用的稳定 MD5 函数
+├── process_reports.py           # Excel 解析、切片和 Markdown 输出
+├── extract_metadata.py          # 层级目录树提取
+├── build_vector_db.py           # Milvus Schema、向量化和增量写入
+├── migrate_milvus_schema.py     # 旧 Collection 检查/迁移
+├── rebuild_all_knowledge_bases.py # 全量双流重建（带 Drop 确认）
 └── README.md
 ```
 
-`report_template` 和 `output_markdown` 已加入 `.gitignore`。
+## 1. Excel 解析与 Markdown
 
-所有模型、数据路径及 Milvus 连接配置统一位于项目根目录的
-`config.yml`。
+业务代码调用：
 
-## 1. 生成 Markdown
+```python
+process_uploaded_excels(file_paths, output_markdown_root, kb_id)
+```
 
-将 `report_template` 中的所有 `.xlsx` 文件整理为 Markdown：
+每条有效 Excel 数据行对应一个 Chunk，并生成：
+
+- `chunk_id`：`MD5(kb_id + "\\n" + Markdown文件名 + "\\n" + combined_text)`，固定 32 位；
+- 来源字段：原文件、Sheet、Excel 行号；
+- `modality`、`level_1`～`level_4`、`module_name`；
+- `imaging_findings`、`imaging_opinion`；
+- 用于展示和向量化的 `combined_text`。
+
+同一个 `chunk_id` 会写入 SQLite、Markdown YAML Front Matter 和 Milvus。Front Matter 同时包含 `kb_id` 和层级字段。输出目录固定隔离在：
+
+```text
+output_markdown/{kb_id}/modality/level_1/.../module_name.md
+```
+
+Milvus 入库以 Front Matter 中合法的 32 位 `chunk_id` 为跨流契约，不会对其二次改写；只有旧 Markdown 缺失或包含非法 ID 时，才使用公共函数现场生成兜底值。
+
+单文件离线处理：
 
 ```powershell
-python app/data_pipeline/process_reports.py
+python app/data_pipeline/process_reports.py `
+  --input-file D:\data\head.xlsx `
+  --output app/data_pipeline/output_markdown `
+  --kb-id 0123456789abcdef
 ```
 
-主要输出：
+不带 `--input-file` 的旧批处理入口只扫描 `report_template/` 根目录下的 Excel，不适用于当前 `{kb_id}` 子目录上传结构，推荐使用 API 或显式参数。
+
+## 2. SQLite 切片与目录树
+
+构建任务在 Markdown 生成后，将完整 Chunk 使用单事务批量写入 `knowledge_base_chunks`。同一 `kb_id` 的旧切片会先在事务内删除；任意插入失败时整体回滚。
+
+`extract_all(path, kb_id)` 从该知识库 Markdown Front Matter 生成目录树，并保存到 SQLite：
 
 ```text
-app/data_pipeline/output_markdown/
-app/data_pipeline/报告整理结果.md
+knowledge_bases.metadata_tree
 ```
 
-输出目录结构由以下标准字段决定：
+Metadata Navigator 在聊天检索前只合并当前 `selected_kbs` 对应的 `metadata_tree`。
 
-```text
-modality / level_1 / level_2 / level_3 / level_4
-```
-
-`module_name` 用作 Markdown 文件名。同一目录下模块名称和内容均相同
-时跳过重复数据；模块名称相同但内容不同时，生成 `_1`、`_2` 等编号文件。
-
-## 2. 提取元数据
-
-从 `output_markdown` 中所有 Markdown 的 YAML Front Matter 汇总目录层级：
+直接运行 `extract_metadata.py` 仍可生成 JSON 文件用于排查：
 
 ```powershell
-python app/data_pipeline/extract_metadata.py
-```
-
-默认输出：
-
-```text
-app/data_pipeline/metadata.json
-```
-
-JSON 记录检查类型及完整目录层级，不记录 Markdown 文件路径：
-
-```text
-检查类型
-└── 一级目录
-    └── 二级目录
-        └── 三级目录
-            └── 四级目录
-```
-
-空层级会跳过。模块名称和 Markdown 文件路径不会写入该文件。
-
-常用参数：
-
-```powershell
-python app/data_pipeline/extract_metadata.py --stats
-python app/data_pipeline/extract_metadata.py --sample 5
+python app/data_pipeline/extract_metadata.py --stats --sample 5
 python app/data_pipeline/extract_metadata.py --no-save
 ```
 
-## 3. 构建 Milvus 知识库
+正式服务不依赖全局 `metadata.json`。
 
-运行：
+## 3. 增量写入 Milvus
 
-```powershell
-python app/data_pipeline/build_vector_db.py
-```
-
-该命令会：
-
-1. 扫描 `output_markdown` 中的全部 Markdown。
-2. 解析报告元数据、影像学表现和影像学意见。
-3. 调用配置的 BGE-M3 服务生成 1024 维 Dense 向量。
-4. 根据报告文本生成 Sparse 词面向量。
-5. 删除已存在的 `medical_reports` Collection。
-6. 使用最新 Schema 和索引重新创建 Collection。
-7. 写入所有报告并 Load Collection。
-
-注意：当前建库采用全量重建模式，不是增量追加。执行前请确认允许删除
-远程 Milvus 中已有的 `medical_reports` Collection。
-
-### 进度输出
-
-Dense 向量按批次显示进度：
-
-```text
-Dense向量化: 640/2800 (22.9%)
-```
-
-Sparse 向量每 100 条显示一次进度：
-
-```text
-Sparse向量化: 700/2800 (25.0%)
-```
-
-可以调整 Dense 批次大小：
+对单个知识库离线构建：
 
 ```powershell
-python app/data_pipeline/build_vector_db.py --batch-size 16
+python app/data_pipeline/build_vector_db.py `
+  --input app/data_pipeline/output_markdown/0123456789abcdef `
+  --kb-id 0123456789abcdef `
+  --batch-size 32
 ```
+
+`build_vector_db.py` 不再删除整个 Collection。它会：
+
+1. 创建不存在的 Collection，或校验现有 Schema；
+2. 读取 Markdown 中的 `kb_id`，也可由 `--kb-id` 显式覆盖；
+3. 生成 Dense 和 Sparse 向量；
+4. 向量生成成功后执行 `delete(filter='kb_id == "..."')` 清理目标知识库旧实体；
+5. 分批写入、Flush 并 Load Collection。
+
+`rebuild` 参数目前不用于删除整个 Collection。Collection 级迁移只能通过 `migrate_milvus_schema.py` 显式完成。
 
 ## Milvus Schema
 
-Collection 名称：
+默认 Collection：`medical_reports`。
 
-```text
-medical_reports
-```
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | INT64 / auto_id | Milvus 主键 |
+| `kb_id` | VARCHAR(64) | 逻辑知识库隔离字段 |
+| `chunk_id` | VARCHAR(32) | SQLite、Markdown、Milvus 共用的稳定 MD5 标识 |
+| `modality` | VARCHAR(32) | 检查类型 |
+| `level_1`～`level_4` | VARCHAR(64) | 目录层级 |
+| `module_name` | VARCHAR(128) | 模块名称 |
+| `imaging_findings` | VARCHAR(4096) | 影像学表现 |
+| `imaging_opinion` | VARCHAR(4096) | 影像学意见 |
+| `combined_text` | VARCHAR(8192) | 完整检索文本 |
+| `dense_vector` | FLOAT_VECTOR(1024) | 默认 BGE-M3 Dense 向量 |
+| `sparse_vector` | SPARSE_FLOAT_VECTOR | 词面 Sparse 向量 |
 
-| 字段               | 类型                | 说明                   |
-| ------------------ | ------------------- | ---------------------- |
-| `id`               | INT64               | Milvus 自动生成的主键  |
-| `modality`         | VARCHAR(32)         | 检查类型               |
-| `level_1`          | VARCHAR(64)         | 一级目录               |
-| `level_2`          | VARCHAR(64)         | 二级目录               |
-| `level_3`          | VARCHAR(64)         | 三级目录               |
-| `level_4`          | VARCHAR(64)         | 四级目录               |
-| `module_name`      | VARCHAR(128)        | 模块名称               |
-| `imaging_findings` | VARCHAR(4096)       | 影像学表现             |
-| `imaging_opinion`  | VARCHAR(4096)       | 影像学意见             |
-| `combined_text`    | VARCHAR(8192)       | 用于检索的完整组合文本 |
-| `dense_vector`     | FLOAT_VECTOR(1024)  | BGE-M3 语义向量        |
-| `sparse_vector`    | SPARSE_FLOAT_VECTOR | 词面稀疏向量           |
+SQLite 保存的切片原文不受上述 Milvus VARCHAR 长度截断影响。
 
 ## 索引
 
-| 字段            | 索引                  | 参数                             |
-| --------------- | --------------------- | -------------------------------- |
-| `modality`      | INVERTED              | 标量过滤                         |
-| `level_1`       | INVERTED              | 标量过滤                         |
-| `level_2`       | INVERTED              | 标量过滤                         |
-| `level_3`       | INVERTED              | 标量过滤                         |
-| `level_4`       | INVERTED              | 标量过滤                         |
-| `dense_vector`  | HNSW                  | COSINE, M=16, efConstruction=256 |
-| `sparse_vector` | SPARSE_INVERTED_INDEX | IP, drop_ratio_build=0.2         |
+| 字段 | 索引 | Metric / 参数 |
+| --- | --- | --- |
+| `kb_id`、`chunk_id`、`modality`、`level_1`～`level_4` | INVERTED | 标量过滤，PyMilvus 3.x 传入空 `metric_type` |
+| `dense_vector` | HNSW | COSINE，`M=16`，`efConstruction=256` |
+| `sparse_vector` | SPARSE_INVERTED_INDEX | IP，`drop_ratio_build=0.2` |
 
-## Hybrid Search
+## Schema 检查与迁移
 
-检索时分别构造 Dense 和 Sparse 的 `AnnSearchRequest`，两路请求使用相同
-的标量过滤条件，并通过 `RRFRanker` 融合。
-
-例如查询“CT 脑出血”时，可使用：
-
-```text
-modality == "CT" and level_1 == "头颅"
+```powershell
+python app/data_pipeline/migrate_milvus_schema.py --check
 ```
 
-检索流程：
+如果旧 Collection 缺少 `kb_id` 或 `chunk_id`，Milvus 不能原地新增字段。确认全部旧向量可以丢弃后执行：
 
-```text
-查询文本
-├── BGE-M3 Dense 向量 ──────┐
-├── 词面 Sparse 向量 ───────┼── RRFRanker ── 最终候选
-└── modality/level_1 过滤 ──┘
+```powershell
+python app/data_pipeline/migrate_milvus_schema.py `
+  --drop-and-create `
+  --confirm "DROP medical_reports"
 ```
 
-## 模拟数据测试
+服务启动时会调用 `ensure_collection_schema()`：Collection 不存在时自动创建；字段缺失时明确报错；缺少 `kb_id` 或 `chunk_id` 索引时尝试补建，不会自动删除 Collection。
 
-以下命令会重建 Collection、插入三条模拟报告，并执行一次带标量过滤的
-Dense + Sparse Hybrid Search：
+需要从 SQLite 中登记的原始 Excel 完整重建双流数据时，使用带确认保护的脚本：
+
+```powershell
+python app/data_pipeline/rebuild_all_knowledge_bases.py `
+  --batch-size 32 `
+  --confirm "DROP medical_reports"
+```
+
+脚本按以下顺序执行：重新解析全部已登记 Excel → 替换 SQLite 切片 → 重写 Markdown → Drop/Create Collection → Dense/Sparse 向量化 → 写入 Milvus → 将成功知识库恢复为 `active/100%`。任意原始 Excel 缺失或解析失败时，不会进入 Collection 删除阶段。
+
+### 当前验证基线
+
+2026-08-06 已完成一次全量重建并验证：6 个知识库，SQLite/Markdown/Milvus 均为 3143 条；所有 `chunk_id` 为唯一 32 位 MD5，远程 `medical_reports` 行数为 3143。
+
+## 构建进度
+
+| 进度 | 阶段 |
+| --- | --- |
+| `0%` | 进入 processing |
+| `10%` | Excel 与 Markdown 完成 |
+| `15%` | SQLite 切片事务完成 |
+| `20%` | metadata_tree 完成 |
+| `20%～70%` | Dense Embedding |
+| `70%～82%` | Sparse 向量 |
+| `82%～98%` | 写入 Milvus |
+| `100%` | Flush/Load 完成，状态 active |
+
+进度每增加约 5% 写入一次 SQLite，失败时状态改为 `failed` 并保留最后成功进度。
+
+## Demo
 
 ```powershell
 python app/data_pipeline/build_vector_db.py --demo
 ```
 
-该模式同样会删除远程 `medical_reports` Collection，请勿在正式知识库上
-随意执行。
+Demo 只替换 `kb_id="demo"` 的实体，不删除其他知识库，但仍会连接当前配置的 Milvus，生产环境使用前应确认目标地址。

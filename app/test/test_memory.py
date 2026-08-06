@@ -3,7 +3,7 @@
 覆盖 Phase 1 核心场景：
 1. 意图切换清洗测试
 2. 实体提取鲁棒性测试（长词优先 + 歧义处理）
-3. LTM 注入顺序测试
+3. EntityTracker Prompt 上下文测试
 4. 上下文消解测试
 
 用法：
@@ -19,7 +19,9 @@ if sys.platform == 'win32':
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from memory import EntityTracker, ShortTermMemory, LongTermMemory
+from memory import EntityTracker, ShortTermMemory
+from memory.retriever import MemoryRetriever
+from prompt.builder import PromptBuilder
 
 
 # ═══════════════════════════════════════════════════════════
@@ -270,56 +272,10 @@ class TestEntityExtractionRobustness:
 
 
 # ═══════════════════════════════════════════════════════════
-# 测试 3：LTM 注入顺序测试
+# 测试 3：EntityTracker Prompt 上下文测试
 # ═══════════════════════════════════════════════════════════
 
-class TestLTMInjectionOrder:
-
-    @test("LTM 偏好注入到 System Prompt 最顶部")
-    def test_ltm_preference_at_top():
-        # Mock：直接调用 LTM 的 get_preference_prompt 和 EntityTracker 的 to_context_prompt
-        # 模拟 structure_report 中的拼装逻辑
-        STRUCTURE_PROMPT = "## 结构化报告提取 Prompt\n请按 JSON 格式输出。"
-
-        # 模拟 LTM 有偏好
-        ltm = LongTermMemory(user_id="test_ltm_order")
-        ltm.update_preferences({"报告风格": "详细描述"})
-        ltm.update_preferences({"术语偏好": "中文术语"})
-
-        pref = ltm.get_preference_prompt()
-        assert_true(pref is not None, "LTM 偏好提示不应为空")
-        assert_true(len(pref) > 0, "LTM 偏好提示应有内容")
-
-        # 模拟 EntityTracker 有状态
-        entity_tracker = EntityTracker()
-        entity_tracker.update_from_query("CT 肺部")
-        ctx = entity_tracker.to_context_prompt()
-        assert_true(len(ctx) > 0, "Entity 上下文提示不应为空")
-
-        # 拼装：LTM 最顶部 → Entity 上下文 → 任务 Prompt
-        sys_prompt = STRUCTURE_PROMPT
-        if pref:
-            sys_prompt = pref + "\n\n" + sys_prompt
-        if ctx:
-            sys_prompt = sys_prompt + "\n\n" + ctx
-
-        # 断言：LTM 偏好必须在 System Prompt 开头
-        assert_true(sys_prompt.startswith(pref),
-                    f"System Prompt 必须以 LTM 偏好开头，实际开头: {sys_prompt[:80]!r}")
-
-        # 断言：Entity Context 在任务 Prompt 之后
-        pref_end = sys_prompt.find(STRUCTURE_PROMPT)
-        ctx_start = sys_prompt.find(ctx)
-        assert_true(ctx_start > pref_end,
-                    f"Entity Context 应在任务 Prompt 之后。pref_end={pref_end}, ctx_start={ctx_start}")
-
-    @test("LTM 无偏好时不注入")
-    def test_ltm_empty_not_injected():
-        ltm = LongTermMemory(user_id="test_ltm_empty")
-        ltm.clear()
-        pref = ltm.get_preference_prompt()
-        assert_equal(pref, "", "无偏好时 get_preference_prompt 应返回空字符串")
-
+class TestPromptBuilderEntityContext:
     @test("EntityTracker 无状态时不注入")
     def test_entity_empty_not_injected():
         entity_tracker = EntityTracker()
@@ -327,31 +283,28 @@ class TestLTMInjectionOrder:
         ctx = entity_tracker.to_context_prompt()
         assert_equal(ctx, "", "无实体时 to_context_prompt 应返回空字符串")
 
-    @test("LTM + Entity 同时注入时顺序正确")
-    def test_ltm_and_entity_both_injected():
-        ltm = LongTermMemory(user_id="test_ltm_both")
-        ltm.update_preferences({"报告风格": "简洁"})
-        pref = ltm.get_preference_prompt()
-
+    @test("PromptBuilder 注入当前会话实体上下文")
+    def test_entity_context_injected():
         entity_tracker = EntityTracker()
         entity_tracker.update_from_query("CT 肝脏")
         ctx = entity_tracker.to_context_prompt()
+        sys_prompt = PromptBuilder.build("tool_orchestrator", entity_context=ctx)
+        assert_in(ctx, sys_prompt, "Prompt 应包含本轮实体上下文")
 
-        STRUCTURE_PROMPT = "## 任务 Prompt"
+    @test("MemoryRetriever 只返回当前会话 STM")
+    def test_retriever_only_returns_stm():
+        def fake_embedding(text):
+            return [1.0, 0.0] if "脑" in text else [0.0, 1.0]
 
-        sys_prompt = STRUCTURE_PROMPT
-        if pref:
-            sys_prompt = pref + "\n\n" + sys_prompt
-        if ctx:
-            sys_prompt = sys_prompt + "\n\n" + ctx
-
-        # 断言三段顺序：LTM 偏好 → 任务 Prompt → Entity 上下文
-        pos_pref = sys_prompt.find(pref)
-        pos_task = sys_prompt.find(STRUCTURE_PROMPT)
-        pos_ctx = sys_prompt.find(ctx)
-
-        assert_true(pos_pref < pos_task < pos_ctx,
-                    f"顺序应为 LTM({pos_pref}) < 任务({pos_task}) < Entity({pos_ctx})")
+        retriever = MemoryRetriever(fake_embedding)
+        retriever.index_stm([
+            {"role": "user", "content": "CT 头颅 脑出血"},
+            {"role": "assistant", "content": "胸部检查结果"},
+        ])
+        relevant = retriever.search_relevant("脑出血", top_k_stm=1)
+        assert_equal(set(relevant), {"stm"}, "检索结果只能包含 STM")
+        assert_equal(len(relevant["stm"]), 1, "应返回一条相关 STM")
+        assert_in("脑出血", relevant["stm"][0], "应召回当前会话中的脑出血记录")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -587,11 +540,10 @@ def run_all_tests():
     TestEntityExtractionRobustness.test_ct_only()
     TestEntityExtractionRobustness.test_ultrasound()
 
-    print("\n📋 测试 3：LTM 注入顺序测试")
-    TestLTMInjectionOrder.test_ltm_preference_at_top()
-    TestLTMInjectionOrder.test_ltm_empty_not_injected()
-    TestLTMInjectionOrder.test_entity_empty_not_injected()
-    TestLTMInjectionOrder.test_ltm_and_entity_both_injected()
+    print("\n📋 测试 3：EntityTracker Prompt 上下文测试")
+    TestPromptBuilderEntityContext.test_entity_empty_not_injected()
+    TestPromptBuilderEntityContext.test_entity_context_injected()
+    TestPromptBuilderEntityContext.test_retriever_only_returns_stm()
 
     print("\n📋 测试 4：上下文消解测试")
     TestContextResolution.test_resolve_append_liver()

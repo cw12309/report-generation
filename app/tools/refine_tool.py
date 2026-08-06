@@ -4,7 +4,7 @@ Schema: refine_report
 - 根据用户指令调整报告风格/详细程度/语气
 - 跳过 RAG 检索，直接基于已有报告文本处理
 - 保证医学内容主干不变
-- 注入 LTM 偏好和 Entity 上下文
+- 注入 EntityTracker 当前会话上下文
 - 返回重写后的报告 JSON
 """
 
@@ -46,7 +46,6 @@ REFINE_REPORT_SCHEMA = {
 
 def create_refine_report_handler(
     chat_fn: Callable,
-    ltm,
     entity_tracker,
     _emit_fn: Optional[Callable] = None,
     last_report: Optional[list] = None,
@@ -55,7 +54,6 @@ def create_refine_report_handler(
 
     Args:
         chat_fn: LLM 对话函数，签名 (messages, max_tokens, temperature, _emit, debug, caller) -> str
-        ltm: LongTermMemory 实例，用于注入偏好
         entity_tracker: EntityTracker 实例，用于注入上下文
         _emit_fn: SSE 事件发射器
         last_report: 上一轮报告的可变引用列表（用于参数容错补全）
@@ -97,7 +95,6 @@ def create_refine_report_handler(
 
             sys_prompt = PromptBuilder.build(
                 "refine",
-                ltm_prefs=ltm.get_preference_prompt() if ltm else None,
                 entity_context=entity_tracker.to_context_prompt() if entity_tracker else None,
             )
 

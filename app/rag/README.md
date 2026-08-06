@@ -221,4 +221,4 @@ Milvus 重启或 Collection 被 Release 后，下一次检索会尝试恢复加�
 python -m unittest app.test.test_rag_planning
 ```
 
-检索效果评估脚本位于 `app/test/eval_retrieval*.py`。正式比较 Recall@K、MRR 或 nDCG 前，需要使用稳定来源标注建立黄金数据集。
+正式检索评测位于独立 `eval/` 模块：`eval/run_retrieval_eval.py` 执行真实 Hybrid Search + Rerank，数据集存放在 `eval/datasets/retrieval_test_cases.json`，当前统计 Hit@1/3/5。Web 评测中心支持逐 Query SSE 进度、协作式取消和测试集维护；黄金标签使用稳定的 32 位 `chunk_id`。

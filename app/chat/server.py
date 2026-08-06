@@ -6,10 +6,15 @@ import logging
 import os
 import queue
 import shutil
+import sys
 import time
 import uuid
 from typing import List, Optional
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import yaml
 import requests
@@ -32,10 +37,21 @@ from config import (
 from data_pipeline.build_vector_db import build_db, ensure_collection_schema
 from data_pipeline.extract_metadata import extract_all
 from data_pipeline.process_reports import process_uploaded_excels
+from eval.generate_test_cases import stream_generate_cases
+from eval.run_retrieval_eval import (
+    DEFAULT_DATASET,
+    add_retrieval_case,
+    clear_retrieval_dataset,
+    delete_retrieval_case,
+    load_dataset,
+    request_evaluation_cancel,
+    stream_run_evaluation,
+)
 
 from .schemas import (
     ChatRequest, ConfigSaveRequest, TestModelRequest,
     KBBuildRequest, ClearSessionRequest, KBUploadResponse, KBBuildResponse,
+    EvalCaseRequest, EvalAutoGenerateRequest,
 )
 from .llm_client import chat_stream
 from .pipeline import run_pipeline
@@ -68,6 +84,8 @@ def web_main(port=8000):
 
     app = FastAPI(title="影像报告生成Agent v2")
     store = SessionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "sessions.db"))
+    evaluation_lock = asyncio.Lock()
+    auto_generation_lock = asyncio.Lock()
 
     @app.on_event("startup")
     async def validate_milvus_schema_on_startup():
@@ -92,6 +110,180 @@ def web_main(port=8000):
         if os.path.exists(index_path):
             return FileResponse(index_path)
         return {"message": "影像报告生成Agent v2", "docs": "/docs"}
+
+    @app.post("/api/eval/run", summary="运行检索评测")
+    async def run_retrieval_evaluation():
+        """Stream per-query Retrieval Eval progress without blocking FastAPI."""
+        if evaluation_lock.locked():
+            raise HTTPException(status_code=409, detail="评测任务正在运行，请稍候")
+
+        await evaluation_lock.acquire()
+
+        async def event_stream():
+            try:
+                async for event in stream_run_evaluation():
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                logger.info("Retrieval Eval 流式连接已取消")
+                raise
+            except Exception as exc:
+                logger.exception("Retrieval Eval 执行失败")
+                error_event = {
+                    "type": "error",
+                    "message": f"评测执行失败: {exc}",
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            finally:
+                evaluation_lock.release()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/eval/cancel", summary="取消正在运行的检索评测")
+    async def cancel_retrieval_evaluation():
+        result = request_evaluation_cancel()
+        return {
+            "status": "success",
+            "message": (
+                "已请求取消评测，将在当前 Query 完成后停止"
+                if result["running"]
+                else "当前没有正在运行的评测任务"
+            ),
+            **result,
+        }
+
+    @app.post("/api/eval/add_case", summary="新增人工检索评测用例")
+    async def add_retrieval_evaluation_case(request: EvalCaseRequest):
+        """Validate and append one manual case without blocking the event loop."""
+        try:
+            result = await asyncio.to_thread(
+                add_retrieval_case,
+                request.query,
+                request.expected_chunk_ids,
+            )
+            logger.info(
+                "新增 Retrieval Eval 用例成功: query=%s, total=%s",
+                request.query.strip(),
+                result["total"],
+            )
+            return {"code": 0, **result}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("新增 Retrieval Eval 用例失败")
+            raise HTTPException(
+                status_code=500,
+                detail=f"新增评测用例失败: {exc}",
+            ) from exc
+
+    @app.get("/api/eval/dataset", summary="获取检索评测测试集")
+    async def get_retrieval_evaluation_dataset():
+        """Return cases without running Embedding, retrieval, or Rerank."""
+        try:
+            cases = await asyncio.to_thread(load_dataset, DEFAULT_DATASET)
+            return {
+                "status": "success",
+                "total": len(cases),
+                "items": cases,
+            }
+        except Exception as exc:
+            logger.exception("读取 Retrieval Eval 测试集失败")
+            raise HTTPException(
+                status_code=500,
+                detail=f"读取测试集失败: {exc}",
+            ) from exc
+
+    def _ensure_eval_dataset_mutable():
+        if evaluation_lock.locked() or auto_generation_lock.locked():
+            raise HTTPException(
+                status_code=409,
+                detail="评测或自动生成任务正在运行，请完成后再修改测试集",
+            )
+
+    @app.delete("/api/eval/dataset", summary="清空检索评测测试集")
+    async def clear_retrieval_evaluation_dataset():
+        _ensure_eval_dataset_mutable()
+        try:
+            result = await asyncio.to_thread(clear_retrieval_dataset)
+            return {
+                "status": "success",
+                "message": "测试集已清空",
+                **result,
+            }
+        except Exception as exc:
+            logger.exception("清空 Retrieval Eval 测试集失败")
+            raise HTTPException(
+                status_code=500,
+                detail=f"清空测试集失败: {exc}",
+            ) from exc
+
+    @app.delete("/api/eval/dataset/{chunk_id}", summary="删除单条检索评测用例")
+    async def delete_retrieval_evaluation_case(chunk_id: str):
+        _ensure_eval_dataset_mutable()
+        try:
+            result = await asyncio.to_thread(delete_retrieval_case, chunk_id)
+            return {
+                "status": "success",
+                "message": "测试用例已删除",
+                **result,
+            }
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="未找到对应测试用例") from exc
+        except Exception as exc:
+            logger.exception("删除 Retrieval Eval 测试用例失败")
+            raise HTTPException(
+                status_code=500,
+                detail=f"删除测试用例失败: {exc}",
+            ) from exc
+
+    @app.post("/api/eval/auto_generate", summary="流式自动生成检索评测用例")
+    async def auto_generate_retrieval_cases(request: EvalAutoGenerateRequest):
+        """Stream persisted LLM-generated cases to the browser as SSE events."""
+        if auto_generation_lock.locked():
+            raise HTTPException(status_code=409, detail="已有自动生成任务正在运行，请稍候")
+
+        await auto_generation_lock.acquire()
+
+        async def event_stream():
+            try:
+                async for event in stream_generate_cases(
+                    count=request.count,
+                    min_length=request.min_length,
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                logger.info("Retrieval Eval 自动生成连接已取消")
+                raise
+            except Exception as exc:
+                logger.exception("Retrieval Eval 自动生成失败")
+                error_event = {
+                    "type": "error",
+                    "message": str(exc),
+                    "current": 0,
+                    "total": request.count,
+                }
+                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+            finally:
+                auto_generation_lock.release()
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     def _get_or_create_session(session_id):
         """从 SQLite 加载或创建会话，返回内存对象字典"""
@@ -365,6 +557,11 @@ def web_main(port=8000):
                 "size": size,
             },
         }
+
+    @app.get("/api/kb/chunks", summary="评测用例可选知识库切片")
+    async def list_active_knowledge_base_chunk_options():
+        """Return compact SQLite chunk previews without querying Milvus."""
+        return await asyncio.to_thread(store.list_active_chunk_options, 50)
 
     @app.get("/api/kb/files", summary="知识库文件列表", description="获取已上传的报告模板文件及其切片信息")
     async def kb_files():

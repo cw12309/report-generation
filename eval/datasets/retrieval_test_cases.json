@@ -1,0 +1,102 @@
+[
+  {
+    "query": "喉部MR正常影像学表现",
+    "expected_chunk_ids": [
+      "fd15db69d57787e6b1bb159cd5f9a310"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "眼眶MR平扫正常表现",
+    "expected_chunk_ids": [
+      "c8e75a82f9745383333bdff8f5819ba6"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "左侧上颌窦炎术后CT影像表现及诊断",
+    "expected_chunk_ids": [
+      "ec57aa78664ac73606a33b8a8be8fbc4"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝胆脾CT平扫及增强扫描未见异常",
+    "expected_chunk_ids": [
+      "3971a0f5c5308dded3a5b1abc219d19d"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左侧顶叶小脑多发占位转移瘤CT表现",
+    "expected_chunk_ids": [
+      "6fd0e55cf2b2878ce840297341786c97"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "骶尾椎CT平扫正常表现",
+    "expected_chunk_ids": [
+      "3b8f326cd467aa010a3c7536f77ca2a6"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左侧上颌窦软组织肿块伴骨质破坏CT表现",
+    "expected_chunk_ids": [
+      "1143b3a379e673fc18c9cb6840c3b307"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "脊索瘤 MRI 影像表现",
+    "expected_chunk_ids": [
+      "72cb2979f0aaeb396e8f0dd858ac09e9"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "弥漫型肝癌伴门静脉癌栓CT表现",
+    "expected_chunk_ids": [
+      "13f33d009a48498038a0a4d2f4a2187c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝内多发小囊肿CT表现",
+    "expected_chunk_ids": [
+      "38fa28f2ff4548a9700ca1918f985fbd"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  }
+]

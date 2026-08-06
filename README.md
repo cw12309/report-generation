@@ -12,6 +12,7 @@
 - Rerank 精排：粗排候选池默认 50 条，最终保留 10 条供报告生成。
 - 流式对话：FastAPI SSE 推送状态、召回、Rerank、Token、正式报告和完成事件。
 - 来源溯源：正式 AI 气泡底部展示可折叠的参考切片。
+- 独立评测中心：支持 Hit@1/3/5、逐 Query SSE 进度、协作式取消、人工/LLM 自动生成用例、测试集原子清空与单删；人工标注可直接从 SQLite active 切片下拉选择。
 - 当前会话记忆：保留 STM 和 EntityTracker，不学习、不注入跨会话用户偏好。
 - 会话与选择持久化：SQLite 保存服务端会话，浏览器 LocalStorage 保存聊天 UI 和知识库勾选状态。
 
@@ -157,8 +158,16 @@ python python_start.py
 | `POST` | `/api/kb/upload` | 上传一个或多个 Excel，每个文件创建一个 KB |
 | `POST` | `/api/kb/{kb_id}/build` | 后台构建指定知识库 |
 | `GET` | `/api/kbs/{kb_id}/chunks` | 分页读取 SQLite 切片原文 |
+| `GET` | `/api/kb/chunks` | 获取 active 知识库的 Chunk ID 与 50 字内容预览 |
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体和对应本地目录 |
 | `POST` | `/api/chat` | SSE 流式对话，必须携带 `selected_kbs` |
+| `POST` | `/api/eval/run` | SSE 流式运行 Retrieval Eval，逐条返回进度并在完成事件中返回指标 |
+| `POST` | `/api/eval/cancel` | 协作式取消当前流式评测，当前 Query 完成后停止 |
+| `POST` | `/api/eval/add_case` | 人工追加检索用例，Chunk ID 支持数组或逗号分隔字符串 |
+| `POST` | `/api/eval/auto_generate` | SSE 流式调用 LLM 自动生成评测用例并实时返回进度 |
+| `GET` | `/api/eval/dataset` | 读取测试集用例列表，不执行检索 |
+| `DELETE` | `/api/eval/dataset` | 原子清空全部测试用例 |
+| `DELETE` | `/api/eval/dataset/{chunk_id}` | 按期望 Chunk ID 原子删除对应测试用例 |
 
 ## 数据目录
 
@@ -210,6 +219,18 @@ python debug_retrieval.py "CT"
 
 脚本输出 Top 3 的稳定 `chunk_id/source`、Rerank 分数和切片文本摘要。
 
+运行自动化 Retrieval Eval：
+
+```powershell
+python eval/run_retrieval_eval.py
+```
+
+只校验评测数据集：
+
+```powershell
+python eval/run_retrieval_eval.py --validate-only
+```
+
 ## 详细文档
 
 - [应用层与 API](app/README.md)
@@ -217,3 +238,4 @@ python debug_retrieval.py "CT"
 - [RAG 检索](app/rag/README.md)
 - [当前会话记忆](app/memory/README.md)
 - [前端](front/README.md)
+- [自动化评测](eval/README.md)

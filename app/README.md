@@ -33,6 +33,7 @@ Milvus Collection                  medical_reports（多个逻辑知识库，共
 - 会话持久化：SQLite 保存会话、实体槽位、上一份报告和当前选择的知识库。
 - 当前会话记忆：只保留 STM 和 EntityTracker，不学习或注入跨会话用户偏好。
 - 流式响应：聊天接口使用 SSE 推送思考过程、召回、Rerank、Token 和最终报告；前端在正式回答下附加参考切片。
+- 检索评测：`eval/` 读取 SQLite Chunk 和独立 JSON 测试集，支持 SSE 评测/取消、人工标注、LLM 自动生成及原子测试集 CRUD。
 
 ## 启动
 
@@ -124,10 +125,18 @@ SQLite 使用“删除该 `kb_id` 的旧切片 + `executemany` 批量插入”�
 | --- | --- | --- |
 | `GET` | `/api/kbs` | 查询 SQLite 中的知识库列表和状态 |
 | `GET` | `/api/kbs/{kb_id}/chunks?page=1&size=50` | 分页查询 SQLite 切片原文，`size` 最大 100 |
+| `GET` | `/api/kb/chunks` | 为评测用例下拉框返回 active 知识库切片预览 |
 | `POST` | `/api/kb/upload` | 上传一个或多个 `.xlsx`，只保存文件并创建 `uploaded` 记录 |
 | `POST` | `/api/kb/{kb_id}/build` | 将指定知识库置为 `processing`，后台执行构建 |
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体及本地模板/切片目录 |
 | `POST` | `/api/chat` | 聊天；请求体需包含至少一个 `selected_kbs` |
+| `POST` | `/api/eval/run` | SSE 流式执行 Retrieval Eval；逐条发送 Query 进度，重复运行返回 409 |
+| `POST` | `/api/eval/cancel` | 设置取消标志，当前 Query 安全完成后停止并重置评测状态 |
+| `POST` | `/api/eval/add_case` | 校验并追加人工 Retrieval Eval 用例，返回最新用例总数 |
+| `POST` | `/api/eval/auto_generate` | 从 active 知识库抽样，流式生成并逐条保存自动评测用例 |
+| `GET` | `/api/eval/dataset` | 获取当前评测用例列表和总数 |
+| `DELETE` | `/api/eval/dataset` | 将测试集原子覆盖为 `[]` |
+| `DELETE` | `/api/eval/dataset/{chunk_id}` | 删除包含指定期望 Chunk ID 的用例 |
 
 上传示例：
 

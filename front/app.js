@@ -1,4 +1,4 @@
-console.log("[APP] app.js v3 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v45 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -41,6 +41,46 @@ const btnCloseKbSelector = document.getElementById("btnCloseKbSelector");
 const btnConfirmKbSelector = document.getElementById("btnConfirmKbSelector");
 const agentKbModalOverlay = agentKbModal?.querySelector(".agent-modal-overlay");
 const statusText = document.getElementById("statusText");
+const btnRunEval = document.getElementById("btnRunEval");
+const btnClearEvalDataset = document.getElementById("btn-clear-dataset");
+const evalStatus = document.getElementById("evalStatus");
+const evalProgressText = document.getElementById("evalProgressText");
+const evalProgressPercent = document.getElementById("evalProgressPercent");
+const evalProgressTrack = document.getElementById("evalProgressTrack");
+const evalProgressFill = document.getElementById("evalProgressFill");
+const btnCancelEval = document.getElementById("btn-cancel-eval");
+const evalHit1 = document.getElementById("evalHit1");
+const evalHit3 = document.getElementById("evalHit3");
+const evalHit5 = document.getElementById("evalHit5");
+const evalHit1Count = document.getElementById("evalHit1Count");
+const evalHit3Count = document.getElementById("evalHit3Count");
+const evalHit5Count = document.getElementById("evalHit5Count");
+const evalRunMeta = document.getElementById("evalRunMeta");
+const evalDetailsBody = document.getElementById("evalDetailsBody");
+const btnAddEvalCase = document.getElementById("btnAddEvalCase");
+const evalCaseModal = document.getElementById("evalCaseModal");
+const evalCaseForm = document.getElementById("evalCaseForm");
+const evalCaseQuery = document.getElementById("evalCaseQuery");
+const selectEvalChunkId = document.getElementById("select-chunk-id");
+const evalCaseError = document.getElementById("evalCaseError");
+const btnCloseEvalCase = document.getElementById("btnCloseEvalCase");
+const btnCancelEvalCase = document.getElementById("btnCancelEvalCase");
+const btnSaveEvalCase = document.getElementById("btnSaveEvalCase");
+const btnAutoGenerateCases = document.getElementById("btnAutoGenerateCases");
+const evalAutoGenerateModal = document.getElementById("evalAutoGenerateModal");
+const evalAutoGenerateForm = document.getElementById("evalAutoGenerateForm");
+const evalAutoGenerateCount = document.getElementById("evalAutoGenerateCount");
+const evalAutoGenerateMinLength = document.getElementById("evalAutoGenerateMinLength");
+const evalAutoProgressText = document.getElementById("evalAutoProgressText");
+const evalAutoProgressPercent = document.getElementById("evalAutoProgressPercent");
+const evalAutoProgressBar = document.getElementById("evalAutoProgressBar");
+const evalAutoProgressTrack = evalAutoGenerateModal?.querySelector(".eval-auto-progress-track");
+const evalAutoGenerateLog = document.getElementById("evalAutoGenerateLog");
+const evalAutoGenerateError = document.getElementById("evalAutoGenerateError");
+const btnCloseEvalAutoGenerate = document.getElementById("btnCloseEvalAutoGenerate");
+const btnCancelEvalAutoGenerate = document.getElementById("btnCancelEvalAutoGenerate");
+const btnStartEvalAutoGenerate = document.getElementById("btnStartEvalAutoGenerate");
+const appToast = document.getElementById("appToast");
 
 // 状态
 let isProcessing = false;
@@ -74,6 +114,15 @@ let selectedKnowledgeBaseIds = loadSelectedKnowledgeBaseIds();
 let selectedManageKbId = null;
 let kbPollTimer = null;
 let kbChunkAbortController = null;
+let isSavingEvalCase = false;
+let isAutoGeneratingCases = false;
+let evalAutoGenerateAbortController = null;
+let toastTimer = null;
+let evalProgressHideTimer = null;
+let evalCancelResetTimer = null;
+let evalRunAbortController = null;
+let isEvalCancelRequested = false;
+let evalChunkOptionsRequestId = 0;
 
 // API 基础地址
 const API_BASE = "/api";
@@ -240,13 +289,21 @@ sidebarBtns.forEach(btn => {
     sidebarBtns.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     pages.forEach(p => p.classList.remove("active"));
-    const pageMap = { agent: "pageAgent", kb: "pageKB", config: "pageConfig", monitor: "pageMonitor" };
+    const pageMap = {
+      agent: "pageAgent",
+      kb: "pageKB",
+      eval: "pageEval",
+      config: "pageConfig",
+      monitor: "pageMonitor",
+    };
     const target = document.getElementById(pageMap[page] || "pageAgent");
     if (target) target.classList.add("active");
     if (page === "kb") {
       refreshKnowledgeBases();
     } else if (page === "agent") {
       refreshKnowledgeBases();
+    } else if (page === "eval") {
+      loadEvalDataset();
     }
     if (page === "config") {
       loadConfig();
@@ -256,6 +313,795 @@ sidebarBtns.forEach(btn => {
     }
   });
 });
+
+// ==================== 评测中心 ====================
+
+function setEvalCaseError(message = "") {
+  if (!evalCaseError) return;
+  evalCaseError.textContent = message;
+  evalCaseError.hidden = !message;
+}
+
+function showToast(message, type = "success") {
+  if (!appToast) return;
+  window.clearTimeout(toastTimer);
+  appToast.textContent = message;
+  appToast.className = `app-toast ${type}`;
+  appToast.hidden = false;
+  requestAnimationFrame(() => appToast.classList.add("show"));
+  toastTimer = window.setTimeout(() => {
+    appToast.classList.remove("show");
+    window.setTimeout(() => {
+      appToast.hidden = true;
+    }, 180);
+  }, 2600);
+}
+
+async function loadEvalChunkOptions() {
+  if (!selectEvalChunkId) return;
+  const requestId = ++evalChunkOptionsRequestId;
+  selectEvalChunkId.disabled = true;
+  selectEvalChunkId.replaceChildren(new Option("正在加载知识库切片...", ""));
+
+  try {
+    const response = await fetch(`${API_BASE}/kb/chunks?_t=${Date.now()}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => []);
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    if (requestId !== evalChunkOptionsRequestId) return;
+
+    const chunks = Array.isArray(payload) ? payload : [];
+    const fragment = document.createDocumentFragment();
+    fragment.appendChild(new Option(
+      chunks.length ? "请选择知识库切片..." : "暂无可用的知识库切片",
+      "",
+    ));
+    chunks.forEach((chunk) => {
+      const option = new Option(
+        String(chunk.content_preview || "（无内容预览）"),
+        String(chunk.chunk_id || ""),
+      );
+      option.title = `${chunk.kb_name || "知识库"} · ${chunk.chunk_id || ""}`;
+      fragment.appendChild(option);
+    });
+    selectEvalChunkId.replaceChildren(fragment);
+    selectEvalChunkId.disabled = chunks.length === 0;
+    if (!chunks.length) {
+      setEvalCaseError("当前没有可选择的 active 知识库切片，请先完成知识库构建。");
+    }
+  } catch (error) {
+    if (requestId !== evalChunkOptionsRequestId) return;
+    console.error("[Eval] 加载知识库切片失败", error);
+    selectEvalChunkId.replaceChildren(new Option("知识库切片加载失败", ""));
+    selectEvalChunkId.disabled = true;
+    setEvalCaseError(`知识库切片加载失败：${error.message}`);
+  }
+}
+
+function openEvalCaseModal() {
+  if (!evalCaseModal) return;
+  evalCaseForm?.reset();
+  setEvalCaseError();
+  evalCaseModal.hidden = false;
+  evalCaseModal.setAttribute("aria-hidden", "false");
+  loadEvalChunkOptions();
+  requestAnimationFrame(() => evalCaseQuery?.focus());
+}
+
+function closeEvalCaseModal() {
+  if (!evalCaseModal || isSavingEvalCase) return;
+  evalCaseModal.hidden = true;
+  evalCaseModal.setAttribute("aria-hidden", "true");
+  setEvalCaseError();
+}
+
+function setEvalCaseSaving(saving) {
+  isSavingEvalCase = saving;
+  if (btnSaveEvalCase) {
+    btnSaveEvalCase.disabled = saving;
+    btnSaveEvalCase.textContent = saving ? "保存中..." : "保存用例";
+  }
+  if (btnCloseEvalCase) btnCloseEvalCase.disabled = saving;
+  if (btnCancelEvalCase) btnCancelEvalCase.disabled = saving;
+  if (selectEvalChunkId) {
+    selectEvalChunkId.disabled = saving || selectEvalChunkId.options.length <= 1;
+  }
+}
+
+function markEvalDatasetUpdated(total, message) {
+  hideEvalRunProgress();
+  setEvalStatusMessage(message, "success");
+  if (evalRunMeta) {
+    evalRunMeta.textContent = `${total ?? "-"} 条用例 · 数据集已更新，等待重新评测`;
+  }
+}
+
+async function saveEvalCase(event) {
+  event.preventDefault();
+  if (isSavingEvalCase) return;
+
+  const query = evalCaseQuery?.value.trim() || "";
+  const selectedChunkId = selectEvalChunkId?.value.trim().toLowerCase() || "";
+  if (!query) {
+    setEvalCaseError("请输入测试 Query。");
+    evalCaseQuery?.focus();
+    return;
+  }
+  if (!selectedChunkId) {
+    setEvalCaseError("请选择一个预期知识库切片。");
+    selectEvalChunkId?.focus();
+    return;
+  }
+  if (!/^[0-9a-f]{32}$/.test(selectedChunkId)) {
+    setEvalCaseError("所选切片缺少合法的 32 位 Chunk ID，请刷新后重试。");
+    selectEvalChunkId?.focus();
+    return;
+  }
+
+  setEvalCaseError();
+  setEvalCaseSaving(true);
+  try {
+    const response = await fetch(`${API_BASE}/eval/add_case`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query,
+        expected_chunk_ids: [selectedChunkId],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+
+    setEvalCaseSaving(false);
+    closeEvalCaseModal();
+    await loadEvalDataset();
+    showToast("添加成功", "success");
+    markEvalDatasetUpdated(
+      payload.total,
+      `测试用例已添加，当前数据集共 ${payload.total ?? "-"} 条。`,
+    );
+  } catch (error) {
+    console.error("[Eval] 添加测试用例失败", error);
+    setEvalCaseError(`保存失败：${error.message}`);
+    showToast("添加失败", "error");
+  } finally {
+    setEvalCaseSaving(false);
+  }
+}
+
+btnAddEvalCase?.addEventListener("click", openEvalCaseModal);
+btnCloseEvalCase?.addEventListener("click", closeEvalCaseModal);
+btnCancelEvalCase?.addEventListener("click", closeEvalCaseModal);
+evalCaseModal?.querySelector("[data-eval-modal-close]")
+  ?.addEventListener("click", closeEvalCaseModal);
+evalCaseForm?.addEventListener("submit", saveEvalCase);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && evalCaseModal && !evalCaseModal.hidden) {
+    closeEvalCaseModal();
+  }
+});
+
+function setEvalAutoGenerateError(message = "") {
+  if (!evalAutoGenerateError) return;
+  evalAutoGenerateError.textContent = message;
+  evalAutoGenerateError.hidden = !message;
+}
+
+function setEvalAutoProgress(percent, text) {
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  if (evalAutoProgressBar) evalAutoProgressBar.style.width = `${safePercent}%`;
+  if (evalAutoProgressPercent) evalAutoProgressPercent.textContent = `${safePercent}%`;
+  if (evalAutoProgressText && text) evalAutoProgressText.textContent = text;
+  evalAutoProgressTrack?.setAttribute("aria-valuenow", String(safePercent));
+}
+
+function appendEvalAutoLog(message, replace = false) {
+  if (!evalAutoGenerateLog || !message) return;
+  const current = replace ? "" : evalAutoGenerateLog.textContent.trim();
+  const next = current ? `${current}\n${message}` : message;
+  evalAutoGenerateLog.textContent = next.slice(-8000);
+  evalAutoGenerateLog.scrollTop = evalAutoGenerateLog.scrollHeight;
+}
+
+function resetEvalAutoGenerateUI() {
+  setEvalAutoGenerateError();
+  setEvalAutoProgress(0, "等待开始");
+  if (evalAutoGenerateLog) {
+    evalAutoGenerateLog.textContent = "设置参数后点击“开始生成”。";
+  }
+  evalAutoProgressTrack?.classList.remove("is-running", "is-error", "is-complete");
+}
+
+function openEvalAutoGenerateModal() {
+  if (!evalAutoGenerateModal) return;
+  resetEvalAutoGenerateUI();
+  evalAutoGenerateModal.hidden = false;
+  evalAutoGenerateModal.setAttribute("aria-hidden", "false");
+  requestAnimationFrame(() => evalAutoGenerateCount?.focus());
+}
+
+function closeEvalAutoGenerateModal() {
+  if (!evalAutoGenerateModal || isAutoGeneratingCases) return;
+  evalAutoGenerateModal.hidden = true;
+  evalAutoGenerateModal.setAttribute("aria-hidden", "true");
+  setEvalAutoGenerateError();
+}
+
+function setEvalAutoGenerating(running) {
+  isAutoGeneratingCases = running;
+  if (btnStartEvalAutoGenerate) {
+    btnStartEvalAutoGenerate.disabled = running;
+    btnStartEvalAutoGenerate.textContent = running ? "生成中..." : "开始生成";
+  }
+  if (btnCloseEvalAutoGenerate) btnCloseEvalAutoGenerate.disabled = running;
+  if (evalAutoGenerateCount) evalAutoGenerateCount.disabled = running;
+  if (evalAutoGenerateMinLength) evalAutoGenerateMinLength.disabled = running;
+  if (btnCancelEvalAutoGenerate) {
+    btnCancelEvalAutoGenerate.disabled = false;
+    btnCancelEvalAutoGenerate.textContent = running ? "停止生成" : "取消";
+  }
+  evalAutoProgressTrack?.classList.toggle("is-running", running);
+}
+
+async function consumeSSEStream(response, onEvent) {
+  if (!response.body) throw new Error("浏览器未提供流式响应读取能力");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  const consumeFrame = (frame) => {
+    const payload = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (payload) onEvent(JSON.parse(payload));
+  };
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() || "";
+      frames.forEach(consumeFrame);
+      if (done) break;
+    }
+    if (buffer.trim()) consumeFrame(buffer);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function handleEvalAutoGenerateEvent(event, state) {
+  if (!event || typeof event !== "object") return;
+  if (event.type === "error") {
+    throw new Error(event.message || "自动生成失败");
+  }
+  if (event.type === "start") {
+    setEvalAutoProgress(0, `准备生成 0/${event.total}`);
+    appendEvalAutoLog(event.message, true);
+    return;
+  }
+  if (event.type === "warning") {
+    appendEvalAutoLog(`⚠ ${event.message}`);
+    return;
+  }
+  if (event.type === "progress") {
+    setEvalAutoProgress(
+      event.progress,
+      `正在生成 ${event.current}/${event.total}`,
+    );
+    appendEvalAutoLog(`[${event.current}/${event.total}] ${event.query}`);
+    return;
+  }
+  if (event.type === "done") {
+    state.done = event;
+    setEvalAutoProgress(100, `生成完成 ${event.current}/${event.total}`);
+    evalAutoProgressTrack?.classList.remove("is-running");
+    evalAutoProgressTrack?.classList.add("is-complete");
+    appendEvalAutoLog(`✓ ${event.message}`);
+  }
+}
+
+async function startEvalAutoGenerate(event) {
+  event.preventDefault();
+  if (isAutoGeneratingCases) return;
+
+  const count = Number(evalAutoGenerateCount?.value);
+  const minLength = Number(evalAutoGenerateMinLength?.value);
+  if (!Number.isInteger(count) || count < 1 || count > 100) {
+    setEvalAutoGenerateError("生成数量必须是 1-100 之间的整数。");
+    evalAutoGenerateCount?.focus();
+    return;
+  }
+  if (!Number.isInteger(minLength) || minLength < 0 || minLength > 10000) {
+    setEvalAutoGenerateError("最小切片长度必须是 0-10000 之间的整数。");
+    evalAutoGenerateMinLength?.focus();
+    return;
+  }
+
+  resetEvalAutoGenerateUI();
+  setEvalAutoGenerating(true);
+  setEvalAutoProgress(0, `正在连接生成服务...`);
+  appendEvalAutoLog("正在连接服务并抽取知识库切片...", true);
+  evalAutoGenerateAbortController = new AbortController();
+  const streamState = { done: null };
+
+  try {
+    const response = await fetch(`${API_BASE}/eval/auto_generate`, {
+      method: "POST",
+      headers: {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ count, min_length: minLength }),
+      signal: evalAutoGenerateAbortController.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+
+    await consumeSSEStream(response, (streamEvent) => {
+      handleEvalAutoGenerateEvent(streamEvent, streamState);
+    });
+    if (!streamState.done) {
+      throw new Error("流式连接已结束，但没有收到完成事件");
+    }
+
+    const done = streamState.done;
+    await loadEvalDataset();
+    showToast("生成完毕", "success");
+    markEvalDatasetUpdated(
+      done.dataset_total,
+      `自动生成完成：新增 ${done.generated} 条，当前测试集共 ${done.dataset_total} 条。`,
+    );
+  } catch (error) {
+    if (error.name === "AbortError") {
+      setEvalAutoProgress(
+        Number(evalAutoProgressPercent?.textContent.replace("%", "")) || 0,
+        "已停止生成",
+      );
+      appendEvalAutoLog("已停止；此前显示成功的用例已经保存。", false);
+      showToast("已停止生成", "error");
+    } else {
+      console.error("[Eval] 自动生成失败", error);
+      setEvalAutoGenerateError(`生成失败：${error.message}`);
+      evalAutoProgressTrack?.classList.remove("is-running");
+      evalAutoProgressTrack?.classList.add("is-error");
+      appendEvalAutoLog(`✕ ${error.message}`);
+      showToast("生成失败", "error");
+    }
+  } finally {
+    evalAutoGenerateAbortController = null;
+    setEvalAutoGenerating(false);
+  }
+}
+
+function cancelOrCloseEvalAutoGenerate() {
+  if (isAutoGeneratingCases) {
+    evalAutoGenerateAbortController?.abort();
+    if (btnCancelEvalAutoGenerate) btnCancelEvalAutoGenerate.disabled = true;
+    return;
+  }
+  closeEvalAutoGenerateModal();
+}
+
+btnAutoGenerateCases?.addEventListener("click", openEvalAutoGenerateModal);
+btnCloseEvalAutoGenerate?.addEventListener("click", closeEvalAutoGenerateModal);
+btnCancelEvalAutoGenerate?.addEventListener("click", cancelOrCloseEvalAutoGenerate);
+evalAutoGenerateModal?.querySelector("[data-eval-auto-close]")
+  ?.addEventListener("click", closeEvalAutoGenerateModal);
+evalAutoGenerateForm?.addEventListener("submit", startEvalAutoGenerate);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && evalAutoGenerateModal && !evalAutoGenerateModal.hidden) {
+    closeEvalAutoGenerateModal();
+  }
+});
+
+function formatEvalRate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "--";
+}
+
+function evalHitBadge(hit) {
+  return hit
+    ? '<span class="eval-hit-badge yes">命中</span>'
+    : '<span class="eval-hit-badge no">未命中</span>';
+}
+
+function setEvalLoading(loading) {
+  if (!btnRunEval) return;
+  btnRunEval.disabled = loading;
+  btnRunEval.classList.toggle("is-loading", loading);
+  const text = btnRunEval.querySelector(".eval-run-btn-text");
+  const spinner = btnRunEval.querySelector(".eval-run-btn-loading");
+  if (text) text.hidden = loading;
+  if (spinner) spinner.hidden = !loading;
+}
+
+function setEvalStatusMessage(message, state = "") {
+  if (evalStatus) {
+    evalStatus.className = `eval-status${state ? ` ${state}` : ""}`;
+  }
+  if (evalProgressText) evalProgressText.textContent = message;
+}
+
+function setEvalRunProgress(percent, message) {
+  window.clearTimeout(evalProgressHideTimer);
+  const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+  if (evalProgressTrack) {
+    evalProgressTrack.hidden = false;
+    evalProgressTrack.classList.remove("is-cancelled");
+    evalProgressTrack.classList.toggle("is-complete", safePercent >= 100);
+    evalProgressTrack.classList.toggle("is-running", safePercent < 100);
+    evalProgressTrack.setAttribute("aria-valuenow", String(safePercent));
+  }
+  if (evalProgressFill) evalProgressFill.style.width = `${safePercent}%`;
+  if (evalProgressPercent) {
+    evalProgressPercent.hidden = false;
+    evalProgressPercent.textContent = `${safePercent}%`;
+  }
+  setEvalStatusMessage(message, "running");
+}
+
+function hideEvalRunProgress() {
+  window.clearTimeout(evalProgressHideTimer);
+  if (evalProgressTrack) {
+    evalProgressTrack.hidden = true;
+    evalProgressTrack.classList.remove("is-running", "is-complete", "is-cancelled");
+  }
+  if (evalProgressPercent) evalProgressPercent.hidden = true;
+  if (btnCancelEval) {
+    btnCancelEval.hidden = true;
+    btnCancelEval.disabled = false;
+  }
+}
+
+function showEvalCancelledState() {
+  const currentPercent = Number(evalProgressTrack?.getAttribute("aria-valuenow")) || 0;
+  if (evalProgressTrack) {
+    evalProgressTrack.hidden = false;
+    evalProgressTrack.classList.remove("is-running", "is-complete");
+    evalProgressTrack.classList.add("is-cancelled");
+  }
+  if (evalProgressPercent) {
+    evalProgressPercent.hidden = false;
+    evalProgressPercent.textContent = `${currentPercent}%`;
+  }
+  setEvalStatusMessage("评测已取消", "cancelled");
+}
+
+function scheduleEvalCancelledReset() {
+  window.clearTimeout(evalCancelResetTimer);
+  evalCancelResetTimer = window.setTimeout(() => {
+    hideEvalRunProgress();
+    setEvalStatusMessage("评测已取消，可重新开始评测。", "cancelled");
+    isEvalCancelRequested = false;
+  }, 750);
+}
+
+async function cancelRetrievalEvaluation() {
+  if (!evalRunAbortController || isEvalCancelRequested) return;
+  isEvalCancelRequested = true;
+  if (btnCancelEval) btnCancelEval.disabled = true;
+
+  evalRunAbortController.abort();
+  showEvalCancelledState();
+  scheduleEvalCancelledReset();
+
+  try {
+    const response = await fetch(`${API_BASE}/eval/cancel`, {
+      method: "POST",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+  } catch (error) {
+    console.error("[Eval] 通知后端取消失败", error);
+    showToast("取消请求发送失败", "error");
+  }
+}
+
+btnCancelEval?.addEventListener("click", cancelRetrievalEvaluation);
+
+function resetEvalMetrics() {
+  if (evalHit1) evalHit1.textContent = "--";
+  if (evalHit3) evalHit3.textContent = "--";
+  if (evalHit5) evalHit5.textContent = "--";
+  if (evalHit1Count) evalHit1Count.textContent = "尚未运行";
+  if (evalHit3Count) evalHit3Count.textContent = "尚未运行";
+  if (evalHit5Count) evalHit5Count.textContent = "尚未运行";
+}
+
+function evalDeleteButton(chunkId) {
+  if (!chunkId) return "-";
+  return `
+    <button
+      type="button"
+      class="eval-delete-case-btn"
+      data-eval-delete-chunk="${escapeHtml(String(chunkId))}"
+      title="删除这条测试用例"
+    >❌ 删除</button>
+  `;
+}
+
+function renderEvalDatasetCases(cases) {
+  const items = Array.isArray(cases) ? cases : [];
+  resetEvalMetrics();
+  if (evalRunMeta) {
+    evalRunMeta.textContent = `${items.length} 条测试用例 · 等待评测`;
+  }
+  if (!items.length) {
+    evalDetailsBody.innerHTML = `
+      <tr class="eval-empty-row"><td colspan="10">测试集为空，请新增或自动生成用例</td></tr>
+    `;
+    return;
+  }
+
+  evalDetailsBody.innerHTML = items.map((item, index) => {
+    const expectedIds = Array.isArray(item.expected_chunk_ids)
+      ? item.expected_chunk_ids
+      : [];
+    const primaryChunkId = expectedIds[0] || "";
+    const expectedHtml = expectedIds
+      .map((id) => `<code>${escapeHtml(String(id))}</code>`)
+      .join("<br>");
+    const metadata = JSON.stringify(item.metadata || {});
+    return `
+      <tr data-eval-case-chunk="${escapeHtml(primaryChunkId)}">
+        <td class="eval-index-cell">${index + 1}</td>
+        <td class="eval-query-cell">${escapeHtml(String(item.query || ""))}<span class="eval-query-meta">${escapeHtml(metadata)}</span></td>
+        <td class="eval-id-cell">${expectedHtml || "-"}</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td>-</td>
+        <td class="eval-action-cell">${evalDeleteButton(primaryChunkId)}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function loadEvalDataset() {
+  if (!evalDetailsBody) return;
+  try {
+    const response = await fetch(`${API_BASE}/eval/dataset?_t=${Date.now()}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    renderEvalDatasetCases(payload.items);
+  } catch (error) {
+    console.error("[Eval] 加载测试集失败", error);
+    evalDetailsBody.innerHTML = `
+      <tr class="eval-empty-row"><td colspan="10">加载测试集失败：${escapeHtml(error.message)}</td></tr>
+    `;
+    setEvalStatusMessage(`加载测试集失败：${error.message}`, "error");
+  }
+}
+
+async function clearEvalDataset() {
+  if (!confirm("确定要清空所有测试用例吗？此操作不可恢复！")) return;
+  if (btnClearEvalDataset) btnClearEvalDataset.disabled = true;
+  try {
+    const response = await fetch(`${API_BASE}/eval/dataset`, {
+      method: "DELETE",
+      headers: { "Accept": "application/json" },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    await loadEvalDataset();
+    hideEvalRunProgress();
+    setEvalStatusMessage("测试集已清空，可以新增或自动生成用例。", "success");
+    showToast("清空成功", "success");
+  } catch (error) {
+    console.error("[Eval] 清空测试集失败", error);
+    setEvalStatusMessage(`清空失败：${error.message}`, "error");
+    showToast("清空失败", "error");
+  } finally {
+    if (btnClearEvalDataset) btnClearEvalDataset.disabled = false;
+  }
+}
+
+async function deleteEvalCase(chunkId, button) {
+  if (!chunkId || !confirm("确定删除这条用例吗？")) return;
+  if (button) button.disabled = true;
+  try {
+    const response = await fetch(
+      `${API_BASE}/eval/dataset/${encodeURIComponent(chunkId)}`,
+      {
+        method: "DELETE",
+        headers: { "Accept": "application/json" },
+      },
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    await loadEvalDataset();
+    hideEvalRunProgress();
+    setEvalStatusMessage(
+      `删除成功，当前测试集共 ${payload.total ?? "-"} 条。`,
+      "success",
+    );
+    showToast("删除成功", "success");
+  } catch (error) {
+    console.error("[Eval] 删除测试用例失败", error);
+    if (button) button.disabled = false;
+    setEvalStatusMessage(`删除失败：${error.message}`, "error");
+    showToast("删除失败", "error");
+  }
+}
+
+btnClearEvalDataset?.addEventListener("click", clearEvalDataset);
+evalDetailsBody?.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-eval-delete-chunk]");
+  if (!button) return;
+  deleteEvalCase(button.dataset.evalDeleteChunk, button);
+});
+
+function renderEvalResults(result) {
+  const metrics = result?.metrics || {};
+  const details = Array.isArray(result?.details) ? result.details : [];
+  const config = result?.config || {};
+  const total = Number(metrics.total ?? details.length);
+
+  evalHit1.textContent = formatEvalRate(metrics.hit1);
+  evalHit3.textContent = formatEvalRate(metrics.hit3);
+  evalHit5.textContent = formatEvalRate(metrics.hit5);
+  evalHit1Count.textContent = `${Number(metrics.hit1_count || 0)} / ${total}`;
+  evalHit3Count.textContent = `${Number(metrics.hit3_count || 0)} / ${total}`;
+  evalHit5Count.textContent = `${Number(metrics.hit5_count || 0)} / ${total}`;
+  evalRunMeta.textContent = [
+    `${total} 条用例`,
+    `Hybrid Top ${config.candidate_top_k ?? "-"}`,
+    `Rerank Top ${config.rerank_top_k ?? "-"}`,
+    `${config.knowledge_base_count ?? "-"} 个知识库`,
+  ].join(" · ");
+
+  if (!details.length) {
+    evalDetailsBody.innerHTML = `
+      <tr class="eval-empty-row"><td colspan="10">评测完成，但没有返回明细</td></tr>
+    `;
+    return;
+  }
+
+  evalDetailsBody.innerHTML = details.map((detail, index) => {
+    const expectedIds = Array.isArray(detail.expected_chunk_ids)
+      ? detail.expected_chunk_ids
+      : [];
+    const expectedHtml = expectedIds.length
+      ? expectedIds.map((id) => `<code>${escapeHtml(String(id))}</code>`).join("<br>")
+      : "-";
+    const rank = detail.hit_rank == null
+      ? '<span class="eval-rank-miss">MISS</span>'
+      : `<span class="eval-rank-hit">#${Number(detail.hit_rank)}</span>`;
+    const score = detail.rerank_score == null
+      ? "-"
+      : Number(detail.rerank_score).toFixed(6);
+    const metadata = JSON.stringify(detail.metadata || {});
+    return `
+      <tr>
+        <td class="eval-index-cell">${index + 1}</td>
+        <td class="eval-query-cell">${escapeHtml(String(detail.query || ""))}<span class="eval-query-meta">${escapeHtml(metadata)}</span></td>
+        <td class="eval-id-cell">${expectedHtml}</td>
+        <td>${Number(detail.candidate_count || 0)}</td>
+        <td>${rank}</td>
+        <td class="eval-score-cell">${score}</td>
+        <td>${evalHitBadge(Boolean(detail.hit1))}</td>
+        <td>${evalHitBadge(Boolean(detail.hit3))}</td>
+        <td>${evalHitBadge(Boolean(detail.hit5))}</td>
+        <td class="eval-action-cell">${evalDeleteButton(expectedIds[0] || "")}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function runRetrievalEvaluation() {
+  if (!btnRunEval || btnRunEval.disabled) return;
+  window.clearTimeout(evalCancelResetTimer);
+  isEvalCancelRequested = false;
+  evalRunAbortController = new AbortController();
+  if (btnCancelEval) {
+    btnCancelEval.hidden = false;
+    btnCancelEval.disabled = false;
+  }
+  setEvalLoading(true);
+  setEvalRunProgress(0, "正在准备 Embedding、Hybrid Search 和 Rerank...");
+  const streamState = { done: null };
+
+  try {
+    const response = await fetch(`${API_BASE}/eval/run`, {
+      method: "POST",
+      headers: { "Accept": "text/event-stream" },
+      cache: "no-store",
+      signal: evalRunAbortController.signal,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+
+    await consumeSSEStream(response, (event) => {
+      if (event.type === "error") {
+        throw new Error(event.message || "评测执行失败");
+      }
+      if (event.type === "start") {
+        setEvalRunProgress(0, `正在评测 (0/${event.total})：准备检索环境...`);
+      } else if (event.type === "progress") {
+        setEvalRunProgress(
+          event.progress,
+          `正在评测 (${event.current}/${event.total})：${event.query}`,
+        );
+      } else if (event.type === "done") {
+        streamState.done = event;
+        setEvalRunProgress(100, `评测计算完成 (${event.total}/${event.total})，正在渲染结果...`);
+      } else if (event.type === "cancelled") {
+        streamState.cancelled = event;
+        showEvalCancelledState();
+      }
+    });
+
+    if (streamState.cancelled) {
+      scheduleEvalCancelledReset();
+      return;
+    }
+    if (!streamState.done) {
+      throw new Error("流式连接已结束，但没有收到完成事件");
+    }
+    await new Promise((resolve) => {
+      evalProgressHideTimer = window.setTimeout(resolve, 450);
+    });
+    renderEvalResults(streamState.done);
+    hideEvalRunProgress();
+    setEvalStatusMessage(
+      `评测完成：共运行 ${streamState.done?.metrics?.total ?? 0} 条用例。`,
+      "success",
+    );
+  } catch (error) {
+    if (error.name === "AbortError" && isEvalCancelRequested) {
+      showEvalCancelledState();
+    } else {
+      console.error("[Eval] 评测失败", error);
+      hideEvalRunProgress();
+      setEvalStatusMessage(`评测失败：${error.message}`, "error");
+    }
+  } finally {
+    evalRunAbortController = null;
+    if (!isEvalCancelRequested && !streamState.cancelled) {
+      if (btnCancelEval) btnCancelEval.hidden = true;
+    }
+    setEvalLoading(false);
+  }
+}
+
+if (btnRunEval) {
+  btnRunEval.addEventListener("click", runRetrievalEvaluation);
+}
 
 // ==================== 知识库管理 ====================
 

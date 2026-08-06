@@ -97,6 +97,8 @@ relevant = retriever.search_relevant("继续完善头颅报告", top_k_stm=3)
 - `knowledge_bases` 知识库状态和进度；
 - `knowledge_base_chunks` 切片原文，以与 Markdown、Milvus 共用的 32 位 MD5 `chunk_id` 为主键。
 
+评测中心的人工标注下拉框调用 `SessionStore.list_active_chunk_options()`，只读取 `active` 知识库，并返回 `chunk_id`、`kb_id`、`kb_name` 和 50 字 `content_preview`。该操作完全基于 SQLite，不触发 Milvus 检索。
+
 SQLite 会话持久化用于恢复明确的会话内容，不会自动归纳或传播用户偏好。
 
 ## 测试

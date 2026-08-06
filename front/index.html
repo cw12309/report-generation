@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=23" />
+    <link rel="stylesheet" href="/static/style.css?v=31" />
   </head>
   <body>
     <div class="app">
@@ -23,6 +23,10 @@
           <button class="sidebar-btn" data-page="kb" title="知识库管理">
             <span class="sidebar-icon">📚</span>
             <span class="sidebar-label">知识库</span>
+          </button>
+          <button class="sidebar-btn" data-page="eval" title="评测中心">
+            <span class="sidebar-icon">🧪</span>
+            <span class="sidebar-label">评测</span>
           </button>
           <button class="sidebar-btn" data-page="config" title="系统配置">
             <span class="sidebar-icon">⚙️</span>
@@ -408,6 +412,117 @@
             </div>
           </div>
 
+          <!-- 评测中心页面 -->
+          <div class="page" id="pageEval">
+            <header class="header">
+              <h1>评测中心</h1>
+              <p class="subtitle">运行真实 Hybrid Search + Rerank，观察检索命中表现</p>
+            </header>
+
+            <div class="eval-container" id="evalContainer">
+              <section class="eval-run-panel">
+                <div>
+                  <h2>Retrieval Eval</h2>
+                  <p>使用独立 JSON 测试集，统计 Rerank 后的 Hit@1、Hit@3、Hit@5。</p>
+                </div>
+                <div class="eval-run-actions">
+                  <button id="btnAddEvalCase" class="btn btn-outline eval-add-case-btn">
+                    ➕ 新增用例
+                  </button>
+                  <button id="btnAutoGenerateCases" class="btn btn-outline eval-auto-generate-btn">
+                    🤖 自动生成用例
+                  </button>
+                  <button id="btn-clear-dataset" class="btn btn-danger eval-clear-dataset-btn">
+                    🗑️ 清空测试集
+                  </button>
+                  <button id="btnRunEval" class="btn btn-primary eval-run-btn">
+                    <span class="eval-run-btn-text">▶ 开始评测</span>
+                    <span class="eval-run-btn-loading" hidden>⏳ 评测中...</span>
+                  </button>
+                </div>
+              </section>
+
+              <div id="evalStatus" class="eval-status" aria-live="polite">
+                <div class="eval-progress-copy">
+                  <span id="evalProgressText">点击“开始评测”运行当前 Retrieval Eval 数据集。</span>
+                  <strong id="evalProgressPercent" hidden>0%</strong>
+                </div>
+                <div
+                  id="evalProgressTrack"
+                  class="eval-progress-track"
+                  role="progressbar"
+                  aria-label="检索评测进度"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                  hidden
+                >
+                  <div id="evalProgressFill" class="eval-progress-fill"></div>
+                </div>
+                <div class="eval-progress-actions">
+                  <button
+                    type="button"
+                    id="btn-cancel-eval"
+                    class="eval-cancel-btn"
+                    hidden
+                  >
+                    🛑 取消评测
+                  </button>
+                </div>
+              </div>
+
+              <section class="eval-metrics" aria-label="评测核心指标">
+                <article class="eval-metric-card hit1">
+                  <span class="eval-metric-label">Hit@1</span>
+                  <strong id="evalHit1" class="eval-metric-value">--</strong>
+                  <span id="evalHit1Count" class="eval-metric-count">尚未运行</span>
+                </article>
+                <article class="eval-metric-card hit3">
+                  <span class="eval-metric-label">Hit@3</span>
+                  <strong id="evalHit3" class="eval-metric-value">--</strong>
+                  <span id="evalHit3Count" class="eval-metric-count">尚未运行</span>
+                </article>
+                <article class="eval-metric-card hit5">
+                  <span class="eval-metric-label">Hit@5</span>
+                  <strong id="evalHit5" class="eval-metric-value">--</strong>
+                  <span id="evalHit5Count" class="eval-metric-count">尚未运行</span>
+                </article>
+              </section>
+
+              <section class="eval-details-panel">
+                <div class="eval-details-header">
+                  <div>
+                    <h2>Query 命中明细</h2>
+                    <p id="evalRunMeta">等待评测结果</p>
+                  </div>
+                </div>
+                <div class="eval-table-wrap">
+                  <table class="eval-table">
+                    <thead>
+                      <tr>
+                        <th>序号</th>
+                        <th>Query</th>
+                        <th>期望 Chunk ID</th>
+                        <th>候选数</th>
+                        <th>命中名次</th>
+                        <th>Rerank 分数</th>
+                        <th>Hit@1</th>
+                        <th>Hit@3</th>
+                        <th>Hit@5</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="evalDetailsBody">
+                      <tr class="eval-empty-row">
+                        <td colspan="10">正在加载测试集...</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          </div>
+
           <!-- 监控页面 -->
           <div class="page" id="pageMonitor">
             <header class="header">
@@ -524,6 +639,159 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=37"></script>
+    <div
+      id="evalCaseModal"
+      class="eval-case-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="evalCaseModalTitle"
+      aria-hidden="true"
+      hidden
+    >
+      <div class="eval-case-modal-overlay" data-eval-modal-close></div>
+      <div class="eval-case-modal-dialog">
+        <div class="eval-case-modal-header">
+          <div>
+            <span class="eval-case-modal-icon">＋</span>
+            <h3 id="evalCaseModalTitle">新增检索评测用例</h3>
+          </div>
+          <button
+            type="button"
+            id="btnCloseEvalCase"
+            class="eval-case-modal-close"
+            aria-label="关闭"
+          >
+            &times;
+          </button>
+        </div>
+        <form id="evalCaseForm" novalidate>
+          <div class="eval-case-modal-body">
+            <label class="eval-case-field" for="evalCaseQuery">
+              <span>测试 Query</span>
+              <input
+                id="evalCaseQuery"
+                type="text"
+                maxlength="2000"
+                autocomplete="off"
+                placeholder="例如：CT检查的定义是什么？"
+                required
+              />
+            </label>
+            <label class="eval-case-field" for="select-chunk-id">
+              <span>预期知识库切片</span>
+              <select id="select-chunk-id" required disabled>
+                <option value="">正在加载知识库切片...</option>
+              </select>
+            </label>
+            <p class="eval-case-help">
+              请选择最符合该 Query 完美答案的知识库切片，系统会自动使用其 Chunk ID。
+            </p>
+            <div id="evalCaseError" class="eval-case-error" role="alert" hidden></div>
+          </div>
+          <div class="eval-case-modal-footer">
+            <button type="button" id="btnCancelEvalCase" class="btn btn-outline">
+              取消
+            </button>
+            <button type="submit" id="btnSaveEvalCase" class="btn btn-primary">
+              保存用例
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div
+      id="evalAutoGenerateModal"
+      class="eval-case-modal eval-auto-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="evalAutoGenerateModalTitle"
+      aria-hidden="true"
+      hidden
+    >
+      <div class="eval-case-modal-overlay" data-eval-auto-close></div>
+      <div class="eval-case-modal-dialog eval-auto-modal-dialog">
+        <div class="eval-case-modal-header">
+          <div>
+            <span class="eval-case-modal-icon eval-auto-modal-icon">🤖</span>
+            <div>
+              <h3 id="evalAutoGenerateModalTitle">自动生成评测用例</h3>
+              <p class="eval-auto-modal-subtitle">从已激活知识库抽样，并由 LLM 逆向生成真实 Query</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            id="btnCloseEvalAutoGenerate"
+            class="eval-case-modal-close"
+            aria-label="关闭"
+          >
+            &times;
+          </button>
+        </div>
+        <form id="evalAutoGenerateForm" novalidate>
+          <div class="eval-case-modal-body">
+            <div class="eval-auto-fields">
+              <label class="eval-case-field" for="evalAutoGenerateCount">
+                <span>生成数量</span>
+                <input
+                  id="evalAutoGenerateCount"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value="10"
+                  required
+                />
+              </label>
+              <label class="eval-case-field" for="evalAutoGenerateMinLength">
+                <span>最小切片长度</span>
+                <input
+                  id="evalAutoGenerateMinLength"
+                  type="number"
+                  min="0"
+                  max="10000"
+                  step="10"
+                  value="100"
+                  required
+                />
+              </label>
+            </div>
+
+            <div class="eval-auto-progress-panel">
+              <div class="eval-auto-progress-meta">
+                <span id="evalAutoProgressText">等待开始</span>
+                <strong id="evalAutoProgressPercent">0%</strong>
+              </div>
+              <div
+                class="eval-auto-progress-track"
+                role="progressbar"
+                aria-label="自动生成进度"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+              >
+                <div id="evalAutoProgressBar" class="eval-auto-progress-bar"></div>
+              </div>
+              <div id="evalAutoGenerateLog" class="eval-auto-log" aria-live="polite">
+                设置参数后点击“开始生成”。
+              </div>
+            </div>
+            <div id="evalAutoGenerateError" class="eval-case-error" role="alert" hidden></div>
+          </div>
+          <div class="eval-case-modal-footer">
+            <button type="button" id="btnCancelEvalAutoGenerate" class="btn btn-outline">
+              取消
+            </button>
+            <button type="submit" id="btnStartEvalAutoGenerate" class="btn btn-primary">
+              开始生成
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
+
+    <script src="/static/app.js?v=45"></script>
   </body>
 </html>

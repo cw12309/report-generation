@@ -506,6 +506,34 @@ class SessionStore:
             ).fetchall()
         return {"total": int(total), "items": [dict(row) for row in rows]}
 
+    def list_active_chunk_options(self, preview_length: int = 50) -> list[dict]:
+        """Return compact chunk options from active knowledge bases for Eval UI."""
+        preview_length = max(20, min(200, int(preview_length)))
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.chunk_id, c.kb_id, kb.kb_name, c.combined_text
+                FROM knowledge_base_chunks AS c
+                INNER JOIN knowledge_bases AS kb ON kb.kb_id = c.kb_id
+                WHERE kb.status = 'active'
+                ORDER BY kb.created_at DESC, c.chunk_index ASC
+                """
+            ).fetchall()
+
+        options = []
+        for row in rows:
+            compact_text = " ".join(str(row["combined_text"] or "").split())
+            preview = compact_text[:preview_length]
+            if len(compact_text) > preview_length:
+                preview += "..."
+            options.append({
+                "chunk_id": str(row["chunk_id"]),
+                "content_preview": preview or "（空切片）",
+                "kb_id": str(row["kb_id"]),
+                "kb_name": str(row["kb_name"]),
+            })
+        return options
+
     # ── 工具方法 ────────────────────────────────────────────
 
     @staticmethod

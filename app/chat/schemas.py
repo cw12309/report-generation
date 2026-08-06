@@ -1,6 +1,6 @@
 """Pydantic 数据模型（请求/响应 Schema）"""
 
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,26 @@ class KBBuildRequest(BaseModel):
     rebuild: bool = Field(default=False, description="是否重建（清空现有数据）")
     batch_size: int = Field(default=16, description="批次大小")
     kb_id: str = Field(..., description="要增量写入的知识库 ID")
+
+
+class EvalCaseRequest(BaseModel):
+    """人工录入的 Retrieval Eval 测试用例。"""
+    query: str = Field(..., description="测试 Query", max_length=2000)
+    expected_chunk_ids: Union[List[str], str] = Field(
+        ...,
+        description="32 位 MD5 Chunk ID 列表或英文逗号分隔字符串",
+    )
+
+
+class EvalAutoGenerateRequest(BaseModel):
+    """LLM 自动生成 Retrieval Eval 用例的批量参数。"""
+    count: int = Field(default=10, ge=1, le=100, description="生成数量")
+    min_length: int = Field(
+        default=100,
+        ge=0,
+        le=10000,
+        description="参与抽样的切片最小字符数",
+    )
 
 
 class KnowledgeBaseInfo(BaseModel):

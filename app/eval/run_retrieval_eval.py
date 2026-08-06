@@ -40,13 +40,56 @@ DEFAULT_DATASET = EVAL_DIR / "datasets" / "retrieval_test_cases.json"
 MD5_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 DATASET_LOCK = threading.RLock()
 EVAL_STATUS_LOCK = threading.Lock()
-eval_status = {"running": False, "cancel_requested": False}
+eval_status = {
+    "status": "idle",
+    "running": False,
+    "cancel_requested": False,
+    "current": 0,
+    "total": 0,
+    "progress": 0,
+    "query": "",
+    "message": "",
+}
 
 
-def _set_evaluation_status(*, running: bool, cancel_requested: bool) -> None:
+def _set_evaluation_status(
+    *,
+    running: bool,
+    cancel_requested: bool,
+    status: str | None = None,
+    current: int | None = None,
+    total: int | None = None,
+    progress: int | None = None,
+    query: str | None = None,
+    message: str | None = None,
+) -> None:
     with EVAL_STATUS_LOCK:
         eval_status["running"] = running
         eval_status["cancel_requested"] = cancel_requested
+        updates = {
+            "status": status,
+            "current": current,
+            "total": total,
+            "progress": progress,
+            "query": query,
+            "message": message,
+        }
+        for key, value in updates.items():
+            if value is not None:
+                eval_status[key] = value
+
+
+def _update_evaluation_progress(**updates: Any) -> None:
+    with EVAL_STATUS_LOCK:
+        for key, value in updates.items():
+            if key in eval_status and value is not None:
+                eval_status[key] = value
+
+
+def get_evaluation_status() -> dict[str, Any]:
+    """Return a thread-safe snapshot for the status recovery API."""
+    with EVAL_STATUS_LOCK:
+        return dict(eval_status)
 
 
 def is_evaluation_cancel_requested() -> bool:
@@ -368,6 +411,7 @@ def build_evaluation_result(
             "hit5_count": sum(1 for detail in details if detail["hit5"]),
         },
         "details": details,
+        "bad_cases": [detail for detail in details if not detail.get("hit5")],
         "config": {
             "candidate_top_k": candidate_top_k,
             "rerank_top_k": rerank_top_k,
@@ -378,7 +422,16 @@ def build_evaluation_result(
 
 async def stream_run_evaluation() -> AsyncIterator[dict[str, Any]]:
     """Run the default evaluation and yield per-query JSON-safe progress."""
-    _set_evaluation_status(running=True, cancel_requested=False)
+    _set_evaluation_status(
+        running=True,
+        cancel_requested=False,
+        status="running",
+        current=0,
+        total=0,
+        progress=0,
+        query="",
+        message="正在准备评测",
+    )
     client = None
     try:
         cases = await asyncio.to_thread(load_dataset, DEFAULT_DATASET)
@@ -394,34 +447,51 @@ async def stream_run_evaluation() -> AsyncIterator[dict[str, Any]]:
         total = len(cases)
         details: list[dict[str, Any]] = []
 
-        yield {
+        start_event = {
             "type": "start",
             "current": 0,
             "total": total,
             "progress": 0,
             "message": "正在准备 Embedding、Hybrid Search 和 Rerank",
         }
+        _update_evaluation_progress(
+            total=total,
+            message=start_event["message"],
+        )
+        yield start_event
 
         if is_evaluation_cancel_requested():
-            yield {
+            cancelled_event = {
                 "type": "cancelled",
                 "current": 0,
                 "total": total,
                 "progress": 0,
                 "message": "评测已取消",
             }
+            _update_evaluation_progress(
+                status="cancelled",
+                message=cancelled_event["message"],
+            )
+            yield cancelled_event
             return
 
         client = await asyncio.to_thread(new_milvus_client)
         for index, case in enumerate(cases, start=1):
             if is_evaluation_cancel_requested():
-                yield {
+                cancelled_event = {
                     "type": "cancelled",
                     "current": len(details),
                     "total": total,
                     "progress": int(len(details) / total * 100),
                     "message": "评测已取消",
                 }
+                _update_evaluation_progress(
+                    status="cancelled",
+                    current=cancelled_event["current"],
+                    progress=cancelled_event["progress"],
+                    message=cancelled_event["message"],
+                )
+                yield cancelled_event
                 return
             retrieval_task = asyncio.create_task(
                 asyncio.to_thread(
@@ -450,7 +520,7 @@ async def stream_run_evaluation() -> AsyncIterator[dict[str, Any]]:
             details.append(
                 build_case_detail(case, ranked_results, candidate_count)
             )
-            yield {
+            progress_event = {
                 "type": "progress",
                 "current": index,
                 "total": total,
@@ -458,15 +528,30 @@ async def stream_run_evaluation() -> AsyncIterator[dict[str, Any]]:
                 "query": case["query"],
                 "message": f"已完成 Query: {case['query']}",
             }
+            _update_evaluation_progress(
+                current=index,
+                total=total,
+                progress=progress_event["progress"],
+                query=case["query"],
+                message=progress_event["message"],
+            )
+            yield progress_event
 
         if is_evaluation_cancel_requested():
-            yield {
+            cancelled_event = {
                 "type": "cancelled",
                 "current": len(details),
                 "total": total,
                 "progress": int(len(details) / total * 100),
                 "message": "评测已取消",
             }
+            _update_evaluation_progress(
+                status="cancelled",
+                current=cancelled_event["current"],
+                progress=cancelled_event["progress"],
+                message=cancelled_event["message"],
+            )
+            yield cancelled_event
             return
 
         result = build_evaluation_result(
@@ -475,13 +560,28 @@ async def stream_run_evaluation() -> AsyncIterator[dict[str, Any]]:
             candidate_top_k=candidate_top_k,
             rerank_top_k=rerank_top_k,
         )
-        yield {
+        done_event = {
             "type": "done",
             "current": total,
             "total": total,
             "progress": 100,
             **result,
         }
+        _update_evaluation_progress(
+            status="completed",
+            current=total,
+            total=total,
+            progress=100,
+            query="",
+            message="评测完成",
+        )
+        yield done_event
+    except asyncio.CancelledError:
+        _update_evaluation_progress(status="cancelled", message="评测任务已中断")
+        raise
+    except Exception as exc:
+        _update_evaluation_progress(status="failed", message=str(exc))
+        raise
     finally:
         if client is not None:
             await asyncio.to_thread(client.close)

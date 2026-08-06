@@ -114,7 +114,9 @@ POST /api/eval/run
 POST /api/eval/cancel
 ```
 
-取消标志会在每条 Query 开始前检查；当前正在执行的同步 SDK 调用安全完成后，流返回 `cancelled` 事件并停止。正常、取消、异常或浏览器断开都会在 `finally` 中关闭客户端并把 `eval_status` 重置，避免影响下一次评测。
+取消标志会在每条 Query 开始前检查；当前正在执行的同步 SDK 调用安全完成后，流返回 `cancelled` 事件并停止。FastAPI 使用独立后台 Task 消费评测生成器，浏览器刷新只断开 SSE，不会取消计算；新页面通过 `GET /api/eval/status` 轮询恢复当前 Query 和百分比。正常、取消或异常都会在 `finally` 中关闭 Milvus 客户端并重置运行锁。
+
+最后一次完整结果保存在 SQLite `evaluation_state.result_json`，内容包括 `metrics`、`details`、`bad_cases` 和 `config`。没有运行中任务时，状态接口优先返回该结果；测试集改变后旧结果自动失效，避免展示与当前用例不匹配的历史成绩。
 
 人工用例也可通过接口追加：
 

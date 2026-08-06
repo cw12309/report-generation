@@ -98,5 +98,105 @@
       "type": "auto_generated",
       "kb_id": "b982a5acca51447aa1596f0d4832f24f"
     }
+  },
+  {
+    "query": "黄色肉芽肿性胆囊炎CT表现",
+    "expected_chunk_ids": [
+      "73ef1c2cada12df17710488ec3abffe1"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "右侧胸腔包裹性积液DR影像表现",
+    "expected_chunk_ids": [
+      "fd88891480abbf95b23c7f9c8d96daea"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肩关节MRI报告解读：肩袖损伤、肩峰撞击综合征及肩周炎",
+    "expected_chunk_ids": [
+      "981628ea2b87228813a6e96dab5a968e"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "右侧顶叶楔形低密度灶 大脑中动脉支配区",
+    "expected_chunk_ids": [
+      "71ccd3fd8587d7ad5e6af8cd86079b2d"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "鼻咽癌颅底骨质破坏颈部淋巴结转移MR表现",
+    "expected_chunk_ids": [
+      "23bda84d870c7d6463cef5fbae79d56d"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左肺上叶肺脓肿CT表现",
+    "expected_chunk_ids": [
+      "a46df647c7fe936e08195bd5e8e93ba4"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "骨盆CT显示退行性变、骨岛及附丽病是什么意思",
+    "expected_chunk_ids": [
+      "bce7c8c1abebfc19c6ecc009721418f7"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "冠状动脉CTA提示LAD和LCX中度狭窄CAD-RADS 3类怎么办",
+    "expected_chunk_ids": [
+      "def8237f5285b69b7729bbd1d888a675"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "右肺下叶纤维瘤DR影像学表现",
+    "expected_chunk_ids": [
+      "a576590b0e0322169da840d8f5205035"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "主动脉粥样硬化DR影像表现",
+    "expected_chunk_ids": [
+      "024fdb548c46104d36159743b4d47460"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
   }
 ]

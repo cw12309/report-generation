@@ -96,10 +96,13 @@ relevant = retriever.search_relevant("继续完善头颅报告", top_k_stm=3)
 - Agent 思考事件；
 - `knowledge_bases` 知识库状态和进度；
 - `knowledge_base_chunks` 切片原文，以与 Markdown、Milvus 共用的 32 位 MD5 `chunk_id` 为主键。
+- `evaluation_state` 评测任务状态、实时进度和最后一次完整结果 JSON。
 
 评测中心通过 `SessionStore.list_active_chunk_filter_options()` 计算知识库、检查类型及 Level 1～4 的父级约束去重选项；异步搜索框调用 `list_active_chunk_options()`，以参数化 `LIKE` 和六个精确字段组合检索，默认最多返回 20 条。两项操作都只访问 SQLite，不触发 Milvus。
 
 级联字段映射为：`kb_name → knowledge_bases.kb_name`、`exam_type → modality`、`level1～level4 → level_1～level_4`。所有筛选值使用 SQLite 占位符传入；仅固定字段表达式参与 SQL 组装。返回的 `content_preview` 默认截取压缩空白后的前 150 字。
+
+评测开始及每条 Query 完成后调用 `save_evaluation_runtime_state()` 更新现场；完成时由 `save_evaluation_result()` 原子保存 Hit@1/3/5、逐条明细、Bad Case 和运行配置。测试集发生新增、删除、清空或自动生成时，`invalidate_evaluation_result()` 会清除已经过期的指标。SQLite 连接使用显式提交/回滚并在每次操作后关闭，配合 WAL、30 秒 busy timeout 处理并发。
 
 SQLite 会话持久化用于恢复明确的会话内容，不会自动归纳或传播用户偏好。
 

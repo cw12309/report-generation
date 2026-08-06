@@ -1,4 +1,4 @@
-console.log("[APP] app.js v47 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v48 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -139,6 +139,8 @@ let chunkSearchRequestId = 0;
 let isChunkSearchOpen = false;
 let chunkFilterAbortController = null;
 let chunkFilterRequestId = 0;
+let evalStatusPollTimer = null;
+let evalStatusRequestId = 0;
 
 // API 基础地址
 const API_BASE = "/api";
@@ -319,7 +321,7 @@ sidebarBtns.forEach(btn => {
     } else if (page === "agent") {
       refreshKnowledgeBases();
     } else if (page === "eval") {
-      loadEvalDataset();
+      restoreEvaluationState();
     }
     if (page === "config") {
       loadConfig();
@@ -1027,11 +1029,12 @@ function scheduleEvalCancelledReset() {
 }
 
 async function cancelRetrievalEvaluation() {
-  if (!evalRunAbortController || isEvalCancelRequested) return;
+  if (isEvalCancelRequested) return;
   isEvalCancelRequested = true;
+  stopEvalStatusPolling();
   if (btnCancelEval) btnCancelEval.disabled = true;
 
-  evalRunAbortController.abort();
+  evalRunAbortController?.abort();
   showEvalCancelledState();
   scheduleEvalCancelledReset();
 
@@ -1254,8 +1257,94 @@ function renderEvalResults(result) {
   }).join("");
 }
 
+function stopEvalStatusPolling() {
+  window.clearTimeout(evalStatusPollTimer);
+  evalStatusPollTimer = null;
+  evalStatusRequestId += 1;
+}
+
+function scheduleEvalStatusPoll() {
+  window.clearTimeout(evalStatusPollTimer);
+  evalStatusPollTimer = window.setTimeout(() => {
+    restoreEvaluationState({ polling: true });
+  }, 1500);
+}
+
+async function restoreEvaluationState({ polling = false } = {}) {
+  const requestId = ++evalStatusRequestId;
+  try {
+    const response = await fetch(`${API_BASE}/eval/status?_t=${Date.now()}`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
+    if (requestId !== evalStatusRequestId) return;
+
+    if (payload.status === "running") {
+      const current = Number(payload.current || 0);
+      const total = Number(payload.total || 0);
+      const progress = Number(payload.progress || 0);
+      const query = String(payload.query || "");
+      const cancelling = Boolean(payload.cancel_requested);
+      setEvalLoading(true);
+      if (btnCancelEval) {
+        btnCancelEval.hidden = false;
+        btnCancelEval.disabled = cancelling;
+      }
+      setEvalRunProgress(
+        progress,
+        cancelling
+          ? `正在取消评测，等待当前 Query 完成 (${current}/${total || "-"})...`
+          : `正在评测 (${current}/${total || "-"})${query ? `：${query}` : "..."}`,
+      );
+      // A page restored without the original SSE connection follows the
+      // durable background worker through this lightweight status endpoint.
+      if (!evalRunAbortController) scheduleEvalStatusPoll();
+      return;
+    }
+
+    window.clearTimeout(evalStatusPollTimer);
+    evalStatusPollTimer = null;
+    setEvalLoading(false);
+    hideEvalRunProgress();
+    if (payload.status === "completed" && payload.result) {
+      renderEvalResults(payload.result);
+      const total = payload.result?.metrics?.total ?? 0;
+      const completedAt = payload.completed_at
+        ? `，保存于 ${payload.completed_at}`
+        : "";
+      setEvalStatusMessage(`已恢复最后一次评测：共 ${total} 条用例${completedAt}。`, "success");
+      return;
+    }
+
+    await loadEvalDataset();
+    if (payload.status === "failed" || payload.status === "interrupted") {
+      setEvalStatusMessage(
+        payload.message || "上一次评测未完整结束，请重新运行。",
+        "error",
+      );
+    } else if (payload.status === "cancelled") {
+      setEvalStatusMessage("上一次评测已取消，可重新开始。", "cancelled");
+    }
+  } catch (error) {
+    if (requestId !== evalStatusRequestId) return;
+    console.error("[Eval] 恢复评测现场失败", error);
+    if (polling) {
+      scheduleEvalStatusPoll();
+    } else {
+      await loadEvalDataset();
+      setEvalStatusMessage(`恢复评测现场失败：${error.message}`, "error");
+    }
+  }
+}
+
 async function runRetrievalEvaluation() {
   if (!btnRunEval || btnRunEval.disabled) return;
+  stopEvalStatusPolling();
   window.clearTimeout(evalCancelResetTimer);
   isEvalCancelRequested = false;
   evalRunAbortController = new AbortController();
@@ -1310,6 +1399,7 @@ async function runRetrievalEvaluation() {
       evalProgressHideTimer = window.setTimeout(resolve, 450);
     });
     renderEvalResults(streamState.done);
+    stopEvalStatusPolling();
     hideEvalRunProgress();
     setEvalStatusMessage(
       `评测完成：共运行 ${streamState.done?.metrics?.total ?? 0} 条用例。`,
@@ -1335,6 +1425,10 @@ async function runRetrievalEvaluation() {
 if (btnRunEval) {
   btnRunEval.addEventListener("click", runRetrievalEvaluation);
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  restoreEvaluationState();
+});
 
 // ==================== 知识库管理 ====================
 

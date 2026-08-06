@@ -43,6 +43,7 @@ from eval.run_retrieval_eval import (
     add_retrieval_case,
     clear_retrieval_dataset,
     delete_retrieval_case,
+    get_evaluation_status,
     load_dataset,
     request_evaluation_cancel,
     stream_run_evaluation,
@@ -86,6 +87,34 @@ def web_main(port=8000):
     store = SessionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "sessions.db"))
     evaluation_lock = asyncio.Lock()
     auto_generation_lock = asyncio.Lock()
+    evaluation_tasks: set[asyncio.Task] = set()
+
+    async def _persist_evaluation_event(event: dict) -> None:
+        event_type = str(event.get("type") or "")
+        if event_type == "done":
+            result = {
+                key: event.get(key)
+                for key in ("metrics", "details", "bad_cases", "config")
+            }
+            await asyncio.to_thread(store.save_evaluation_result, result)
+            return
+        status_map = {
+            "start": "running",
+            "progress": "running",
+            "cancelled": "cancelled",
+            "error": "failed",
+        }
+        status = status_map.get(event_type)
+        if status:
+            await asyncio.to_thread(
+                store.save_evaluation_runtime_state,
+                status=status,
+                current=int(event.get("current", 0) or 0),
+                total=int(event.get("total", 0) or 0),
+                progress=int(event.get("progress", 0) or 0),
+                current_query=str(event.get("query") or ""),
+                message=str(event.get("message") or ""),
+            )
 
     @app.on_event("startup")
     async def validate_milvus_schema_on_startup():
@@ -113,18 +142,27 @@ def web_main(port=8000):
 
     @app.post("/api/eval/run", summary="运行检索评测")
     async def run_retrieval_evaluation():
-        """Stream per-query Retrieval Eval progress without blocking FastAPI."""
+        """Start a durable background evaluation and stream its live events."""
+        if auto_generation_lock.locked():
+            raise HTTPException(status_code=409, detail="测试用例正在自动生成，请完成后再评测")
         if evaluation_lock.locked():
             raise HTTPException(status_code=409, detail="评测任务正在运行，请稍候")
 
         await evaluation_lock.acquire()
+        event_queue: asyncio.Queue = asyncio.Queue()
 
-        async def event_stream():
+        async def evaluation_worker():
             try:
                 async for event in stream_run_evaluation():
-                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    await _persist_evaluation_event(event)
+                    await event_queue.put(event)
             except asyncio.CancelledError:
-                logger.info("Retrieval Eval 流式连接已取消")
+                cancelled_event = {
+                    "type": "cancelled",
+                    "message": "评测任务已中断",
+                }
+                await _persist_evaluation_event(cancelled_event)
+                await event_queue.put(cancelled_event)
                 raise
             except Exception as exc:
                 logger.exception("Retrieval Eval 执行失败")
@@ -132,9 +170,29 @@ def web_main(port=8000):
                     "type": "error",
                     "message": f"评测执行失败: {exc}",
                 }
-                yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+                await _persist_evaluation_event(error_event)
+                await event_queue.put(error_event)
             finally:
-                evaluation_lock.release()
+                await event_queue.put(None)
+                if evaluation_lock.locked():
+                    evaluation_lock.release()
+
+        worker_task = asyncio.create_task(evaluation_worker())
+        evaluation_tasks.add(worker_task)
+        worker_task.add_done_callback(evaluation_tasks.discard)
+
+        async def event_stream():
+            try:
+                while True:
+                    event = await event_queue.get()
+                    if event is None:
+                        break
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                # The evaluation worker is intentionally independent from this
+                # browser connection, so refresh/navigation does not stop it.
+                logger.info("Retrieval Eval SSE 客户端已断开，后台任务继续执行")
+                raise
 
         return StreamingResponse(
             event_stream(),
@@ -145,6 +203,34 @@ def web_main(port=8000):
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.get("/api/eval/status", summary="恢复最后一次评测现场")
+    async def get_retrieval_evaluation_status():
+        runtime = get_evaluation_status()
+        if runtime.get("running") or evaluation_lock.locked():
+            return {**runtime, "status": "running"}
+
+        persisted = await asyncio.to_thread(store.get_evaluation_state)
+        if persisted and persisted.get("result"):
+            return {
+                "status": "completed",
+                "result": persisted["result"],
+                "completed_at": persisted.get("completed_at"),
+                "last_task_status": persisted.get("status"),
+            }
+        if persisted:
+            status = str(persisted.get("status") or "idle")
+            if status == "running":
+                status = "interrupted"
+            return {
+                "status": status,
+                "current": persisted.get("current", 0),
+                "total": persisted.get("total", 0),
+                "progress": persisted.get("progress", 0),
+                "query": persisted.get("current_query", ""),
+                "message": persisted.get("message", ""),
+            }
+        return {"status": "idle"}
 
     @app.post("/api/eval/cancel", summary="取消正在运行的检索评测")
     async def cancel_retrieval_evaluation():
@@ -168,6 +254,7 @@ def web_main(port=8000):
                 request.query,
                 request.expected_chunk_ids,
             )
+            await asyncio.to_thread(store.invalidate_evaluation_result)
             logger.info(
                 "新增 Retrieval Eval 用例成功: query=%s, total=%s",
                 request.query.strip(),
@@ -212,6 +299,7 @@ def web_main(port=8000):
         _ensure_eval_dataset_mutable()
         try:
             result = await asyncio.to_thread(clear_retrieval_dataset)
+            await asyncio.to_thread(store.invalidate_evaluation_result)
             return {
                 "status": "success",
                 "message": "测试集已清空",
@@ -229,6 +317,7 @@ def web_main(port=8000):
         _ensure_eval_dataset_mutable()
         try:
             result = await asyncio.to_thread(delete_retrieval_case, chunk_id)
+            await asyncio.to_thread(store.invalidate_evaluation_result)
             return {
                 "status": "success",
                 "message": "测试用例已删除",
@@ -248,17 +337,23 @@ def web_main(port=8000):
     @app.post("/api/eval/auto_generate", summary="流式自动生成检索评测用例")
     async def auto_generate_retrieval_cases(request: EvalAutoGenerateRequest):
         """Stream persisted LLM-generated cases to the browser as SSE events."""
+        if evaluation_lock.locked():
+            raise HTTPException(status_code=409, detail="评测任务正在运行，请完成后再生成用例")
         if auto_generation_lock.locked():
             raise HTTPException(status_code=409, detail="已有自动生成任务正在运行，请稍候")
 
         await auto_generation_lock.acquire()
 
         async def event_stream():
+            dataset_invalidated = False
             try:
                 async for event in stream_generate_cases(
                     count=request.count,
                     min_length=request.min_length,
                 ):
+                    if event.get("type") == "progress" and not dataset_invalidated:
+                        await asyncio.to_thread(store.invalidate_evaluation_result)
+                        dataset_invalidated = True
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except asyncio.CancelledError:
                 logger.info("Retrieval Eval 自动生成连接已取消")

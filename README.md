@@ -13,6 +13,7 @@
 - 流式对话：FastAPI SSE 推送状态、召回、Rerank、Token、正式报告和完成事件。
 - 来源溯源：正式 AI 气泡底部展示可折叠的参考切片。
 - 独立评测中心：支持 Hit@1/3/5、逐 Query SSE 进度、协作式取消、人工/LLM 自动生成用例、测试集原子清空与单删；人工标注可通过六级级联筛选和异步文本搜索定位 SQLite active 切片。
+- 评测现场恢复：后台任务与浏览器 SSE 解耦，SQLite 保存最后一次完整指标、明细和 Bad Case；刷新或重新进入页面可恢复实时进度或最终结果。
 - 当前会话记忆：保留 STM 和 EntityTracker，不学习、不注入跨会话用户偏好。
 - 会话与选择持久化：SQLite 保存服务端会话，浏览器 LocalStorage 保存聊天 UI 和知识库勾选状态。
 
@@ -163,6 +164,7 @@ python python_start.py
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体和对应本地目录 |
 | `POST` | `/api/chat` | SSE 流式对话，必须携带 `selected_kbs` |
 | `POST` | `/api/eval/run` | SSE 流式运行 Retrieval Eval，逐条返回进度并在完成事件中返回指标 |
+| `GET` | `/api/eval/status` | 查询运行中进度，或恢复 SQLite 中最后一次完整评测结果 |
 | `POST` | `/api/eval/cancel` | 协作式取消当前流式评测，当前 Query 完成后停止 |
 | `POST` | `/api/eval/add_case` | 人工追加检索用例，Chunk ID 支持数组或逗号分隔字符串 |
 | `POST` | `/api/eval/auto_generate` | SSE 流式调用 LLM 自动生成评测用例并实时返回进度 |

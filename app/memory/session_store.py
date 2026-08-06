@@ -17,7 +17,9 @@ import logging
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
+from collections.abc import Iterator
 from typing import Any, Optional
 
 from data_pipeline.chunk_id import generate_chunk_id
@@ -36,13 +38,21 @@ class SessionStore:
 
     # ── 数据库连接管理 ──────────────────────────────────────
 
-    def _get_conn(self) -> sqlite3.Connection:
+    @contextmanager
+    def _get_conn(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self._db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     # ── 建表 ────────────────────────────────────────────────
 
@@ -127,6 +137,20 @@ class SessionStore:
 
                 CREATE INDEX IF NOT EXISTS idx_kb_chunks_kb
                     ON knowledge_base_chunks(kb_id, chunk_index);
+
+                CREATE TABLE IF NOT EXISTS evaluation_state (
+                    eval_key       TEXT PRIMARY KEY,
+                    status         TEXT NOT NULL DEFAULT 'idle',
+                    current        INTEGER NOT NULL DEFAULT 0,
+                    total          INTEGER NOT NULL DEFAULT 0,
+                    progress       INTEGER NOT NULL DEFAULT 0,
+                    current_query  TEXT NOT NULL DEFAULT '',
+                    message        TEXT NOT NULL DEFAULT '',
+                    result_json    TEXT NOT NULL DEFAULT '{}',
+                    started_at     DATETIME,
+                    completed_at   DATETIME,
+                    updated_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
             """)
 
         # 迁移：为已有表添加新字段（如果不存在）
@@ -156,6 +180,123 @@ class SessionStore:
                 logger.info("已迁移 knowledge_bases 表：添加 progress 字段")
             except sqlite3.OperationalError:
                 pass
+
+    # ── 评测现场 ────────────────────────────────────────────
+
+    def save_evaluation_runtime_state(
+        self,
+        *,
+        status: str,
+        current: int = 0,
+        total: int = 0,
+        progress: int = 0,
+        current_query: str = "",
+        message: str = "",
+        eval_key: str = "retrieval",
+    ) -> None:
+        """Persist the latest task progress without overwriting the last result."""
+        safe_progress = max(0, min(100, int(progress)))
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO evaluation_state (
+                    eval_key, status, current, total, progress,
+                    current_query, message, started_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(eval_key) DO UPDATE SET
+                    status=excluded.status,
+                    current=excluded.current,
+                    total=excluded.total,
+                    progress=excluded.progress,
+                    current_query=excluded.current_query,
+                    message=excluded.message,
+                    started_at=CASE
+                        WHEN excluded.status = 'running' AND evaluation_state.status != 'running'
+                        THEN CURRENT_TIMESTAMP
+                        ELSE evaluation_state.started_at
+                    END,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    eval_key,
+                    str(status or "idle"),
+                    max(0, int(current)),
+                    max(0, int(total)),
+                    safe_progress,
+                    str(current_query or ""),
+                    str(message or ""),
+                ),
+            )
+
+    def save_evaluation_result(
+        self,
+        result: dict,
+        *,
+        eval_key: str = "retrieval",
+    ) -> None:
+        """Atomically persist the complete latest evaluation result."""
+        result_json = json.dumps(result or {}, ensure_ascii=False)
+        total = int((result or {}).get("metrics", {}).get("total", 0) or 0)
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO evaluation_state (
+                    eval_key, status, current, total, progress, message,
+                    result_json, started_at, completed_at, updated_at
+                ) VALUES (?, 'completed', ?, ?, 100, ?, ?,
+                          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(eval_key) DO UPDATE SET
+                    status='completed',
+                    current=excluded.current,
+                    total=excluded.total,
+                    progress=100,
+                    current_query='',
+                    message=excluded.message,
+                    result_json=excluded.result_json,
+                    completed_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (eval_key, total, total, "评测完成", result_json),
+            )
+
+    def get_evaluation_state(self, eval_key: str = "retrieval") -> Optional[dict]:
+        """Load the persisted task state and deserialize its complete result."""
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM evaluation_state WHERE eval_key = ?",
+                (eval_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        state = dict(row)
+        try:
+            result = json.loads(state.pop("result_json") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            result = {}
+        state["result"] = result if isinstance(result, dict) else {}
+        return state
+
+    def invalidate_evaluation_result(self, eval_key: str = "retrieval") -> None:
+        """Clear stale metrics after the underlying test dataset changes."""
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO evaluation_state (
+                    eval_key, status, result_json, message, updated_at
+                ) VALUES (?, 'idle', '{}', '测试集已更新，等待重新评测', CURRENT_TIMESTAMP)
+                ON CONFLICT(eval_key) DO UPDATE SET
+                    status='idle',
+                    current=0,
+                    total=0,
+                    progress=0,
+                    current_query='',
+                    message='测试集已更新，等待重新评测',
+                    result_json='{}',
+                    completed_at=NULL,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (eval_key,),
+            )
 
     # ── 会话元数据 ──────────────────────────────────────────
 

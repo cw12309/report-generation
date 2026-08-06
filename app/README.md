@@ -34,6 +34,7 @@ Milvus Collection                  medical_reports（多个逻辑知识库，共
 - 当前会话记忆：只保留 STM 和 EntityTracker，不学习或注入跨会话用户偏好。
 - 流式响应：聊天接口使用 SSE 推送思考过程、召回、Rerank、Token 和最终报告；前端在正式回答下附加参考切片。
 - 检索评测：`app/eval/` 读取 SQLite Chunk 和独立 JSON 测试集，支持 SSE 评测/取消、人工标注、LLM 自动生成及原子测试集 CRUD。
+- 评测持久化：`evaluation_state` 保存运行现场与最后一次完整结果；SSE 客户端断开不再终止后台评测。
 
 ## 启动
 
@@ -132,6 +133,7 @@ SQLite 使用“删除该 `kb_id` 的旧切片 + `executemany` 批量插入”�
 | `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体及本地模板/切片目录 |
 | `POST` | `/api/chat` | 聊天；请求体需包含至少一个 `selected_kbs` |
 | `POST` | `/api/eval/run` | SSE 流式执行 Retrieval Eval；逐条发送 Query 进度，重复运行返回 409 |
+| `GET` | `/api/eval/status` | 返回后台实时进度，或最后一次已持久化的完整结果 |
 | `POST` | `/api/eval/cancel` | 设置取消标志，当前 Query 安全完成后停止并重置评测状态 |
 | `POST` | `/api/eval/add_case` | 校验并追加人工 Retrieval Eval 用例，返回最新用例总数 |
 | `POST` | `/api/eval/auto_generate` | 从 active 知识库抽样，流式生成并逐条保存自动评测用例 |

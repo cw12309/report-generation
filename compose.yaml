@@ -59,7 +59,7 @@ services:
       - --port
       - "8000"
     ports:
-      - "8000:8000"
+      - "7860:8000"
     environment:
       PYTHONUNBUFFERED: "1"
       WORKER_BASE_URL: http://worker:8001

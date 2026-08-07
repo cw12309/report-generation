@@ -1,0 +1,74 @@
+x-common-config: &common-config
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+      DEBIAN_MIRROR: ${DEBIAN_MIRROR:-deb.debian.org}
+  image: report-generation:latest
+  env_file:
+    - .env
+  environment:
+    PYTHONUNBUFFERED: "1"
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  worker:
+    <<: *common-config
+    container_name: report-generation-worker
+    command:
+      - uvicorn
+      - app.chat.server:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8001"
+    expose:
+      - "8001"
+    volumes:
+      # 向量数据库（Milvus Lite）
+      - ./app/data_pipeline/milvus_lite.db:/app/app/data_pipeline/milvus_lite.db
+      # Excel 切片文件
+      - ./app/data_pipeline/xlsx_slices:/app/app/data_pipeline/xlsx_slices
+      # 报告模板
+      - ./app/report_template:/app/app/report_template
+      # 会话持久化
+      - ./data:/app/data
+      # 长期记忆
+      - ./app/memory/data:/app/app/memory/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+
+  gateway:
+    <<: *common-config
+    container_name: report-generation-gateway
+    command:
+      - uvicorn
+      - app.gateway:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+    ports:
+      - "8000:8000"
+    environment:
+      PYTHONUNBUFFERED: "1"
+      WORKER_BASE_URL: http://worker:8001
+    depends_on:
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3

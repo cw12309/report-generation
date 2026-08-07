@@ -16,14 +16,25 @@
 - 评测现场恢复：后台任务与浏览器 SSE 解耦，SQLite 保存最后一次完整指标、明细和 Bad Case；刷新或重新进入页面可恢复实时进度或最终结果。
 - 当前会话记忆：保留 STM 和 EntityTracker，不学习、不注入跨会话用户偏好。
 - 会话与选择持久化：SQLite 保存服务端会话，浏览器 LocalStorage 保存聊天 UI 和知识库勾选状态。
+- 网关与推理解耦：Gateway 只负责鉴权和异步流式代理，Worker 独占模型、Milvus、会话和知识库资源；Docker 部署时两个进程位于独立容器。
 
 ## 架构
 
 ```text
 浏览器（原生 HTML / CSS / JavaScript）
-                 │ HTTP / SSE
+外部 API 调用方
+                 │ HTTP / SSE，宿主机仅开放 8000
                  ▼
-FastAPI：app/chat/server.py
+API Gateway：app/gateway.py
+  ├─ POST /api/v1/rag/search       Bearer Token
+  ├─ POST /api/v1/report/generate  Bearer Token
+  └─ 旧版 WebUI 兼容代理（不进入 Swagger）
+                 │ Docker 内部网络：http://worker:8001
+                 ▼
+Worker：app/chat/server.py
+  ├─ 原生静态 Web UI
+  ├─ 31 个既有业务接口
+  ├─ /internal/rag/search 与 /internal/report/generate
   ├─ Agent 编排：app/chat/pipeline.py
   ├─ Tool Calling：app/tools/
   ├─ RAG：app/rag/
@@ -67,12 +78,12 @@ pip install pytest
 
 ### 2. 配置服务
 
-主要配置位于项目根目录 `config.yml`：
+非敏感配置位于项目根目录 `config.yml`：
 
 ```yaml
 milvus:
   uri: http://<milvus-host>:19530
-  token: ""
+  token: ${MILVUS_TOKEN}
 
 retrieval:
   collection_name: medical_reports
@@ -80,15 +91,25 @@ retrieval:
   rerank_top_k: 10
 ```
 
-LLM、Embedding、Rerank 可以在 `config.yml` 中配置，也可以使用环境变量覆盖：
+模型地址、模型名和检索参数可以在 `config.yml` 中配置。API Key 和 Milvus Token 只从 `.env` 或进程环境变量读取，Python 不会回退读取 YAML 中的密钥字段。先创建本地环境文件：
+
+```powershell
+Copy-Item .env.example .env
+```
+
+至少检查以下变量：
 
 | 环境变量 | 作用 |
 | --- | --- |
 | `CHAT_URL` / `CHAT_MODEL` | 对话模型地址与模型名 |
+| `CHAT_API_KEY` | 对话模型密钥，只从环境读取 |
 | `EMBED_URL` / `EMBED_MODEL` | Embedding 地址与模型名 |
+| `EMBED_API_KEY` | Embedding 密钥，只从环境读取 |
 | `RERANK_URL` / `RERANK_MODEL` | Rerank 地址与模型名 |
-| `MILVUS_URI` | Milvus 地址，优先于 `config.yml` |
-| `SILICONFLOW_API_KEY` 或 `RERANK_API_KEY` | Rerank 密钥 |
+| `SILICONFLOW_API_KEY` 或 `RERANK_API_KEY` | Rerank 密钥，只从环境读取 |
+| `MILVUS_URI` / `MILVUS_TOKEN` | Milvus 地址与 Token |
+| `API_SECRET_KEY` | Gateway Bearer Token，生产环境必须替换默认值 |
+| `WORKER_BASE_URL` | Gateway 的 Worker 地址；Compose 自动设置为 `http://worker:8001` |
 
 不要把真实 API Key 提交到版本库。
 
@@ -120,14 +141,19 @@ python app/data_pipeline/rebuild_all_knowledge_bases.py `
 
 该命令具有破坏性确认保护；只有全部本地 Excel 解析成功后才会删除旧 Collection。
 
-### 4. 启动 FastAPI
+### 4. 本地开发启动
+
+不使用 Docker 时，可以继续使用本地调试入口：
 
 ```powershell
 python python_start.py
 ```
 
 - Web 页面：<http://localhost:8000>
-- API 文档：<http://localhost:8000/docs>
+- Gateway API 文档：<http://localhost:8000/docs>
+- 本地 Worker：仅监听 `127.0.0.1:8001`
+
+`python_start.py` 只用于本地开发：它启动本机 Worker、轮询 `/health`，再启动 Gateway。Docker 部署不会执行该脚本，两个服务由 Compose 分别管理。
 
 ## 知识库使用流程
 
@@ -152,6 +178,15 @@ python python_start.py
 上传与构建是两个独立动作。上传完成不会自动生成 Markdown，也不会写入 Milvus。
 
 ## 常用 API
+
+Gateway 对外公开并显示在 `/docs` 中的接口只有：
+
+| 方法 | 路径 | 鉴权 | 说明 |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/rag/search` | `Authorization: Bearer <API_SECRET_KEY>` | 无状态 RAG 检索 |
+| `POST` | `/api/v1/report/generate` | `Authorization: Bearer <API_SECRET_KEY>` | 无状态检索与报告生成 |
+
+以下既有接口运行在 Worker 中，主要供原生 Web UI 和内网管理使用；它们不会出现在 Gateway Swagger 中：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -191,14 +226,55 @@ python app/scripts/cleanup_disk.py
 
 ## Docker
 
-项目保留 `Dockerfile`、`docker-compose.yml` 和 `start.sh`。默认端口映射为宿主机 `7860` 到容器 `8000`：
+Docker 使用同一个多阶段镜像启动两个独立容器：
+
+| 服务 | 容器端口 | 宿主机端口 | 职责 |
+| --- | --- | --- | --- |
+| `worker` | `8001` | 不发布 | 模型推理、向量检索、会话、知识库和静态 Web UI |
+| `gateway` | `8000` | `8000` | Bearer 鉴权、异步代理和统一入口 |
+
+Worker 健康检查通过后，Compose 才会启动 Gateway：
+
+```bash
+docker compose build
+docker compose up -d
+docker compose ps
+docker compose logs -f worker gateway
+```
+
+访问地址：
+
+- Web 与 Gateway：<http://localhost:8000>
+- Gateway Swagger：<http://localhost:8000/docs>
+
+国内网络可在构建时覆盖镜像源：
+
+```bash
+PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple \
+DEBIAN_MIRROR=mirrors.aliyun.com \
+docker compose build
+```
+
+也可以继续使用封装脚本：
 
 ```bash
 chmod +x start.sh
 ./start.sh start
 ```
 
-访问 <http://localhost:7860>。当前 Compose 中仍保留部分历史本地数据卷配置；若生产环境使用远程 Milvus并要求上传文件跨容器重建后仍保留，应确认 `report_template`、`output_markdown` 和 `data/` 已映射到持久卷。
+当前 `compose.yaml` 为 Worker 保留原有五个挂载：Milvus Lite、Excel 切片、报告模板、会话数据库和长期记忆。Gateway 不挂载业务数据，只通过 Compose 内部网络访问 Worker。
+
+停止或重建：
+
+```bash
+docker compose down
+docker compose build --no-cache
+docker compose up -d
+```
+
+旧文件 `docker-compose.yml` 已废弃并删除。若升级前的单容器 `report-generation` 仍存在，应先确认数据卷已经备份，再手动停止并删除旧容器。
+
+> 安全提示：不要发布 Worker 的 `8001` 端口。`API_SECRET_KEY` 必须使用高强度随机值；原生 Web UI 的兼容代理默认只允许回环、私网或链路本地来源。公网 Web UI 需要在反向代理层增加登录或其他访问控制。
 
 ## 验证
 

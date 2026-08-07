@@ -1,6 +1,7 @@
 import os
 import yaml
 import logging
+from dotenv import load_dotenv
 from openai import AsyncOpenAI, OpenAI
 from langsmith import wrappers
 
@@ -8,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _config_path = os.path.join(_project_root, "config.yml")
+load_dotenv(os.path.join(_project_root, ".env"))
 
 _config = {}
 
@@ -109,7 +111,7 @@ def get_llm_model() -> str:
     return os.environ.get("CHAT_MODEL", _get_active("llms").get("model", ""))
 
 def get_llm_api_key() -> str:
-    return os.environ.get("CHAT_API_KEY", _get_active("llms").get("api_key", ""))
+    return os.environ.get("CHAT_API_KEY", "")
 
 def get_llm_max_tokens() -> int:
     return _get_active("llms").get("max_tokens", 2048)
@@ -124,7 +126,7 @@ def get_rewrite_model() -> str:
     return os.environ.get("REWRITE_MODEL", _get_active_rewrite().get("model", get_llm_model()))
 
 def get_rewrite_api_key() -> str:
-    return os.environ.get("REWRITE_API_KEY", _get_active_rewrite().get("api_key", get_llm_api_key()))
+    return os.environ.get("REWRITE_API_KEY", "") or get_llm_api_key()
 
 def get_embed_base_url() -> str:
     return os.environ.get("EMBED_URL", _get_active("embeddings").get("base_url", ""))
@@ -133,7 +135,7 @@ def get_embed_model() -> str:
     return os.environ.get("EMBED_MODEL", _get_active("embeddings").get("model", ""))
 
 def get_embed_api_key() -> str:
-    return os.environ.get("EMBED_API_KEY", _get_active("embeddings").get("api_key", ""))
+    return os.environ.get("EMBED_API_KEY", "")
 
 def get_embed_dimension() -> int:
     return _get_active("embeddings").get("dimension", 1024)
@@ -145,7 +147,7 @@ def get_rerank_model() -> str:
     return os.environ.get("RERANK_MODEL", _get_active("reranks").get("model", ""))
 
 def get_rerank_api_key() -> str:
-    return os.environ.get("SILICONFLOW_API_KEY", "") or os.environ.get("RERANK_API_KEY", "") or _get_active("reranks").get("api_key", "")
+    return os.environ.get("SILICONFLOW_API_KEY", "") or os.environ.get("RERANK_API_KEY", "")
 
 def get_db_path() -> str:
     milvus_uri = os.environ.get("MILVUS_URI", "") or _resolve("milvus.uri", "")
@@ -157,7 +159,7 @@ def get_db_path() -> str:
     return path
 
 def get_milvus_token() -> str:
-    return os.environ.get("MILVUS_TOKEN", "") or _resolve("milvus.token", "") or ""
+    return os.environ.get("MILVUS_TOKEN", "")
 
 def get_collection_name() -> str:
     return _resolve("retrieval.collection_name", "report_slices")

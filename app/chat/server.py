@@ -9,12 +9,15 @@ import shutil
 import sys
 import time
 import uuid
-from typing import List, Optional
+from typing import Any, List, Optional
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+APP_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 
 import yaml
 import requests
@@ -23,6 +26,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File, Q
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pymilvus import MilvusClient
+from pydantic import BaseModel, Field
 
 from memory.entity_tracker import EntityTracker
 from memory.short_term import ShortTermMemory
@@ -55,7 +59,8 @@ from .schemas import (
     EvalCaseRequest, EvalAutoGenerateRequest,
 )
 from .llm_client import chat_stream
-from .pipeline import run_pipeline
+from .pipeline import run_pipeline, search_reports
+from tools.rag_tool import create_rag_search_handler
 
 # 全局歧义缓存，跨请求存活（按 session_id 索引）
 _ambiguity_cache = {}
@@ -69,12 +74,31 @@ CHAT_MODEL = get_llm_model()
 EMBED_MODEL = get_embed_model()
 
 
+class RAGSearchRequest(BaseModel):
+    """Stateless retrieval request used by the API Gateway."""
+
+    query: str = Field(..., min_length=1, max_length=4000)
+    top_k: Optional[int] = Field(default=None, ge=1, le=100)
+    rerank_top_k: Optional[int] = Field(default=None, ge=1, le=100)
+    selected_kbs: List[str] = Field(default_factory=list)
+
+
+class ReportGenerateRequest(RAGSearchRequest):
+    """Stateless retrieval-and-generation request used by the API Gateway."""
+
+    modality: str = Field(default="", max_length=100)
+    body_part: str = Field(default="", max_length=200)
+    clinical_history: str = Field(default="", max_length=4000)
+    diagnosis: List[str] = Field(default_factory=list)
+    selected_diagnosis: Optional[str] = Field(default=None, max_length=500)
+
+
 def _new_milvus_client():
     token = get_milvus_token()
     return MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
 
 
-def web_main(port=8000):
+def create_app() -> FastAPI:
     # 确保日志配置正确
     logging.basicConfig(
         level=logging.INFO,
@@ -83,7 +107,7 @@ def web_main(port=8000):
         force=True,
     )
 
-    app = FastAPI(title="影像报告生成Agent v2")
+    app = FastAPI(title="影像报告生成 Agent Worker")
     store = SessionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "sessions.db"))
     evaluation_lock = asyncio.Lock()
     auto_generation_lock = asyncio.Lock()
@@ -139,6 +163,123 @@ def web_main(port=8000):
         if os.path.exists(index_path):
             return FileResponse(index_path)
         return {"message": "影像报告生成Agent v2", "docs": "/docs"}
+
+    @app.get("/health", tags=["internal"])
+    async def health():
+        """Only becomes reachable after the Worker startup hook has completed."""
+        return {"status": "ok"}
+
+    def _resolve_knowledge_bases(selected_kbs: List[str]):
+        requested = list(dict.fromkeys(selected_kbs))
+        active = {
+            kb["kb_id"]: kb
+            for kb in store.list_knowledge_bases(status="active")
+        }
+        if not requested:
+            return None, list(active.values())
+
+        invalid = [kb_id for kb_id in requested if kb_id not in active]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"知识库不存在或不可用: {', '.join(invalid)}",
+            )
+        return requested, [active[kb_id] for kb_id in requested]
+
+    async def _stateless_search(request: RAGSearchRequest):
+        query = request.query.strip()
+        if not query:
+            raise HTTPException(status_code=422, detail="query 不能为空")
+        selected_kbs, knowledge_bases = _resolve_knowledge_bases(request.selected_kbs)
+        if (
+            request.top_k is not None
+            and request.rerank_top_k is not None
+            and request.rerank_top_k > request.top_k
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="rerank_top_k 不能大于 top_k",
+            )
+
+        kwargs: dict[str, Any] = {
+            "selected_kbs": selected_kbs,
+            "knowledge_bases": knowledge_bases,
+        }
+        if request.top_k is not None:
+            kwargs["top_k"] = request.top_k
+        if request.rerank_top_k is not None:
+            kwargs["rerank_top_k"] = request.rerank_top_k
+
+        def run_search():
+            client = _new_milvus_client()
+            try:
+                return search_reports(query, client=client, **kwargs)
+            finally:
+                client.close()
+
+        return await asyncio.to_thread(run_search)
+
+    @app.post("/internal/rag/search", tags=["internal"])
+    async def internal_rag_search(request: RAGSearchRequest):
+        """Run retrieval without creating or mutating a chat session."""
+        search_result, results = await _stateless_search(request)
+        return {
+            "query": request.query,
+            "content": search_result,
+            "results": results,
+        }
+
+    @app.post("/internal/report/generate", tags=["internal"])
+    async def internal_report_generate(request: ReportGenerateRequest):
+        """Retrieve references and generate a report without session state."""
+        search_result, reranked_entities = await _stateless_search(request)
+
+        entity_tracker = EntityTracker(llm_chat_fn=None)
+        entity_tracker.slots.update({
+            "modality": request.modality or None,
+            "body_part": [request.body_part] if request.body_part else [],
+            "clinical_history": request.clinical_history,
+            "diagnosis": request.diagnosis,
+            "intent": "new_session",
+        })
+
+        # Reuse the existing report-generation tool. Retrieval is precomputed
+        # above in a worker thread so synchronous embedding/vector calls do not
+        # block FastAPI's event loop.
+        def use_precomputed_search(_query, _emit=None):
+            return search_result, reranked_entities
+
+        async def chat_fn(messages, max_tokens=2048, temperature=0.3,
+                          _emit=None, debug=False, caller="internal_report_generate"):
+            return await chat_stream(
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                _emit=_emit,
+                debug=debug,
+                caller=caller,
+            )
+
+        handler = create_rag_search_handler(
+            chat_fn=chat_fn,
+            entity_tracker=entity_tracker,
+            get_embedding_fn=lambda _text: None,
+            search_reports_fn=use_precomputed_search,
+            last_report=[""],
+            selected_diagnosis=request.selected_diagnosis,
+        )
+        raw_result = await handler({
+            "query": request.query.strip(),
+            "modality": request.modality,
+            "body_part": request.body_part,
+        })
+        try:
+            payload = json.loads(raw_result)
+        except json.JSONDecodeError:
+            payload = {"content": raw_result}
+        if isinstance(payload, dict):
+            payload.pop("_is_final", None)
+        return payload
 
     @app.post("/api/eval/run", summary="运行检索评测")
     async def run_retrieval_evaluation():
@@ -946,8 +1087,7 @@ def web_main(port=8000):
         with open(config_path, "r", encoding="utf-8") as f:
             config_data = yaml.safe_load(f) or {}
 
-        # 如果 config.yml 中 api_key 为空但 .env 中有对应的 key，
-        # 则返回掩码占位符，让前端知道已配置了 key
+        # 密钥只能来自环境变量；绝不把 YAML 占位符或真实密钥返回给前端。
         for model_list_key, env_key_func in [
             ("llms", get_llm_api_key),
             ("embeddings", get_embed_api_key),
@@ -956,8 +1096,13 @@ def web_main(port=8000):
             models = config_data.get(model_list_key)
             if isinstance(models, list):
                 for m in models:
-                    if not m.get("api_key") and env_key_func():
-                        m["api_key"] = "••••••••••••••••••••••••"
+                    m["api_key"] = (
+                        "••••••••••••••••••••••••" if env_key_func() else ""
+                    )
+        if isinstance(config_data.get("milvus"), dict):
+            config_data["milvus"]["token"] = (
+                "••••••••••••••••••••••••" if get_milvus_token() else ""
+            )
 
         return {"config": config_data, "path": config_path}
 
@@ -967,13 +1112,19 @@ def web_main(port=8000):
         if config_data is None:
             return {"error": "缺少 config 参数"}
 
-        # 如果 api_key 是前端掩码占位符，说明实际 key 在 .env 中，清空避免写入明文
-        for model_list_key in ["llms", "embeddings", "reranks"]:
+        # 配置页只保存非敏感配置；所有密钥位置始终写回环境变量占位符。
+        api_key_placeholders = {
+            "llms": "${CHAT_API_KEY}",
+            "embeddings": "${EMBED_API_KEY}",
+            "reranks": "${SILICONFLOW_API_KEY}",
+        }
+        for model_list_key, placeholder in api_key_placeholders.items():
             models = config_data.get(model_list_key)
             if isinstance(models, list):
                 for m in models:
-                    if m.get("api_key") == "••••••••••••••••••••••••":
-                        m["api_key"] = ""
+                    m["api_key"] = placeholder
+        if isinstance(config_data.get("milvus"), dict):
+            config_data["milvus"]["token"] = "${MILVUS_TOKEN}"
 
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.yml")
         with open(config_path, "w", encoding="utf-8") as f:
@@ -1069,15 +1220,19 @@ def web_main(port=8000):
                     return {"success": False, "message": error_msg[:200]}
                 return {"success": False, "message": error_msg[:200]}
 
-    logger.info(f"Web 服务启动: http://localhost:{port}, 模型={CHAT_MODEL}, Embedding={EMBED_MODEL}")
-    print(f"\n{'='*60}")
-    print(f"  影像报告生成Agent v2 Web 服务")
-    print(f"  {'='*60}")
-    print(f"  地址: http://localhost:{port}")
-    print(f"  API 文档: http://localhost:{port}/docs")
-    print(f"  生成模型: {CHAT_MODEL}")
-    print(f"  Embedding: {EMBED_MODEL}")
-    print(f"  {'='*60}\n")
+    return app
 
+
+app = create_app()
+
+
+def web_main(port=8001):
+    """Backward-compatible Worker launcher; never expose it beyond loopback."""
+    logger.info(
+        "Worker 启动: http://127.0.0.1:%s, 模型=%s, Embedding=%s",
+        port,
+        CHAT_MODEL,
+        EMBED_MODEL,
+    )
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="127.0.0.1", port=port)

@@ -2,28 +2,28 @@ llms:
 - name: qwen36-27b
   base_url: http://14.22.86.97:11001/v1
   model: qwen36-27b
-  api_key: ''
+  api_key: ${CHAT_API_KEY}
   temperature: 0.3
 - name: qwen36_27b_lora
   base_url: http://14.22.86.97:11001/v1
   model: qwen36_27b_lora
-  api_key: ''
+  api_key: ${CHAT_API_KEY}
   max_tokens: 2048
   temperature: 0.3
 embeddings:
 - name: bge-m3
   base_url: http://14.22.83.225:11002/v1
   model: bge-m3
-  api_key: ''
+  api_key: ${EMBED_API_KEY}
   dimension: 1024
 reranks:
 - name: Qwen-Qwen3-VL-Reranker-8B
   base_url: https://api.siliconflow.cn/v1/rerank
   model: Qwen/Qwen3-VL-Reranker-8B
-  api_key: sk-rpygoxnxhkpwegwjuuackgiipnfqsrlnfhubtdcqlztgbzip
+  api_key: ${SILICONFLOW_API_KEY}
 milvus:
   uri: http://220.154.3.166:19530
-  token:
+  token: ${MILVUS_TOKEN}
 retrieval:
   rag_top_k: 50
   rerank_top_k: 10

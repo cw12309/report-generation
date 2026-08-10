@@ -13,7 +13,7 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 | `__init__.py`    | 公共导出入口，re-export 所有 public symbols                      |
 | `registry.py`    | `ToolRegistry` 类：工具注册、Schema 生成、异步执行               |
 | `rag_tool.py`    | `rag_search` 工具：多路召回 + Rerank + 歧义检测 + 结构化报告生成 |
-| `edit_tool.py`   | `edit_report` 工具：根据用户指令修改已有报告                     |
+| `edit_tool.py`   | `edit_report` 工具：基于 Last Report 编辑、事实检查、LLM Judge 与单次 Repair |
 | `refine_tool.py` | `refine_report` 工具：调整报告风格/详细程度/语气                 |
 | `utils.py`       | 旧通用 JSON 提取 helper；正式报告解析已统一迁移到 `chat/report_schema.py` |
 
@@ -36,7 +36,7 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 ### `edit_tool.py`
 
 - `EDIT_REPORT_SCHEMA` — edit_report 工具的 OpenAI function schema
-- `create_edit_report_handler(chat_fn, _emit_fn, last_report)` — 只接收模型的 instruction，并强制使用注入的 Session Last Report
+- `create_edit_report_handler(chat_fn, _emit_fn, last_report)` — 只接收 instruction，强制使用 Session Last Report；编辑后执行事实检查与受约束 Judge，失败时只 Repair 一次
 
 ### `refine_tool.py`
 
@@ -76,7 +76,8 @@ pipeline.py
 
 三个报告工具：
 
-- uses `chat/report_schema.py` → Canonical parse/validate、一次 repair 与 edit/refine preservation
+- uses `chat/report_schema.py` → Canonical parse/validate 与 edit/refine preservation
+- `edit_tool.py` 额外执行受约束 LLM Judge；Schema、事实检查或 Judge 失败共享一次 Edit Repair 预算
 
 `rag_tool.py`:
 
@@ -148,5 +149,5 @@ pipeline.py
 
 - 修改工具 Schema 后，检查 `pipeline.py` 中 `_build_tool_registry()` 是否需要更新
 - 修改 `report_schema.py` 后，检查三个报告工具、Last Report、Public SSE 与 `json_to_display()`
-- 报告工具的非法 JSON 禁止包装成 raw report；一次 repair 后仍无效必须返回 error
+- 报告工具的非法 JSON 禁止包装成 raw report；edit 的 Schema/事实/Judge 校验在一次 repair 后仍失败必须返回 error
 - 工具 handler 必须是 async 函数

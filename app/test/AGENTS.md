@@ -16,7 +16,7 @@
 | `test_knowledge_base_chunks.py`           | pytest: 知识库切片 CRUD 测试                |
 | `test_api_deployments.py`                 | pytest: Deployment 安全、存储、事件和并发锁 |
 | `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成与回归 |
-| `test_report_pipeline.py`                 | pytest: Canonical Report、repair、Last Report 注入、事实保护与 Final Tool |
+| `test_report_pipeline.py`                 | pytest: Canonical Report、Edit Judge/单次 repair、Last Report、事实保护与 Final Tool |
 | `verify_chunk_id_retrieval.py`            | pytest: chunk_id 三端一致性验证             |
 | `eval_retrieval.py`                       | 手动脚本: 检索评测（旧版）                  |
 | `eval_retrieval_v2.py`                    | 手动脚本: 检索评测（新版）                  |

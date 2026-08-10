@@ -218,37 +218,8 @@ def _report_text(report: Any) -> str:
     )
 
 
-def _find_explicit_replacement(before: Any, instruction: str) -> tuple[str, str] | None:
-    match = re.search(r"(.+?)(?:改成|改为|修改为|替换成|替换为|换成)(.+)", instruction)
-    if not match:
-        return None
-
-    left = re.sub(r"^(?:请|麻烦)?\s*(?:把|将)?", "", match.group(1)).strip(" ：:，,。'\"“”")
-    right = match.group(2).strip()
-    right = re.split(r"[，,。](?:其他|其它|其余|剩余|未提及|并保持|不要)", right, maxsplit=1)[0]
-    right = right.strip(" ：:，,。'\"“”")
-    if not left or not right:
-        return None
-
-    haystack = _report_text(before)
-    source = ""
-    numeric_suffix = re.search(
-        r"(\d+(?:\.\d+)?(?:\s*[×xX*]\s*\d+(?:\.\d+)?){0,2}\s*(?:HU|mm|cm|mL|ml|%|％)?)$",
-        left,
-        flags=re.IGNORECASE,
-    )
-    if numeric_suffix and numeric_suffix.group(1).strip() in haystack:
-        source = numeric_suffix.group(1).strip()
-    for index in range(len(left)):
-        if source:
-            break
-        suffix = left[index:].strip(" ：:，,。'\"“”")
-        if suffix and suffix in haystack:
-            source = suffix
-            break
-    if not source:
-        return None
-    return source, right
+def _findings_text(report: Any) -> str:
+    return "\n".join(item["影像学表现"] for item in _core(report)["results"])
 
 
 _NUMBER_TOKEN_RE = re.compile(
@@ -260,46 +231,124 @@ _LATERALITY_RE = re.compile(r"左侧|右侧|双侧|两侧|单侧|左|右")
 _NEGATION_RE = re.compile(r"未见|未及|无明显|无|否认|不考虑|不支持|排除")
 _COUNT_FACT_RE = re.compile(r"单发|多发|一个|两个|两处|数个|多个")
 _ANATOMY_RE = re.compile(
-    r"基底节区|额叶|颞叶|顶叶|枕叶|脑干|小脑|脑室|中线结构|头颅|颅脑|胸部|肺部|"
+    r"基底节区|基底节|丘脑|额叶|颞叶|顶叶|枕叶|脑干|小脑|脑室|中线结构|头颅|颅脑|胸部|肺部|"
     r"腹部|肝脏|胆囊|胰腺|脾脏|肾脏|盆腔|子宫|卵巢|前列腺|膀胱|脊柱|颈椎|胸椎|"
     r"腰椎|骶椎|膝关节|髋关节|肩关节|肘关节|腕关节|踝关节|甲状腺|心脏|冠脉|主动脉"
 )
+_DIAGNOSIS_RE = re.compile(
+    r"脑出血|蛛网膜下腔出血|硬膜下血肿|硬膜外血肿|脑梗死|脑肿瘤|脑水肿|"
+    r"肺结节|肺炎|肺癌|气胸|胸腔积液|肝癌|肝囊肿|胆囊炎|胰腺炎|肾结石|"
+    r"骨折|脱位|狭窄|占位(?:性病变)?"
+)
+_POSITIVE_FACT_RE = re.compile(
+    r"出血|梗死|水肿|积液|结节|肿块|占位|骨折|脱位|移位|受压|狭窄|增宽|"
+    r"肿大|强化|钙化|高密度|低密度|高信号|低信号"
+)
+_UNIT_RE = re.compile(r"HU|mm|cm|mL|ml|％|%", re.IGNORECASE)
 
 
 def _tokens(pattern: re.Pattern[str], text: str) -> Counter[str]:
     return Counter(token.replace(" ", "") for token in pattern.findall(text))
 
 
+def _instruction_numbers(instruction: str) -> set[str]:
+    return set(re.findall(r"\d+(?:\.\d+)?", instruction))
+
+
+def _number_parts(token: str) -> set[str]:
+    return set(re.findall(r"\d+(?:\.\d+)?", token))
+
+
 def _allows_numeric_change(token: str, instruction: str) -> bool:
     lowered = token.lower()
     if "hu" in lowered:
-        return "HU" in instruction.upper() or "CT值" in instruction or "密度值" in instruction
+        return (
+            "HU" in instruction.upper()
+            or "CT值" in instruction
+            or "密度值" in instruction
+            or ("CT" in instruction.upper() and bool(_instruction_numbers(instruction)))
+        )
     if "×" in token or "x" in lowered or any(unit in lowered for unit in ("mm", "cm")):
         return any(word in instruction for word in ("大小", "尺寸", "范围", "长径", "短径"))
     return any(word in instruction for word in ("数量", "个数", "数目"))
 
 
-def validate_edit_preservation(before: Any, after: Any, instruction: str) -> None:
-    """Reject edits that make changes outside the user's requested scope."""
+def _count_semantics(text: str) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    counts["single"] = len(re.findall(r"单发|一个|一处|1\s*(?:个|处|枚)", text))
+    counts["double"] = len(re.findall(r"两个|两处|2\s*(?:个|处|枚)", text))
+    counts["multiple"] = len(re.findall(r"多发|数个|多个|数处", text))
+    return counts
+
+
+def _unit_tokens(text: str) -> Counter[str]:
+    return Counter(token.lower().replace("％", "%") for token in _UNIT_RE.findall(text))
+
+
+def _laterality_semantics(text: str) -> Counter[str]:
+    normalized = Counter()
+    mapping = {
+        "左侧": "left",
+        "左": "left",
+        "右侧": "right",
+        "右": "right",
+        "双侧": "bilateral",
+        "两侧": "bilateral",
+        "单侧": "unilateral",
+    }
+    for token in _LATERALITY_RE.findall(text):
+        normalized[mapping[token]] += 1
+    return normalized
+
+
+def _token_changes(
+    pattern: re.Pattern[str],
+    before_text: str,
+    after_text: str,
+) -> set[str]:
+    before_tokens = _tokens(pattern, before_text)
+    after_tokens = _tokens(pattern, after_text)
+    return {
+        token
+        for token in before_tokens.keys() | after_tokens.keys()
+        if before_tokens[token] != after_tokens[token]
+    }
+
+
+def parse_edit_judge_output(raw: Any) -> dict[str, Any]:
+    """Validate and normalize the constrained edit-judge response."""
+    obj = _extract_json_value(raw)
+    valid = obj.get("valid")
+    unexpected = obj.get("unexpected_changes")
+    if not isinstance(valid, bool):
+        raise ReportSchemaError("Edit Judge 的 valid 必须是 boolean")
+    if not isinstance(unexpected, list) or not all(
+        isinstance(item, str) and item.strip() for item in unexpected
+    ):
+        raise ReportSchemaError("Edit Judge 的 unexpected_changes 必须是 string list")
+    changes = [item.strip() for item in unexpected]
+    return {"valid": valid and not changes, "unexpected_changes": changes}
+
+
+def collect_edit_fact_violations(
+    before: Any,
+    after: Any,
+    instruction: str,
+) -> list[str]:
+    """Return observable medical-fact changes outside the edit instruction.
+
+    This intentionally avoids whole-report equality and similarity checks.
+    Harmless wording changes are accepted while high-value facts remain guarded.
+    """
     before_core = _core(before)
     after_core = _core(after)
     before_results = before_core["results"]
     after_results = after_core["results"]
-
-    replacement = _find_explicit_replacement(before_core, instruction)
-    if replacement:
-        source, target = replacement
-        expected = copy.deepcopy(before_core)
-        for item in expected["results"]:
-            item["影像学表现"] = item["影像学表现"].replace(source, target)
-            item["诊断意见"] = item["诊断意见"].replace(source, target)
-        if expected != after_core:
-            raise ReportPreservationError("明确替换型编辑修改了指令范围之外的内容")
-        return
+    violations: list[str] = []
 
     if len(before_results) != len(after_results):
         if not any(word in instruction for word in ("删除病变", "新增病变", "增加病变")):
-            raise ReportPreservationError("编辑意外改变了病变条目数量")
+            violations.append("意外改变了病变条目数量")
 
     before_text = _report_text(before_core)
     after_text = _report_text(after_core)
@@ -307,25 +356,72 @@ def validate_edit_preservation(before: Any, after: Any, instruction: str) -> Non
     after_numbers = _tokens(_NUMBER_TOKEN_RE, after_text)
     for token, count in before_numbers.items():
         if after_numbers[token] < count and not _allows_numeric_change(token, instruction):
-            raise ReportPreservationError(f"编辑意外改变了受保护数值: {token}")
+            violations.append(f"意外删除或改变了受保护数值：{token}")
     for token, count in after_numbers.items():
-        if count > before_numbers[token] and token not in instruction.replace(" ", ""):
-            raise ReportPreservationError(f"编辑引入了指令中不存在的新数值: {token}")
+        if count <= before_numbers[token]:
+            continue
+        requested_numbers = _instruction_numbers(instruction)
+        if not (
+            _number_parts(token)
+            and _number_parts(token).issubset(requested_numbers)
+            and (_allows_numeric_change(token, instruction) or token.replace(" ", "") in instruction.replace(" ", ""))
+        ):
+            violations.append(f"引入了指令中不存在的新数值：{token}")
+
+    if _unit_tokens(before_text) != _unit_tokens(after_text) and not any(
+        word in instruction for word in ("单位", "毫米", "厘米", "毫升", "百分比")
+    ):
+        violations.append("意外改变或删除了数值单位")
 
     if not any(word in instruction for word in ("左", "右", "侧别")):
-        if _tokens(_LATERALITY_RE, before_text) != _tokens(_LATERALITY_RE, after_text):
-            raise ReportPreservationError("编辑意外改变了侧别")
+        if _laterality_semantics(before_text) != _laterality_semantics(after_text):
+            violations.append("意外改变了左右侧别")
+
+    anatomy_changes = _token_changes(_ANATOMY_RE, before_text, after_text)
+    if anatomy_changes and not (
+        any(word in instruction for word in ("部位", "位置", "解剖"))
+        or any(token in instruction for token in anatomy_changes)
+    ):
+        violations.append(f"意外改变了解剖部位：{', '.join(sorted(anatomy_changes))}")
+
+    if _count_semantics(before_text) != _count_semantics(after_text) and not any(
+        word in instruction for word in ("数量", "个数", "数目", "单发", "多发", "病变条目")
+    ):
+        violations.append("意外改变了病变数量")
 
     diagnosis_change_requested = any(word in instruction for word in ("诊断", "意见", "结论", "病名"))
-    if not diagnosis_change_requested:
-        before_diagnoses = [item["诊断意见"] for item in before_results]
-        after_diagnoses = [item["诊断意见"] for item in after_results]
-        if before_diagnoses != after_diagnoses:
-            raise ReportPreservationError("编辑意外改变了诊断意见")
+    diagnosis_changes = _token_changes(_DIAGNOSIS_RE, before_text, after_text)
+    if diagnosis_changes and not (
+        diagnosis_change_requested
+        or any(token in instruction for token in diagnosis_changes)
+    ):
+        violations.append(f"意外改变了诊断：{', '.join(sorted(diagnosis_changes))}")
 
-    similarity = SequenceMatcher(None, before_text, after_text).ratio()
-    if similarity < 0.55:
-        raise ReportPreservationError("编辑造成了过多不可解释的文本变化")
+    before_fact_text = _findings_text(before_core) if diagnosis_change_requested else before_text
+    after_fact_text = _findings_text(after_core) if diagnosis_change_requested else after_text
+    if len(_NEGATION_RE.findall(before_fact_text)) != len(_NEGATION_RE.findall(after_fact_text)) and not any(
+        word in instruction for word in ("否定", "阳性", "阴性", "未见", "无", "排除", "考虑")
+    ):
+        violations.append("意外改变了否定/阳性事实")
+
+    positive_changes = _token_changes(_POSITIVE_FACT_RE, before_fact_text, after_fact_text)
+    unexpected_positive_changes = {
+        token for token in positive_changes
+        if token not in instruction
+    }
+    if unexpected_positive_changes:
+        violations.append(
+            f"意外改变了关键阳性事实：{', '.join(sorted(unexpected_positive_changes))}"
+        )
+
+    return list(dict.fromkeys(violations))
+
+
+def validate_edit_preservation(before: Any, after: Any, instruction: str) -> None:
+    """Reject observable medical-fact changes outside the user's instruction."""
+    violations = collect_edit_fact_violations(before, after, instruction)
+    if violations:
+        raise ReportPreservationError("；".join(violations))
 
 
 def validate_refine_preservation(before: Any, after: Any) -> None:

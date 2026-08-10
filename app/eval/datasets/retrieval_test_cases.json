@@ -198,5 +198,105 @@
       "type": "auto_generated",
       "kb_id": "b982a5acca51447aa1596f0d4832f24f"
     }
+  },
+  {
+    "query": "右中叶大叶性肺炎DR影像表现",
+    "expected_chunk_ids": [
+      "fcd769e81ae1154916e69155a2cf1b74"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右下肺动脉栓塞CT表现",
+    "expected_chunk_ids": [
+      "6d50e28d5a540e0d31236f15c0a781c9"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右侧腮腺浅叶占位考虑腺淋巴瘤的CT表现",
+    "expected_chunk_ids": [
+      "0403b1f0762abd273f1e17c26d1201d7"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左肺下叶后基底段团片状高密度影伴降主动脉供血动脉",
+    "expected_chunk_ids": [
+      "eb9aa75a9d7ecc06d7a99aa4d7bfc907"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "T管造影未见异常",
+    "expected_chunk_ids": [
+      "be805259131c5be55f85aa10b9cc0043"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "上颌窦癌MRI表现",
+    "expected_chunk_ids": [
+      "7e5a2cf4315d37aac40b5ac65f68da03"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "e9f000532bad48598a307676369ea8dd"
+    }
+  },
+  {
+    "query": "肥厚型心肌病心脏MRI表现",
+    "expected_chunk_ids": [
+      "c3632a8725719f4bc5fa3032807a39cf"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "上腹部CT平扫正常报告解读",
+    "expected_chunk_ids": [
+      "aa76eb762324128c94a5b1c2b9d23d8c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "双肺纹理增强是什么意思",
+    "expected_chunk_ids": [
+      "2ac375fc1269d9acc8541c860244f44f"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "鼻咽癌MRI影像学表现",
+    "expected_chunk_ids": [
+      "e278795ba0168733e4c5a846a01b920a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
   }
 ]

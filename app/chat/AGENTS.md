@@ -13,7 +13,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 | `server.py`     | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                       |
 | `deployments.py` | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                |
 | `pipeline.py`   | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling）→ Phase 3（记忆更新）                                                      |
-| `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验/一次修复提示、edit/refine 事实保护与 Public 脱敏                                      |
+| `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验、edit/refine 事实保护、Edit Judge 输出校验与 Public 脱敏                              |
 | `llm_client.py` | LLM 网络请求封装：`chat_stream()`（流式对话）、`get_embedding()`（向量化）、`chat_with_tools()`（Tool Calling）、`rerank_with_retry()`（重排重试） |
 | `schemas.py`    | Pydantic 请求模型：`ChatRequest`、Deployment CRUD/Chat、KB 与 Eval 等                                                                              |
 | `main.py`       | CLI 模式入口（`--web` 转发到 server）                                                                                                              |
@@ -47,7 +47,9 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 - `parse_report_output(raw)` — 提取 JSON、兼容旧边界格式并验证唯一 Canonical `results[]`
 - `parse_report_with_repair(raw, repair_fn)` — 首次失败后只允许一次受约束 JSON 修复
-- `validate_edit_preservation(...)` / `validate_refine_preservation(...)` — 保护未授权医学事实
+- `collect_edit_fact_violations(...)` / `validate_edit_preservation(...)` — 按数值、侧别、部位、数量、诊断与阳性/否定事实检查编辑范围，不做全文 Diff
+- `parse_edit_judge_output(raw)` — 校验受约束 Edit Judge 的 `{valid, unexpected_changes}` 输出
+- `validate_refine_preservation(...)` — 保护润色中的未授权医学事实
 - `sanitize_public_report(report)` — 公开响应只保留 `results`，移除 reasoning/内部字段
 
 ### `llm_client.py`

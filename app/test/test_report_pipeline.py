@@ -80,6 +80,10 @@ BASE_REPORT = {
         }
     ]
 }
+VALID_EDIT_JUDGEMENT = json.dumps(
+    {"valid": True, "unexpected_changes": []},
+    ensure_ascii=False,
+)
 
 
 def _payload(raw: str) -> dict:
@@ -221,27 +225,35 @@ def test_rag_tool_invalid_output_repairs_once_and_never_returns_raw():
     assert callers == ["rag_search_tool", "rag_search_repair"]
 
 
-def test_edit_uses_session_report_and_exactly_replaces_requested_value():
+def test_edit_uses_session_report_allows_wording_and_preserves_medical_facts():
     last_report = [serialize_report(BASE_REPORT)]
     captured_user_message = []
     edited = json.loads(json.dumps(BASE_REPORT, ensure_ascii=False))
-    edited["results"][0]["影像学表现"] = edited["results"][0]["影像学表现"].replace(
-        "65HU", "70HU"
+    edited["results"][0]["影像学表现"] = (
+        edited["results"][0]["影像学表现"]
+        .replace("65HU", "70HU")
+        .replace("CT平扫显示", "CT平扫示")
+        .replace("范围约", "大小约")
     )
 
-    async def chat_fn(messages, **_kwargs):
+    async def chat_fn(messages, **kwargs):
+        if kwargs.get("caller") == "edit_report_judge":
+            return VALID_EDIT_JUDGEMENT
         captured_user_message.append(messages[-1]["content"])
         return json.dumps(edited, ensure_ascii=False)
 
     handler = create_edit_report_handler(chat_fn=chat_fn, last_report=last_report)
     result = _payload(asyncio.run(handler({
-        "instruction": "把刚才报告中的CT值65HU改成70HU，其他内容保持不变",
+        "instruction": "修改CT为70",
         "current_report": {"results": [{"影像学表现": "伪造报告", "诊断意见": "伪造诊断"}]},
     })))
     assert result == edited
     assert "伪造报告" not in captured_user_message[0]
     assert "65HU" in captured_user_message[0]
     assert "70HU" in result["results"][0]["影像学表现"]
+    assert "3.0×1.6cm" in result["results"][0]["影像学表现"]
+    assert "右侧基底节区" in result["results"][0]["影像学表现"]
+    assert "中线结构轻度向对侧移位" in result["results"][0]["影像学表现"]
     assert result["results"][0]["诊断意见"] == BASE_REPORT["results"][0]["诊断意见"]
 
 
@@ -262,14 +274,20 @@ def test_edit_then_second_edit_then_refine_uses_evolving_last_report():
     )
 
     outputs = iter([edit_one, edit_two])
+    edit_inputs = []
 
-    async def edit_chat(_messages, **_kwargs):
+    async def edit_chat(messages, **kwargs):
+        if kwargs.get("caller") == "edit_report_judge":
+            return VALID_EDIT_JUDGEMENT
+        edit_inputs.append(messages[-1]["content"])
         return json.dumps(next(outputs), ensure_ascii=False)
 
     edit_handler = create_edit_report_handler(chat_fn=edit_chat, last_report=last_report)
     first = _payload(asyncio.run(edit_handler({"instruction": "把65HU改成70HU"})))
     last_report[0] = serialize_report(first)
     second = _payload(asyncio.run(edit_handler({"instruction": "病灶大小改成3.2×1.8cm"})))
+    assert "70HU" in edit_inputs[1]
+    assert "65HU" not in edit_inputs[1]
     last_report[0] = serialize_report(second)
 
     async def refine_chat(messages, **_kwargs):
@@ -287,6 +305,78 @@ def test_edit_then_second_edit_then_refine_uses_evolving_last_report():
     assert "3.2×1.8cm" in final["results"][0]["影像学表现"]
     assert "右侧" in final["results"][0]["影像学表现"]
     assert final["results"][0]["诊断意见"] == "右侧基底节区脑出血。"
+
+
+def test_edit_judge_rejection_repairs_once_and_keeps_requested_change():
+    last_report = [serialize_report(BASE_REPORT)]
+    over_edited = json.loads(json.dumps(BASE_REPORT, ensure_ascii=False))
+    over_edited["results"][0]["影像学表现"] = (
+        over_edited["results"][0]["影像学表现"]
+        .replace("65HU", "70HU")
+        .replace("中线结构轻度向对侧移位", "中线结构居中")
+    )
+    repaired = json.loads(json.dumps(BASE_REPORT, ensure_ascii=False))
+    repaired["results"][0]["影像学表现"] = (
+        repaired["results"][0]["影像学表现"]
+        .replace("65HU", "70HU")
+        .replace("CT平扫显示", "CT平扫示")
+    )
+    callers = []
+
+    async def chat_fn(_messages, **kwargs):
+        caller = kwargs.get("caller")
+        callers.append(caller)
+        if caller == "edit_report_tool":
+            return json.dumps(over_edited, ensure_ascii=False)
+        if caller == "edit_report_repair":
+            return json.dumps(repaired, ensure_ascii=False)
+        if caller == "edit_report_judge" and callers.count("edit_report_judge") == 1:
+            return json.dumps({
+                "valid": False,
+                "unexpected_changes": ["中线移位被改为中线居中"],
+            }, ensure_ascii=False)
+        return VALID_EDIT_JUDGEMENT
+
+    handler = create_edit_report_handler(chat_fn=chat_fn, last_report=last_report)
+    result = _payload(asyncio.run(handler({"instruction": "修改CT为70"})))
+
+    assert callers == [
+        "edit_report_tool",
+        "edit_report_judge",
+        "edit_report_repair",
+        "edit_report_judge",
+    ]
+    assert "70HU" in result["results"][0]["影像学表现"]
+    assert "3.0×1.6cm" in result["results"][0]["影像学表现"]
+    assert "右侧基底节区" in result["results"][0]["影像学表现"]
+    assert "中线结构轻度向对侧移位" in result["results"][0]["影像学表现"]
+    assert result["results"][0]["诊断意见"] == "右侧基底节区脑出血。"
+
+
+def test_edit_repair_failure_returns_clear_non_final_error():
+    last_report = [serialize_report(BASE_REPORT)]
+    invalid = json.loads(json.dumps(BASE_REPORT, ensure_ascii=False))
+    invalid["results"][0]["影像学表现"] = invalid["results"][0]["影像学表现"].replace(
+        "右侧", "左侧"
+    )
+    callers = []
+
+    async def chat_fn(_messages, **kwargs):
+        caller = kwargs.get("caller")
+        callers.append(caller)
+        if caller == "edit_report_judge":
+            return json.dumps({
+                "valid": False,
+                "unexpected_changes": ["侧别被改变"],
+            }, ensure_ascii=False)
+        return json.dumps(invalid, ensure_ascii=False)
+
+    handler = create_edit_report_handler(chat_fn=chat_fn, last_report=last_report)
+    result = json.loads(asyncio.run(handler({"instruction": "修改CT为70"})))
+
+    assert result["_is_final"] is False
+    assert "一次修复后仍未通过" in result["error"]
+    assert callers.count("edit_report_repair") == 1
 
 
 def test_preservation_validators_reject_unrequested_fact_changes():

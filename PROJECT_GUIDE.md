@@ -85,6 +85,8 @@ Shared state: SQLite SessionStore ─► Sessions / Turns / State / Thinking
 External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 ```
 
+`edit_report` 分支内部还有一条独立安全链：`Session Last Report → Edit LLM → Canonical Schema → 关键事实检查 → LLM Judge → Final`。任一校验失败时只允许一次 Edit Repair，然后从 Schema 开始重新检查；它不经过 RAG，也不把成功结果交回 Main LLM 改写。
+
 各层存在的理由：Gateway 隔离公开鉴权与业务运行时；Worker 统一管理 HTTP、SSE 和共享资源；Pipeline 负责一轮 Agent 编排；Tools 把业务动作变成明确边界；RAG 只解决知识库参考选择；Memory 只解决当前会话上下文；SQLite 保存关系型状态与原文；Milvus 保存在线向量检索数据；Data Pipeline 保证两类存储和人类可读中间态一致；Eval 用稳定 Chunk ID 衡量检索结果。
 
 ## 4. 从用户输入到最终结果：完整生命周期
@@ -129,7 +131,7 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 10. **执行 Tool**
 
-    `rag_search` 做检索与报告生成；`edit_report`、`refine_report` 的 Tool Schema 不暴露 `current_report`，handler 只读取后端注入的 Session Last Report。三个工具的模型输出都经过统一 StructuredReport 解析、旧格式边界归一化和 Schema 校验；首次失败只允许一次受约束 JSON repair。Registry 把 handler 返回 JSON 中的 `_is_final` 剥离为 `ToolResult.is_final`。
+    `rag_search` 做检索与报告生成；`edit_report`、`refine_report` 的 Tool Schema 不暴露 `current_report`，handler 只读取后端注入的 Session Last Report。三个工具的模型输出都经过统一 StructuredReport 解析、旧格式边界归一化和 Schema 校验；`edit_report` 还执行关键医学事实检查与受约束 LLM Judge，Schema、事实或 Judge 不通过时共享一次 Edit Repair 机会。Registry 把 handler 返回 JSON 中的 `_is_final` 剥离为 `ToolResult.is_final`。
 
 11. **可选 RAG**
 
@@ -347,11 +349,40 @@ Top 候选分数接近且诊断名不同会返回 `status=ambiguous` 和选项�
 
 ## 12. edit_report
 
-`edit_report` 的模型参数只有 instruction；Current Report 不能由 Main LLM 提供，而是 handler 从 Session Last Report 强制取得并规范化为 Canonical Schema。它加载 `edit.md`，调用 Chat LLM，再执行 Schema 校验和 before/after preservation validation；明确 A→B 替换必须只产生该替换，成功后返回 Final Result。
+`edit_report` 的模型参数只有 instruction；Current Report 不能由 Main LLM 提供，而是 handler 从 Session Last Report 强制取得并规范化为 Canonical Schema。它加载 `edit.md` 调用 Edit LLM，再依次执行 Canonical Schema 校验、关键医学事实检查和受约束 LLM Judge；成功后返回 Final Result。
 
 它不重新 RAG，因为用户目标是修改既有事实，而不是重新选择模板。适用例子：修改数值、删除指定病变、替换某段诊断意见。
 
-非明确替换型编辑还会保护未授权的数值、侧别、诊断、条目数量和整体变化幅度。保护策略偏保守：无法证明修改范围安全时返回 error，不会回退到旧报告或让 Main LLM 自由生成。
+```text
+真实 Session Last Report + instruction
+  → Edit LLM
+  → Canonical results[] 解析与校验
+  → 程序级关键医学事实检查
+  → 受约束 Edit Judge
+       ├─ valid=true  → _is_final=true → report → 更新 Last Report
+       └─ 不通过      → 将具体问题反馈给 Edit LLM
+                         → Repair 一次
+                         → Schema + 事实 + Judge 全量复检
+                              ├─ 通过 → Final Report
+                              └─ 失败 → 明确 error
+```
+
+程序检查重点保护数值与单位、尺寸、侧别、解剖部位、病变数量、诊断和阳性/否定事实。它会识别 instruction 中被明确授权的目标，例如“修改CT为70”允许 `65HU → 70HU`，但仍要求 `3.0×1.6cm`、右侧、基底节区、中线移位和脑出血等未授权事实保持不变。
+
+这里不使用全文字符串 Diff 或整段相似度阈值，因此允许“显示→示”“范围约→大小约”等不改变医学含义的轻微措辞。旧实现会对明确替换生成代码级预期全文并要求 LLM 输出逐字相同，这正是合法编辑被误杀的原因。
+
+Judge 接收原报告、用户 instruction 和候选报告，只允许输出：
+
+```json
+{
+  "valid": true,
+  "unexpected_changes": []
+}
+```
+
+Judge 不负责再次编辑，只判断是否存在语义上的超范围修改。Schema、程序事实检查或 Judge 任一失败都消耗同一个 Repair 机会；Repair Prompt 同时包含原报告、原 instruction、第一次候选和具体失败项，并要求保留目标修改。正常成功路径是 Edit + Judge 两次模型调用；发生 Repair 时是 Edit + Judge + Repair + Judge，Schema 首次不合法时则跳过第一次 Judge。Judge 调用或结构化输出失败也视为未通过。
+
+成功结果固定为 `{"results":[...]}` 并带内部 `_is_final=true`，Pipeline 直接发 `report` 并把它保存为新的 Last Report。所以下一轮编辑读取的是已经修改后的报告，而不是更早版本。Repair 后仍失败才返回 error；不会回退旧报告，也不会进入 Main LLM 自由生成。
 
 ## 13. refine_report
 
@@ -1004,7 +1035,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `app/chat/utils.py` | Canonical 报告到 Markdown 展示 | 报告渲染格式 |
 | `app/tools/registry.py` | Tool 注册、执行、Final 语义 | 新 Tool/执行机制 |
 | `app/tools/rag_tool.py` | 新报告、歧义、Report LLM | 报告生成主业务 |
-| `app/tools/edit_tool.py` | 精确编辑 Last Report | 编辑行为/Schema |
+| `app/tools/edit_tool.py` | Last Report 编辑、Judge 编排与单次 Repair | 编辑行为、Judge、Repair |
 | `app/tools/refine_tool.py` | 风格重写 Last Report | 润色行为/Schema |
 | `app/rag/query_rewrite.py` | 标准化与有条件改写 | Stateful Query 预处理 |
 | `app/rag/query_planner.py` | 自然语言到合法 QueryPlan | Filter/Query 拆分 |
@@ -1040,7 +1071,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | 新增 Tool | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt |
 | 报告结构 | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE |
 | 报告生成 Prompt | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py` |
-| 报告编辑 | `tools/edit_tool.py`、`prompt/edit.md`、Last Report 保存逻辑 |
+| 报告编辑 | `tools/edit_tool.py`、`chat/report_schema.py`、`prompt/edit.md`、`test/test_report_pipeline.py`、Last Report 保存逻辑 |
 | 报告润色 | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context |
 | Query Rewrite | `rag/query_rewrite.py`、`prompt/rewrite.md`、rewrite config |
 | Query Planning | `rag/query_planner.py`、`metadata_navigator.py`、planning tests |
@@ -1160,6 +1191,7 @@ Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品
 8. **Schema 多处重复**：Gateway 与 Worker Stateless Pydantic 分开定义，Tool Schema、Prompt Schema、Display 兼容、SQLite/Milvus字段也分散，容易局部修改后漂移。
 9. **多 Tool Final 语义模糊**：Pipeline 执行一个响应中的全部 Tool Calls，但用 `any_final` 结束并返回遇到的首个可展示 Final；混合 Final/错误/非 Final 时没有明确聚合策略。
 10. **前后端事件契约不完全对齐**：`query_plan/cache_hit` 无 UI，`search_result` 无主发送点；Recall 的 legacy count 字段不能准确表达各 Channel 贡献。
+11. **Edit Judge 增加模型依赖与延迟**：正常 edit 至少调用 Edit LLM 和 Judge 两次，Repair 路径最多四次；Judge 没有独立模型配置，其不可用、非结构化输出或误判会消耗 Repair 机会并可能让编辑失败。
 
 ### Low Priority
 
@@ -1177,10 +1209,10 @@ Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品
 
 | 层 | 当前验证 | 明显缺口 |
 | --- | --- | --- |
-| Agent | `test_memory.py` 间接测 Prompt/Intent；手工 `/api/chat` | 无 Tool 决策、multi-tool、Final 分支自动化 |
+| Agent | `test_memory.py` 测 Prompt/Intent；`test_report_pipeline.py` 以替身覆盖 Report Tool Final/error 分支 | 无真实 Main LLM Tool 选择和 multi-tool 端到端测试 |
 | RAG | `test_rag_planning.py` 测 Planner、channels、dedup、rewrite fallback | 无真实多通道贡献、RRF 参数、Rerank fallback 单测 |
 | Memory | `test_memory.py` 自定义/pytest-compatible 测规则实体、switch、resolve、retriever | 无在线 async Entity LLM、SQLite restore 并发测试 |
-| Tools | 主要靠集成/手工 | 三个 handler、Schema 保持、歧义缓存缺单测 |
+| Tools | `test_report_pipeline.py` 覆盖 Canonical 解析/repair、真实 Last Report 注入、edit 事实检查/Judge/单次 Repair、二次编辑和 Final 语义 | 真实模型下的 Judge 质量、RAG 歧义与更多 edit/refine 医学语义缺系统评测 |
 | Data Pipeline | `test_knowledge_base_chunks.py` 测 Excel parser 和 SQLite chunks | 无完整 Markdown→Embedding→Milvus 事务/失败恢复测试 |
 | API | Deployment 有纯逻辑/存储测试和 FastAPI TestClient 集成测试；`tests_api/` 多为外部模型连通性脚本 | 其他 Gateway/Worker 路由仍缺系统化 contract 测试 |
 | Eval | Eval runner 自身及 CLI validate | metrics 有简单纯函数但无专门 test；不测 Planner/Agent |
@@ -1192,6 +1224,7 @@ Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品
 pytest app/test/test_rag_planning.py -v
 pytest app/test/test_knowledge_base_chunks.py -v
 pytest app/test/test_api_deployments.py app/test/test_api_deployment_routes.py -v
+pytest app/test/test_report_pipeline.py -v
 python -m app.test.test_memory
 ```
 
@@ -1225,7 +1258,11 @@ python -m app.test.test_memory
 
 ### 报告结构错
 
-先区分是 `structure.md` 新报告，还是 `edit.md/refine.md` 旧 Schema；检查 `extract_json()`、Tool `_is_final`、`json_to_display()` 和 Last Report 原始 JSON，不要只看前端 Markdown。
+先确认三个 Report Tool 是否都输出 Canonical `results[]`，再检查 `chat/report_schema.py::parse_report_output()`、Tool `_is_final`、`json_to_display()` 和 Last Report 原始 JSON，不要只看前端 Markdown。新报告看 `structure.md`；编辑看 `edit.md`、程序事实违规列表、`edit_report_judge`/`edit_report_repair` 调用及 Judge 的 `{valid, unexpected_changes}`；润色看 `refine.md` 与 preservation 校验。
+
+### 报告编辑失败
+
+先确认 Edit LLM 输入中的 Current Report 是否来自本轮真实 Session Last Report，再区分失败发生在 Canonical Schema、程序事实检查还是 Judge。检查日志中的 `edit_report_tool`、`edit_report_judge`、`edit_report_repair` 调用顺序；若进入 Repair，确认反馈中既包含具体超范围修改，也保留原 instruction。第二次编辑异常时直接查看 SQLite/运行时保存的新 Last Report，确认上一轮 Final Report 已持久化。
 
 ### 多轮上下文错误
 
@@ -1243,7 +1280,7 @@ python -m app.test.test_memory
 
 先固定 Dataset、Active KB 集、Embedding/Rerank模型和 Top-K；检查黄金 ID 仍存在；查看 bad cases 的 first rank/score。记住当前 Eval 不测 Planner，不能用它直接判断 metadata 规划退化。
 
-## 56. 项目的“最重要十一个概念”
+## 56. 项目的“最重要十二个概念”
 
 1. 系统生成医学影像**文本**，不分析图像像素。
 2. Agent 不等于 RAG；Agent 决定直接回复或调用哪个 Tool。
@@ -1253,9 +1290,10 @@ python -m app.test.test_memory
 6. Metadata Navigator 只约束合法目录，不负责召回。
 7. Dense + Sparse × 并行 channels 经 RRF 是第一阶段，Cross-Encoder Rerank 是第二阶段。
 8. `is_final` 让报告 Tool 直接结束，避免主 LLM 二次改写。
-9. Stable Chunk ID 串联 Markdown、SQLite、Milvus 和 Eval。
-10. Data Pipeline 与 Online Retrieval 通过模型、维度、Sparse、schema、metadata 和 ID 强耦合。
-11. Deployment 用固定 KB + 独立 Key + conversation 映射把 Stateful Pipeline 安全地提供给外部系统。
+9. `edit_report` 只信任 Session Last Report，并用关键事实检查、LLM Judge 和最多一次 Repair 约束修改范围。
+10. Stable Chunk ID 串联 Markdown、SQLite、Milvus 和 Eval。
+11. Data Pipeline 与 Online Retrieval 通过模型、维度、Sparse、schema、metadata 和 ID 强耦合。
+12. Deployment 用固定 KB + 独立 Key + conversation 映射把 Stateful Pipeline 安全地提供给外部系统。
 
 ## 57. 5-Minute Refresh
 
@@ -1265,7 +1303,7 @@ python -m app.test.test_memory
 
 **一次请求**：恢复 Session → Entity/Intent/Resolve → 可选 Rewrite → 相关 STM → orchestrator LLM → 一个 Tool 批次 → Final Tool 或一次最终 LLM → 保存 Last Report/Slots/Turn → SSE。
 
-**三个 Tool**：`rag_search` 新报告；`edit_report` 精确改事实；`refine_report` 改表达。三个成功结果必须是经过 Canonical Schema 校验的 Final；失败直接 error。
+**三个 Tool**：`rag_search` 新报告；`edit_report` 基于真实 Last Report 修改，并经过 Schema → 关键事实 → Judge → 最多一次 Repair；`refine_report` 改表达。三个成功结果必须是 Canonical Final，失败直接 error。
 
 **RAG**：Plan → 合法 Metadata → Query Embedding + Hash Sparse → strict/modality/kb-only 并行 → RRF → chunk ID dedup → Rerank → references → `structure.md`。
 
@@ -1279,7 +1317,7 @@ python -m app.test.test_memory
 
 **修改入口**：决策看 Pipeline/orchestrator；报告看 Tools/Prompts；检索看 `rag/`；状态看 `memory/`+server；数据看 `data_pipeline/`；UI 看三个 front 文件。
 
-**关键风险**：默认 Gateway Token、Stateful 同步 I/O、Entity async mismatch、同 Session race、Report Prompt schema 漂移、Docker volume 路径。
+**关键风险**：默认 Gateway Token、Stateful 同步 I/O、Entity async mismatch、浏览器同 Session race、Deployment 多 Worker 锁、Edit Judge 延迟/稳定性、Docker volume 路径。
 
 ## 58. 30-Minute Review Path
 
@@ -1332,6 +1370,7 @@ python -m app.test.test_memory
 - **Unknown:** `report_generation.md`、`multi_disease.md` 和 ReAct prompts 是否计划未来恢复使用；当前源码主路径未引用。
 - **Needs verification:** 医疗文本在浏览器 LocalStorage、日志、LangSmith 和外部模型服务之间的合规/脱敏策略未在仓库形成完整事实。
 - **Needs verification:** Main LLM 一次返回多个 Tool Calls 是否是预期支持场景；代码能执行，但产品语义未定义。
+- **Needs verification:** Edit Judge 对真实多样化医学报告的误判率、延迟和失败率尚无独立评测集；当前自动化测试使用受控 LLM 替身验证流程契约。
 
 ### Documentation Conflicts Found During Verification
 

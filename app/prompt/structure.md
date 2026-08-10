@@ -19,7 +19,9 @@
 
 ## 输出格式
 
-严格输出 JSON，不要输出任何其他内容：
+严格只输出一个 JSON object，不要输出任何其他内容。禁止 Markdown code fence、JSON 前后解释文字、其他 Schema，也不要把 reasoning 拆成多个无键字符串。
+
+`reasoning` 是可选的内部字段；`results` 是唯一正式报告数据模型，必须存在且为非空数组。每个 item 必须且只能使用 string 类型的 `影像学表现` 和 `诊断意见`：
 
 ```json
 {
@@ -36,3 +38,5 @@
   ]
 }
 ```
+
+上面的 code fence 仅用于展示格式；你的实际输出不能包含 code fence。

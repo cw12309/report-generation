@@ -16,7 +16,15 @@ from rag.metadata_navigator import MetadataNavigator
 from config import get_rag_top_k, get_rerank_top_k
 
 from .llm_client import get_embedding, chat_stream, chat_with_tools, rerank_with_retry
-from .utils import _extract_json, json_to_display
+from .report_schema import (
+    REPORT_SCHEMA_VERSION,
+    REPORT_TOOL_NAMES,
+    ReportSchemaError,
+    looks_like_serialized_tool_call,
+    parse_report_output,
+    serialize_report,
+)
+from .utils import json_to_display
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +202,22 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     """
     logger.info(f"── run_pipeline 开始: session={session_id}, query={query[:50]}..., selected_diagnosis={selected_diagnosis}")
 
+    # Session restore is a compatibility boundary: normalize supported legacy
+    # reports once, then keep only the canonical representation in the runtime.
+    last_report_valid = False
+    if last_report and last_report[0]:
+        try:
+            last_report[0] = serialize_report(parse_report_output(last_report[0]))
+            last_report_valid = True
+        except ReportSchemaError as exc:
+            logger.warning("last_report normalization failed: %s", exc)
+    logger.info(
+        "report_context: last_report_present=%s last_report_valid=%s schema_version=%s",
+        bool(last_report and last_report[0]),
+        last_report_valid,
+        REPORT_SCHEMA_VERSION,
+    )
+
     # ── 缓存命中检查：新输入是否匹配缓存中的诊断 ──
     if not selected_diagnosis and last_ambiguity and last_ambiguity[0] is not None:
         _, cached_reranked = last_ambiguity[0]
@@ -231,6 +255,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
             stm.clear(session_id)
             if last_report:
                 last_report[0] = ""
+                last_report_valid = False
             entity_tracker.apply_switch(query)
             _emit("intent_switch", {"message": "已清空旧上下文，开始新检查"})
 
@@ -339,7 +364,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
         sys_prompt += f"\n\n---\n\n## 相关历史对话\n{stm_context}"
 
     # 注入上一轮报告信息（供工具决策参考）
-    if last_report and last_report[0]:
+    if last_report_valid:
         sys_prompt += (
             f"\n\n---\n\n"
             f"## 当前已有报告\n"
@@ -387,6 +412,22 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     # ── 如果没有工具调用，直接回复 ──
     if not tool_calls:
         if content:
+            try:
+                parse_report_output(content)
+            except ReportSchemaError:
+                pass
+            else:
+                error_message = "报告必须通过受控报告工具生成，请重试。"
+                logger.warning("main LLM attempted to return a report without a report tool")
+                _emit("error", {"code": "REPORT_TOOL_REQUIRED", "message": error_message})
+                stm.add_turn(session_id, query, error_message)
+                return error_message
+            if looks_like_serialized_tool_call(content):
+                error_message = "模型返回了无效的工具调用格式，请重试。"
+                logger.warning("direct response contained serialized tool call")
+                _emit("error", {"code": "INVALID_TOOL_CALL", "message": error_message})
+                stm.add_turn(session_id, query, error_message)
+                return error_message
             if _emit:
                 _emit("message", {"content": content})
             stm.add_turn(session_id, query, content)
@@ -403,7 +444,12 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
 
     logger.info(f"LLM 选择工具: {[tc['name'] for tc in tool_calls]}")
     for tc in tool_calls:
-        logger.info(f"  工具参数: {tc['name']}({json.dumps(tc['arguments'], ensure_ascii=False)})")
+        logger.info(
+            "selected_tool=%s argument_keys=%s last_report_present=%s",
+            tc["name"],
+            sorted((tc.get("arguments") or {}).keys()),
+            bool(last_report and last_report[0]),
+        )
 
     # 将 assistant 消息（含 tool_calls）追加到消息列表
     assistant_tool_calls = []
@@ -423,168 +469,136 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
         "tool_calls": assistant_tool_calls,
     })
 
-    # 执行每个工具
-    tool_results = []
-    any_final = False
-
+    # 执行每个工具。报告工具的 current_report 永远不来自模型参数；
+    # edit/refine handler 通过闭包直接读取 Session Last Report。
+    tool_results: list[tuple[str, str, ToolResult]] = []
     for tc in tool_calls:
         tool_name = tc["name"]
-        tool_args = tc["arguments"]
-
-        # 对 edit_report 和 refine_report，自动注入 current_report（主循环兜底）
+        tool_args = dict(tc.get("arguments") or {})
         if tool_name in ("edit_report", "refine_report"):
-            if "current_report" not in tool_args or not tool_args["current_report"]:
-                if last_report and last_report[0]:
-                    tool_args["current_report"] = last_report[0]
-                else:
-                    err_msg = f"工具 {tool_name} 需要已有报告，但当前没有可用的报告。"
-                    _emit("error", {"message": err_msg})
-                    tool_results.append((tc["id"], ToolResult(
-                        content=json.dumps({"error": err_msg}, ensure_ascii=False),
-                        is_final=False,
-                    )))
-                    continue
+            tool_args.pop("current_report", None)
 
         result = await registry.execute(tc["id"], tool_name, tool_args)
-        tool_results.append((tc["id"], result))
-
-        if result.is_final:
-            any_final = True
-
-        logger.info(f"工具执行完成: {tool_name}, 结果长度={len(result.content)}, is_final={result.is_final}")
+        tool_results.append((tc["id"], tool_name, result))
+        logger.info(
+            "tool_complete: selected_tool=%s tool_is_final=%s result_length=%d last_report_present=%s",
+            tool_name,
+            result.is_final,
+            len(result.content),
+            bool(last_report and last_report[0]),
+        )
         if _emit:
             _emit("tool_executed", {
                 "tool": tool_name,
                 "params": tool_args,
+                "param_keys": sorted(tool_args.keys()),
                 "result_length": len(result.content),
                 "is_final": result.is_final,
             })
 
-    # ── 将工具结果追加到消息列表 ──
-    for tool_id, result in tool_results:
+    for tool_id, _tool_name, result in tool_results:
         messages.append({
             "role": "tool",
             "tool_call_id": tool_id,
             "content": result.content,
         })
 
-    # ── 决策：是否需要二次 LLM 调用 ──
-    # 如果所有工具都返回 is_final=True（报告类结果），跳过二次 LLM 调用，
-    # 直接将报告内容发送给前端，避免 LLM 二次总结引入幻觉或改变医学术语。
-    final_content = None
+    report_results = [item for item in tool_results if item[1] in REPORT_TOOL_NAMES]
+    if report_results:
+        if len(report_results) != 1:
+            error_message = "一次请求只能执行一个报告操作，请重试。"
+            logger.warning("multiple report tools selected: %s", [item[1] for item in report_results])
+            _emit("error", {"code": "MULTIPLE_REPORT_TOOLS", "message": error_message})
+            stm.add_turn(session_id, query, error_message)
+            return error_message
 
-    # ── 歧义检测：检查工具结果中是否有 ambiguous 状态 ──
-    for tool_id, result in tool_results:
-        if not result.is_final:
-            continue
+        _tool_id, report_tool_name, report_result = report_results[0]
         try:
-            result_json = json.loads(result.content)
-            if isinstance(result_json, dict) and result_json.get("status") == "ambiguous":
-                if _emit:
-                    _emit("ambiguous", {
-                        "question": result_json.get("question", ""),
-                        "options": result_json.get("options", []),
-                        "scores": result_json.get("scores", []),
-                    })
-                display = f"🔍 {result_json['question']}\n\n" + "\n".join(
-                    f"{i+1}. {opt}" for i, opt in enumerate(result_json.get("options", []))
-                )
-                stm.add_turn(session_id, query, display)
-                logger.info("── run_pipeline 完成: 歧义追问, options=%s", result_json.get("options"))
-                return display
-        except Exception:
-            logger.error("解析工具结果 ambiguous 状态失败", exc_info=True)
+            raw_result = json.loads(report_result.content)
+        except json.JSONDecodeError:
+            raw_result = None
 
-    if any_final:
-        logger.info("工具返回 is_final=True，跳过二次 LLM 调用，直接发送报告")
-        if _emit:
-            _emit("status", {"message": "报告已生成", "phase": "done"})
+        # Diagnosis ambiguity is a deliberate terminal RAG outcome, not a report.
+        if (
+            report_tool_name == "rag_search"
+            and report_result.is_final
+            and isinstance(raw_result, dict)
+            and raw_result.get("status") == "ambiguous"
+        ):
+            _emit("ambiguous", {
+                "question": raw_result.get("question", ""),
+                "options": raw_result.get("options", []),
+                "scores": raw_result.get("scores", []),
+            })
+            display = f"🔍 {raw_result.get('question', '')}\n\n" + "\n".join(
+                f"{index + 1}. {option}"
+                for index, option in enumerate(raw_result.get("options", []))
+            )
+            stm.add_turn(session_id, query, display)
+            logger.info("report_tool_terminal: selected_tool=rag_search status=ambiguous")
+            return display
 
-        # ── 在返回前必须保存 last_report，否则下一轮无法编辑 ──
-        for tool_id, result in tool_results:
-            if not result.is_final:
-                continue
-            try:
-                result_json = json.loads(result.content)
-                if isinstance(result_json, dict) and ("results" in result_json or "影像学表现" in result_json or "诊断意见" in result_json):
-                    last_report[0] = result.content
-                    logger.info(f"已保存 last_report (长度: {len(result.content)})")
-                    # 不 break，继续循环，后面发送循环也需要遍历
-            except Exception as e:
-                logger.warning("保存 last_report 失败", exc_info=True)
+        if not report_result.is_final or (
+            isinstance(raw_result, dict) and "error" in raw_result
+        ):
+            error_message = "报告处理失败，请重试。"
+            logger.warning(
+                "report_tool_terminal: selected_tool=%s status=error tool_is_final=%s",
+                report_tool_name,
+                report_result.is_final,
+            )
+            _emit("error", {"code": "REPORT_TOOL_FAILED", "message": error_message})
+            stm.add_turn(session_id, query, error_message)
+            return error_message
 
-        # 从工具结果中提取报告内容，直接发送给前端
-        for tool_id, result in tool_results:
-            if not result.is_final:
-                continue
-            try:
-                result_json = json.loads(result.content)
-                logger.info(f"── 检查工具结果: keys={list(result_json.keys()) if isinstance(result_json, dict) else type(result_json)}")
-                if isinstance(result_json, dict) and "error" not in result_json:
-                    if "results" in result_json or "影像学表现" in result_json or "诊断意见" in result_json:
-                        display = json_to_display(result_json)
-                        _emit("report", {"content": display})
-                        stm.add_turn(session_id, query, display)
-                        logger.info(f"── run_pipeline 完成: is_final 报告直接发送, display长度={len(display)}")
-                        return display
-                    else:
-                        logger.warning(f"── 工具结果不包含报告字段: {list(result_json.keys())}")
-                else:
-                    logger.warning(f"── 工具结果包含 error 或不是 dict: {result_json.get('error', '') if isinstance(result_json, dict) else type(result_json)}")
-            except Exception:
-                logger.error("解析工具结果失败", exc_info=True)
+        try:
+            structured_report = parse_report_output(report_result.content)
+        except ReportSchemaError as exc:
+            error_message = "报告结构校验失败，请重试。"
+            logger.warning(
+                "report_tool_terminal: selected_tool=%s parse_status=invalid error=%s",
+                report_tool_name,
+                exc,
+            )
+            _emit("error", {"code": "REPORT_SCHEMA_INVALID", "message": error_message})
+            stm.add_turn(session_id, query, error_message)
+            return error_message
 
-        # 兜底：发送工具结果原文
-        for tool_id, result in tool_results:
-            if result.is_final:
-                _emit("report", {"content": result.content[:2000]})
-                stm.add_turn(session_id, query, result.content[:2000])
-                logger.info(f"── run_pipeline 完成: is_final 兜底发送, content长度={len(result.content[:2000])}")
-                return result.content[:2000]
-    else:
-        # ── 非最终结果：二次 LLM 调用（不带 tools），生成自然语言回复 ──
-        if _emit:
-            _emit("status", {"message": "正在生成回复..."})
-
-        logger.info("非最终结果，执行第二次 LLM 调用")
-        final_content, _ = await chat_with_tools(
-            messages,
-            tools=None,
-            max_tokens=1024,
-            temperature=0.3,
-            debug=True,
+        canonical_report = serialize_report(structured_report)
+        last_report[0] = canonical_report
+        display = json_to_display(structured_report)
+        _emit("status", {"message": "报告已生成", "phase": "done"})
+        _emit("report", {"content": display})
+        stm.add_turn(session_id, query, display)
+        logger.info(
+            "report_tool_terminal: selected_tool=%s status=success tool_is_final=true "
+            "parse_status=valid schema_version=%s",
+            report_tool_name,
+            REPORT_SCHEMA_VERSION,
         )
+        return display
 
-        if not final_content:
-            final_content = "操作完成，请查看结果。"
-            for tool_id, result in tool_results:
-                try:
-                    result_json = json.loads(result.content)
-                    if isinstance(result_json, dict) and "error" not in result_json:
-                        display = json_to_display(result_json)
-                        if display:
-                            final_content = display
-                            break
-                except Exception:
-                    logger.error("二次LLM调用后解析工具结果失败", exc_info=True)
+    # Only non-report utility tools may use an optional final LLM response.
+    if _emit:
+        _emit("status", {"message": "正在生成回复..."})
+    logger.info("non-report tool result: executing optional final LLM")
+    final_content, _ = await chat_with_tools(
+        messages,
+        tools=None,
+        max_tokens=1024,
+        temperature=0.3,
+        debug=True,
+    )
+    if not final_content:
+        final_content = "操作完成，请查看结果。"
+    if looks_like_serialized_tool_call(final_content):
+        error_message = "模型返回了无效的工具调用格式，请重试。"
+        logger.warning("optional final LLM emitted serialized tool call")
+        _emit("error", {"code": "INVALID_FINAL_TOOL_CALL", "message": error_message})
+        stm.add_turn(session_id, query, error_message)
+        return error_message
 
-        if final_content:
-            _emit("message", {"content": final_content})
-            stm.add_turn(session_id, query, final_content)
-            logger.info(f"── run_pipeline 完成: 二次LLM 回复, content长度={len(final_content)}")
-            return final_content
-
-    # ── Phase 3: 后处理 ──
-    # 从工具结果中提取并更新 last_report
-    for tool_id, result in tool_results:
-        try:
-            result_json = json.loads(result.content)
-            if isinstance(result_json, dict) and "error" not in result_json:
-                if "results" in result_json or "影像学表现" in result_json or "诊断意见" in result_json:
-                    last_report[0] = json.dumps(result_json, ensure_ascii=False, indent=2)
-                    break
-        except Exception:
-            logger.error("后处理阶段解析工具结果失败", exc_info=True)
-
-    logger.info(f"── run_pipeline 完成: 后处理兜底, 操作完成")
-    return "操作完成"
+    _emit("message", {"content": final_content})
+    stm.add_turn(session_id, query, final_content)
+    logger.info("── run_pipeline 完成: optional final LLM, content长度=%d", len(final_content))
+    return final_content

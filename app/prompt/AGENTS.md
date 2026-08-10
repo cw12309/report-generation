@@ -12,13 +12,13 @@ Prompt 模板管理。存放所有 LLM System Prompt 的 Markdown 模板文件�
 | ---------------------- | ------------------------------------------------------------ |
 | `__init__.py`          | `load_prompt(name)` 和 `reload_prompt(name)` 函数            |
 | `builder.py`           | `PromptBuilder`：统一拼装 Entity 上下文 + 模板 + Last Report |
-| `structure.md`         | 报告结构模板（JSON Schema 定义）                             |
+| `structure.md`         | 新报告生成约束：唯一 Canonical `results[]` Schema，可选内部 reasoning |
 | `report_generation.md` | 报告生成任务 Prompt（rag_search 使用）                       |
 | `multi_disease.md`     | 多疾病报告生成 Prompt                                        |
 | `entity_extraction.md` | 实体提取 Prompt（EntityTracker 使用）                        |
 | `rewrite.md`           | 查询改写 Prompt（query_rewrite 使用）                        |
-| `edit.md`              | 报告编辑 Prompt（edit_tool 使用）                            |
-| `refine.md`            | 报告重写 Prompt（refine_tool 使用）                          |
+| `edit.md`              | Canonical 报告最小编辑 Prompt（edit_tool 使用）              |
+| `refine.md`            | Canonical 报告风格润色与事实不可变 Prompt（refine_tool 使用）|
 | `tool_orchestrator.md` | Tool Calling 编排器 System Prompt                            |
 | `react_system.md`      | ReAct 模式 System Prompt                                     |
 | `react_simple.md`      | 简化版 ReAct Prompt                                          |
@@ -102,7 +102,7 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 ### 修改报告结构
 
-优先检查: `structure.md`, `report_generation.md`, `tools/rag_tool.py`
+优先检查: `structure.md`, `edit.md`, `refine.md`, `chat/report_schema.py`, 三个报告工具与 `chat/pipeline.py`
 
 ## Testing
 
@@ -112,6 +112,7 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 - 所有 Prompt 模板必须是 .md 文件，放在本目录
 - 模板文件名不含 .md 扩展名即为 `load_prompt` 的 name 参数
+- 三个报告 Prompt 只能输出 Canonical `results[{影像学表现, 诊断意见}]`；Prompt 不是校验边界，程序校验由 `chat/report_schema.py` 承担
 - `PromptBuilder` 的拼接顺序：Entity 上下文 → 模板 → Last Report（用 `---` 分隔）
 - 模板修改后，`load_prompt` 的缓存不会自动失效，需重启或调用 `reload_prompt`
 

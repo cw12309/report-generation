@@ -73,6 +73,7 @@ from .deployments import (
 )
 from .llm_client import chat_stream
 from .pipeline import run_pipeline, search_reports
+from .report_schema import ReportSchemaError, parse_report_output, serialize_report
 from tools.rag_tool import create_rag_search_handler
 
 # 全局歧义缓存，跨请求存活（按 session_id 索引）
@@ -560,8 +561,17 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             if session_data["state"]["entity_slots"]:
                 entity_tracker.slots.update(session_data["state"]["entity_slots"])
 
-            # 恢复 last_report
-            last_report = [session_data["state"]["last_report"]]
+            # 恢复 last_report：旧 Session 仅在此边界转换为 Canonical Schema。
+            stored_last_report = session_data["state"]["last_report"]
+            if stored_last_report:
+                try:
+                    stored_last_report = serialize_report(
+                        parse_report_output(stored_last_report)
+                    )
+                except ReportSchemaError as exc:
+                    logger.warning("忽略无法规范化的历史 last_report: %s", exc)
+                    stored_last_report = ""
+            last_report = [stored_last_report]
 
             # 优先进程缓存，重启后可从 SQLite state 恢复。
             cached = _ambiguity_cache.get(

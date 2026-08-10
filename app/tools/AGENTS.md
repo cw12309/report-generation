@@ -15,7 +15,7 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 | `rag_tool.py`    | `rag_search` 工具：多路召回 + Rerank + 歧义检测 + 结构化报告生成 |
 | `edit_tool.py`   | `edit_report` 工具：根据用户指令修改已有报告                     |
 | `refine_tool.py` | `refine_report` 工具：调整报告风格/详细程度/语气                 |
-| `utils.py`       | `extract_json()` — 从 LLM 输出中提取 JSON                        |
+| `utils.py`       | 旧通用 JSON 提取 helper；正式报告解析已统一迁移到 `chat/report_schema.py` |
 
 ## Symbol Map
 
@@ -36,12 +36,12 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 ### `edit_tool.py`
 
 - `EDIT_REPORT_SCHEMA` — edit_report 工具的 OpenAI function schema
-- `create_edit_report_handler(chat_fn, _emit_fn, last_report)` — 创建 edit_report handler 的工厂函数
+- `create_edit_report_handler(chat_fn, _emit_fn, last_report)` — 只接收模型的 instruction，并强制使用注入的 Session Last Report
 
 ### `refine_tool.py`
 
 - `REFINE_REPORT_SCHEMA` — refine_report 工具的 OpenAI function schema
-- `create_refine_report_handler(chat_fn, entity_tracker, _emit_fn, last_report)` — 创建 refine_report handler 的工厂函数
+- `create_refine_report_handler(chat_fn, entity_tracker, _emit_fn, last_report)` — 只接收模型的 style，并强制使用注入的 Session Last Report
 
 ### `utils.py`
 
@@ -74,21 +74,22 @@ pipeline.py
   → refine_tool.py (create_refine_report_handler)
 ```
 
+三个报告工具：
+
+- uses `chat/report_schema.py` → Canonical parse/validate、一次 repair 与 edit/refine preservation
+
 `rag_tool.py`:
 
-- uses `tools/utils.py` → `extract_json`
 - uses `prompt/builder.py` → `PromptBuilder`
 - uses `prompt/` → `load_prompt` (for report_generation, multi_disease templates)
 - uses `langsmith` → `@traceable`
 
 `edit_tool.py`:
 
-- uses `tools/utils.py` → `extract_json`
 - uses `prompt/` → `load_prompt` (for edit.md template)
 
 `refine_tool.py`:
 
-- uses `tools/utils.py` → `extract_json`
 - uses `prompt/` → `load_prompt` (for refine.md template)
 
 ## Dependencies
@@ -96,6 +97,7 @@ pipeline.py
 ### Internal Dependencies
 
 - `app/prompt/` — 加载 Prompt 模板
+- `app/chat/report_schema.py` — 唯一正式报告结构与程序级校验
 - `app/chat/llm_client.py` — `chat_stream` (通过注入的 `chat_fn`)
 
 ### External Dependencies
@@ -123,7 +125,7 @@ pipeline.py
 
 ### 修改 JSON 提取逻辑
 
-优先检查: `utils.py` → `extract_json()`, 所有工具 handler 中的调用方
+正式报告优先检查: `chat/report_schema.py` → `parse_report_output()` / `parse_report_with_repair()` 与三个 handler。`utils.py::extract_json()` 只影响仍显式调用它的旧通用路径。
 
 ## Testing
 
@@ -131,18 +133,20 @@ pipeline.py
 
 - `app/test/test_rag_planning.py`
 - `app/test/test_memory.py`
+- `app/test/test_report_pipeline.py`
 - 集成测试通过 `/api/chat` SSE 端点
 
 ## Local Rules
 
 - 工具 handler 通过工厂函数创建，接收注入的依赖（chat_fn, entity_tracker 等），不直接 import 外部模块
-- 工具 handler 返回 JSON 字符串，可包含 `_is_final: true` 标记跳过二次 LLM 调用
+- 三个报告工具只有在产出合法 Canonical StructuredReport 时才返回 `_is_final: true`；失败返回 error 且由 Pipeline 直接终止
+- edit/refine Schema 不暴露 `current_report`，handler 也必须忽略同名额外参数并只使用 Session Last Report
 - 新增工具必须在 `__init__.py` 中 export
 - 工具 Schema 必须符合 OpenAI function calling 格式
 
 ## Common Pitfalls
 
 - 修改工具 Schema 后，检查 `pipeline.py` 中 `_build_tool_registry()` 是否需要更新
-- 修改 `extract_json` 后，检查所有工具的 JSON 解析是否受影响
-- `rag_search` 返回 `_is_final: true` 时会跳过 LLM 二次调用，确保返回内容已是最终报告
+- 修改 `report_schema.py` 后，检查三个报告工具、Last Report、Public SSE 与 `json_to_display()`
+- 报告工具的非法 JSON 禁止包装成 raw report；一次 repair 后仍无效必须返回 error
 - 工具 handler 必须是 async 函数

@@ -11,7 +11,11 @@ import logging
 import re
 from typing import Callable, Optional, List, Dict
 
-from tools.utils import extract_json
+from chat.report_schema import (
+    REPORT_SCHEMA_VERSION,
+    ReportSchemaError,
+    parse_report_with_repair,
+)
 from langsmith import traceable
 
 logger = logging.getLogger(__name__)
@@ -267,21 +271,23 @@ def create_rag_search_handler(
                 caller="rag_search_tool",
             )
 
-            if _emit_fn:
-                _emit_fn("status", {"message": "报告生成完成", "phase": "done"})
+            async def repair(repair_messages):
+                return await chat_fn(
+                    repair_messages,
+                    max_tokens=2048,
+                    temperature=0,
+                    _emit=None,
+                    debug=True,
+                    caller="rag_search_repair",
+                )
 
-            report_json = extract_json(output)
-
-            # ── 如果 JSON 解析失败，用原始输出兜底，避免二次 LLM 调用输出异常 ──
-            if isinstance(report_json, dict) and "error" in report_json:
-                logger.error("rag_search JSON 解析失败！原始 LLM 输出:\n%s", output[:1000])
-                report_json = {
-                    "results": [{"影像学表现": "", "诊断意见": output.strip()}],
-                    "_is_final": True,
-                    "_raw_fallback": True,
-                }
-            else:
-                report_json["_is_final"] = True
+            report_json, repair_attempted = await parse_report_with_repair(output, repair)
+            logger.info(
+                "rag_search validated: parse_status=valid repair_attempted=%s schema_version=%s",
+                repair_attempted,
+                REPORT_SCHEMA_VERSION,
+            )
+            report_json["_is_final"] = True
 
             result_str = json.dumps(report_json, ensure_ascii=False, indent=2)
 
@@ -289,14 +295,21 @@ def create_rag_search_handler(
                 reasoning = report_json.get("reasoning", "") if isinstance(report_json, dict) else ""
                 if reasoning:
                     _emit_fn("reasoning", {"text": reasoning})
+                _emit_fn("status", {"message": "报告生成完成", "phase": "done"})
 
             logger.info("rag_search 完成: 报告长度 %d, is_final=True", len(result_str))
             return result_str
 
-        except Exception as e:
-            logger.error("rag_search 执行失败: %s", e, exc_info=True)
+        except ReportSchemaError as exc:
+            logger.warning("rag_search report validation failed: %s", exc)
             return json.dumps(
-                {"error": f"检索失败: {str(e)}", "_is_final": False},
+                {"error": "报告生成失败，请重试", "_is_final": False},
+                ensure_ascii=False,
+            )
+        except Exception:
+            logger.error("rag_search 执行失败", exc_info=True)
+            return json.dumps(
+                {"error": "报告生成失败，请重试", "_is_final": False},
                 ensure_ascii=False,
             )
 

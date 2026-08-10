@@ -12,12 +12,27 @@
 import os
 import sys
 import io
+import types
 
 # 修复 Windows 控制台编码问题
 if sys.platform == 'win32':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+# PromptBuilder 的 tracing SDK 是运行时可选依赖；纯逻辑测试不需要它。
+try:
+    import langsmith  # noqa: F401
+except ModuleNotFoundError:
+    langsmith_stub = types.ModuleType("langsmith")
+
+    def traceable(function=None, **_kwargs):
+        if function is not None:
+            return function
+        return lambda wrapped: wrapped
+
+    langsmith_stub.traceable = traceable
+    sys.modules["langsmith"] = langsmith_stub
 
 from memory import EntityTracker, ShortTermMemory
 from memory.retriever import MemoryRetriever

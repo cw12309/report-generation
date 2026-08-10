@@ -53,11 +53,18 @@ REFERENCE_PATTERNS = [
     "这个", "再看看", "看一下", "接着看",
 ]
 
-# 切换意图触发词
-SWITCH_PATTERNS = [
-    "换成", "改为", "改成", "换成别的", "改成别的",
-    "重新", "换个", "改成别的", "换一个", "不要这个",
-    "重新来", "再来", "重新开始",
+# 检查切换必须是明确的检查级动作。报告编辑中的“改成/修改/润色”
+# 不能单独作为 switch 依据。
+EXPLICIT_SWITCH_PATTERNS = [
+    "切换到", "改看", "现在看", "重新看", "转到",
+    "开始一个新的检查", "开始新的检查", "新开一个检查",
+    "重新开始检查", "换个检查", "换一种检查",
+]
+
+REPORT_OPERATION_PATTERNS = [
+    "报告", "影像学表现", "诊断意见", "CT值", "密度值", "HU",
+    "病灶大小", "病灶尺寸", "润色", "写得", "简洁", "正式",
+    "删除某句", "删除这句", "补充一段", "其他内容保持不变",
 ]
 
 # 病史/症状关键词（用于规则兜底提取）
@@ -426,14 +433,34 @@ class EntityTracker:
 
     @staticmethod
     def _is_switch(query: str) -> bool:
-        """检测是否切换意图"""
-        for pattern in SWITCH_PATTERNS:
-            if pattern in query:
-                return True
-        # 如果同时包含新模态和新部位，视为切换
+        """检测明确的检查切换，而不是报告内容编辑。"""
+        if any(pattern in query for pattern in REPORT_OPERATION_PATTERNS):
+            return False
+
         has_modality = EntityTracker._extract_modality_rule(query) is not None
         has_body_part = len(EntityTracker._extract_body_part_rule(query)) > 0
-        return has_modality and has_body_part
+        mentions_exam = "检查" in query
+
+        if any(pattern in query for pattern in EXPLICIT_SWITCH_PATTERNS):
+            # “开始一个新的检查”本身已经足够明确；其余表达至少要带检查目标。
+            if "新的检查" in query or "新开一个检查" in query:
+                return True
+            return has_modality or has_body_part or mentions_exam
+
+        # “换成 MR 检查”一类表达只检查动作词之后的目标，避免把
+        # “把 CT 值 65HU 改成 70HU”中的旧文本误当成新检查目标。
+        for verb in ("换成", "改为", "改成"):
+            if verb not in query:
+                continue
+            target = query.rsplit(verb, 1)[-1]
+            target_has_modality = EntityTracker._extract_modality_rule(target) is not None
+            target_has_body_part = len(EntityTracker._extract_body_part_rule(target)) > 0
+            if (target_has_modality or target_has_body_part) and "把" not in query and "将" not in query:
+                return True
+            if "检查" in target and (target_has_modality or target_has_body_part):
+                return True
+
+        return False
 
     @staticmethod
     def _is_reference(query: str) -> bool:

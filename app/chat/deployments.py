@@ -8,6 +8,8 @@ import secrets
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
 
+from .report_schema import ReportSchemaError, sanitize_public_report
+
 
 DEPLOYMENT_KEY_HEADER = "X-Deployment-API-Key"
 DEPLOYMENT_STATUSES = {"active", "disabled"}
@@ -115,7 +117,12 @@ def map_public_event(
         event = {"type": "report", "content": str(data.get("content") or "")}
         structured = data.get("data")
         if isinstance(structured, dict):
-            event["data"] = structured
+            try:
+                event["data"] = sanitize_public_report(structured)
+            except ReportSchemaError:
+                # Never expose malformed/internal report objects on the public
+                # contract. The human-readable content remains available.
+                pass
         return event
 
     if event_type == "ambiguous":

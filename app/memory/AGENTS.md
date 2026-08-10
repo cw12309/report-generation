@@ -136,6 +136,8 @@ pipeline.py
 
 优先检查: `entity_tracker.py` (关键词列表、提取逻辑), `prompt/entity_extraction.md`
 
+检查 switch 规则时必须区分检查级切换与报告编辑：只有带明确切换表达及检查类型/部位/检查目标的输入可清状态；“改成数值、修改报告、润色”等报告操作不能触发 switch。
+
 ### 修改对话历史管理
 
 优先检查: `short_term.py`, `pipeline.py` → `run_pipeline()` (调用方)
@@ -166,6 +168,7 @@ pipeline.py
 
 - `ShortTermMemory` 是纯内存存储，重启丢失；持久化依赖 `SessionStore`
 - `EntityTracker` 每个会话持有独立实例，无需加锁
+- `detect_intent()` 不得用单独的“改/换/修改/改成”作为 switch 依据；报告操作必须保留 STM、Entity 与 Last Report
 - `SessionStore` 是 SQLite 的唯一访问层，其他模块不直接操作 SQLite
 - Deployment API Key 只保存 SHA-256 摘要与显示前缀；明文不得进入任何 SQLite 字段
 - Deployment 软删除不删除既有 Session；外部 conversation ID 必须与 `deployment_id` 组成隔离键

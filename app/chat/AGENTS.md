@@ -13,6 +13,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 | `server.py`     | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                       |
 | `deployments.py` | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                |
 | `pipeline.py`   | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling）→ Phase 3（记忆更新）                                                      |
+| `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验/一次修复提示、edit/refine 事实保护与 Public 脱敏                                      |
 | `llm_client.py` | LLM 网络请求封装：`chat_stream()`（流式对话）、`get_embedding()`（向量化）、`chat_with_tools()`（Tool Calling）、`rerank_with_retry()`（重排重试） |
 | `schemas.py`    | Pydantic 请求模型：`ChatRequest`、Deployment CRUD/Chat、KB 与 Eval 等                                                                              |
 | `main.py`       | CLI 模式入口（`--web` 转发到 server）                                                                                                              |
@@ -41,6 +42,13 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 - `run_pipeline(query, session_id, stm, entity_tracker, client, last_report, _emit, ...)` — Agent 主流程入口
 - `search_reports(query, top_k, rerank_top_k, client, _emit, context, selected_kbs, knowledge_bases)` — RAG 检索与 Rerank
 - `_build_tool_registry(...)` — 构建并注册三个工具到 ToolRegistry
+
+### `report_schema.py`
+
+- `parse_report_output(raw)` — 提取 JSON、兼容旧边界格式并验证唯一 Canonical `results[]`
+- `parse_report_with_repair(raw, repair_fn)` — 首次失败后只允许一次受约束 JSON 修复
+- `validate_edit_preservation(...)` / `validate_refine_preservation(...)` — 保护未授权医学事实
+- `sanitize_public_report(report)` — 公开响应只保留 `results`，移除 reasoning/内部字段
 
 ### `llm_client.py`
 
@@ -91,6 +99,7 @@ server.py (路由注册)
   → deployments.py (Deployment 安全/公共 SSE/锁)
   → pipeline.py (Agent 主流程)
       → llm_client.py (LLM 调用)
+      → report_schema.py (报告结构、终态校验与事实保护)
       → tools/ (工具注册与执行)
       → rag/ (查询改写/规划/检索)
       → memory/ (记忆管理)
@@ -157,6 +166,10 @@ server.py (路由注册)
 
 优先检查: `pipeline.py` → `run_pipeline()`, `memory/entity_tracker.py`, `tools/rag_tool.py`, `prompt/` 相关模板
 
+### 修改正式报告结构或终态
+
+优先检查: `report_schema.py`, `pipeline.py`, `tools/rag_tool.py` / `edit_tool.py` / `refine_tool.py`, `prompt/structure.md` / `edit.md` / `refine.md`, `deployments.py`, `server.py` 的 Last Report 恢复与 SSE 数据注入。
+
 ### 修改 LLM 调用方式
 
 优先检查: `llm_client.py`, `config.py` (模型配置), `pipeline.py` (调用方)
@@ -183,6 +196,7 @@ server.py (路由注册)
 
 - `app/test/test_api_deployments.py` — Key、存储、KB 健康、事件映射与锁
 - `app/test/test_api_deployment_routes.py` — 管理 API、Gateway/Worker 鉴权、多轮 SSE 与原接口回归
+- `app/test/test_report_pipeline.py` — Canonical Schema、repair、Last Report 注入、报告工具终态与事实保护
 - `app/test/test_rag_planning.py` — 查询规划测试
 - `app/test/test_memory.py` — 记忆系统测试
 - `app/test/test_rerank_flow.py` — Rerank 流程测试
@@ -199,6 +213,8 @@ server.py (路由注册)
 - 新增 Worker 请求/响应模型应定义在 `schemas.py`；既有 Stateless internal 模型当前仍在 `server.py`
 - Deployment 明文 Key 只能出现在创建/轮换响应，禁止写入数据库、日志或列表/详情响应
 - Deployment Chat 不接受调用方选择 KB，必须使用部署关系表中的固定范围
+- 正式报告只能以 Canonical `results[{影像学表现, 诊断意见}]` 在运行时传播；旧格式只允许在 `report_schema.py` 边界归一化
+- 报告工具成功必须 Final；失败必须直接返回 error，禁止进入 Optional Final LLM
 
 ## Common Pitfalls
 

@@ -129,7 +129,7 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 10. **执行 Tool**
 
-    `rag_search` 做检索与报告生成；`edit_report`、`refine_report` 自动补入 Last Report。Registry 把 handler 返回 JSON 中的 `_is_final` 剥离为 `ToolResult.is_final`。
+    `rag_search` 做检索与报告生成；`edit_report`、`refine_report` 的 Tool Schema 不暴露 `current_report`，handler 只读取后端注入的 Session Last Report。三个工具的模型输出都经过统一 StructuredReport 解析、旧格式边界归一化和 Schema 校验；首次失败只允许一次受约束 JSON repair。Registry 把 handler 返回 JSON 中的 `_is_final` 剥离为 `ToolResult.is_final`。
 
 11. **可选 RAG**
 
@@ -137,11 +137,11 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 12. **可选 Final LLM**
 
-    如果没有任何 Final Tool Result，Pipeline 把 Tool Result 加回 messages，再调用一次禁用 Tools 的主 LLM。只要存在 Final Result，就跳过该调用。
+    报告工具成功时必须 Final 并直接结束；报告工具失败也直接发 `error`，不会进入 Main LLM。只有未来的非报告 utility tool 才允许把 Tool Result 加回 messages，再调用一次禁用 Tools 的主 LLM；文本化 `<tool_call>` 会被拒绝。
 
 13. **Last Report 与展示结果**
 
-    Final JSON 若包含 `results` 或兼容的报告字段，就保存到可变 `last_report[0]`，再由 `json_to_display()` 转成前端 Markdown 文本并发出 `report`。歧义结果发出 `ambiguous`，不作为报告保存。
+    只有通过 Canonical `results[]` 校验的报告才保存到可变 `last_report[0]`，再由 `json_to_display()` 转成前端 Markdown 文本并发出 `report`。旧 Session 的顶层中文字段或 `findings/impression` 只在恢复/解析边界转换，不能继续传播。歧义结果发出 `ambiguous`，不作为报告保存。
 
 14. **持久化与 SSE 结束**
 
@@ -347,17 +347,17 @@ Top 候选分数接近且诊断名不同会返回 `status=ambiguous` 和选项�
 
 ## 12. edit_report
 
-`edit_report` 输入 Current Report 和具体 instruction；Current Report 通常由 Pipeline 从 Last Report 自动注入。它加载 `edit.md`，调用 Chat LLM，尝试保持原结构，只修改指定内容，并返回 Final Result。
+`edit_report` 的模型参数只有 instruction；Current Report 不能由 Main LLM 提供，而是 handler 从 Session Last Report 强制取得并规范化为 Canonical Schema。它加载 `edit.md`，调用 Chat LLM，再执行 Schema 校验和 before/after preservation validation；明确 A→B 替换必须只产生该替换，成功后返回 Final Result。
 
 它不重新 RAG，因为用户目标是修改既有事实，而不是重新选择模板。适用例子：修改数值、删除指定病变、替换某段诊断意见。
 
-当前结构保护只在新旧 JSON 都含顶层 `影像学表现` 字典时比较 Key；主报告当前采用 `results` 数组，因此该保护不能覆盖主 Schema。参见 §53 的 Prompt/Schema 风险。
+非明确替换型编辑还会保护未授权的数值、侧别、诊断、条目数量和整体变化幅度。保护策略偏保守：无法证明修改范围安全时返回 error，不会回退到旧报告或让 Main LLM 自由生成。
 
 ## 13. refine_report
 
-`refine_report` 输入 Current Report 和 `style`，通过 PromptBuilder 把 Entity Context 与 `refine.md` 组合，再让 LLM 调整详细程度、正式度或表达方式。它同样不重新 RAG，因为其设计边界是保留医学内容主干，只改变表达。
+`refine_report` 的模型参数只有 `style`，Current Report 同样由后端强制注入。PromptBuilder 把 Entity Context 与 `refine.md` 组合，再让 LLM 调整详细程度、正式度或表达方式；结果必须保持条目数、数值、侧别、解剖部位、数量、否定事实和诊断意见，通过程序校验后才成为 Final Report。
 
-与 edit 的区别：edit 针对“改哪个事实/字段”，refine 针对“怎么写”。当前 refine 允许“补充鉴别诊断”等 style，但这与“不改变医学内容”的原则存在张力，必须通过人工或测试验证输出。
+与 edit 的区别：edit 针对“改哪个事实/字段”，refine 针对“怎么写”。“补充鉴别诊断/强化特征”等会新增医学事实的请求不再属于 refine 的允许边界。
 
 ## 14. RAG：整个检索系统为什么这么设计
 
@@ -524,8 +524,8 @@ Prompt 不是一份大模板，而是不同任务的约束层：
 | `structure.md` | `rag_search` Report LLM | 从参考生成当前 `results` 报告 Schema |
 | `entity_extraction.md` | EntityTracker | 约束实体 JSON；当前异步调用不匹配导致实际降级 |
 | `rewrite.md` | Query Rewrite | 用 metadata 扩展缺诊断 Query |
-| `edit.md` | `edit_report` | 只修改指定内容；仍描述旧版顶层字典 Schema |
-| `refine.md` | `refine_report` | 调整表达、保持内容；仍描述旧版顶层字典 Schema |
+| `edit.md` | `edit_report` | Canonical `results[]` 最小编辑，只改 instruction 指定内容 |
+| `refine.md` | `refine_report` | Canonical `results[]` 风格润色，医学事实不可变 |
 | `summarize.md` | STM | 摘要约束；当前运行时未注入 summarize_fn |
 
 `report_generation.md`、`multi_disease.md`、`react_*` 和 `chat.md` 文件存在，但源码搜索没有发现它们进入当前主运行路径。文件存在不代表启用。
@@ -1000,7 +1000,8 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `app/chat/pipeline.py` | 一轮 Agent 主编排 | Tool 决策和请求生命周期 |
 | `app/chat/llm_client.py` | Chat/Embedding/Rerank 上层调用 | 模型调用、streaming |
 | `app/chat/schemas.py` | Worker Pydantic contract | Stateful/管理 API 字段 |
-| `app/chat/utils.py` | LLM JSON 展示兼容 | 报告渲染格式 |
+| `app/chat/report_schema.py` | Canonical Report、旧格式归一化、校验/repair、事实保护与 Public 脱敏 | 任何正式报告结构/边界变更 |
+| `app/chat/utils.py` | Canonical 报告到 Markdown 展示 | 报告渲染格式 |
 | `app/tools/registry.py` | Tool 注册、执行、Final 语义 | 新 Tool/执行机制 |
 | `app/tools/rag_tool.py` | 新报告、歧义、Report LLM | 报告生成主业务 |
 | `app/tools/edit_tool.py` | 精确编辑 Last Report | 编辑行为/Schema |
@@ -1037,7 +1038,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | Agent 决策/调用次数 | `chat/pipeline.py`、`prompt/tool_orchestrator.md`、`tools/registry.py` |
 | Tool 选择规则 | `prompt/tool_orchestrator.md`、三个 Tool Schema、`pipeline.py` |
 | 新增 Tool | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt |
-| 报告结构 | `prompt/structure.md`、`tools/rag_tool.py`、`chat/utils.py`、edit/refine prompts、Frontend |
+| 报告结构 | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE |
 | 报告生成 Prompt | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py` |
 | 报告编辑 | `tools/edit_tool.py`、`prompt/edit.md`、Last Report 保存逻辑 |
 | 报告润色 | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context |
@@ -1139,15 +1140,11 @@ Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品
 
    Deployment Chat 已按 `(deployment_id, conversation_id)` 使用 keyed lock；浏览器 `/api/chat` 仍允许同一 `session_id` 并发。两个浏览器请求可能同时从 SQLite 重建状态、计算相同 `turn_index`，造成 Lost Update、重复顺序号或 Last Report/Slots 覆盖。
 
-5. **主 Report Schema 与 edit/refine Prompt 漂移**
-
-   `structure.md` 输出 `results[]`；`edit.md/refine.md` 仍要求旧版顶层 `影像学表现/诊断意见` 字典，handler 的 Key 保护也只检查旧格式。编辑/润色可能把报告转换为另一种 Schema，或无法执行预期结构保护。
-
-6. **Docker Volume 与当前 Data Pipeline 路径不一致**
+5. **Docker Volume 与当前 Data Pipeline 路径不一致**
 
    Worker 实际上传到 `/app/app/data_pipeline/report_template` 并生成 `output_markdown`；Compose 挂载的是 `./app/report_template:/app/app/report_template` 和旧 `xlsx_slices`，未挂载实际上传/Markdown目录。容器重建可能丢失源 Excel/Markdown，除非部署环境另有外部保护。
 
-7. **Worker 直连绕过完整公网边界**
+6. **Worker 直连绕过完整公网边界**
 
    Deployment internal chat 会自行验证动态 Key，但 Stateless internal、Legacy Chat 和管理 API 仍依赖 Gateway/网络拓扑。任何网络或 Compose 变更若公开 `:8001`，会绕过完整公网边界。
 
@@ -1268,7 +1265,7 @@ python -m app.test.test_memory
 
 **一次请求**：恢复 Session → Entity/Intent/Resolve → 可选 Rewrite → 相关 STM → orchestrator LLM → 一个 Tool 批次 → Final Tool 或一次最终 LLM → 保存 Last Report/Slots/Turn → SSE。
 
-**三个 Tool**：`rag_search` 新报告；`edit_report` 精确改事实；`refine_report` 改表达。三个成功结果通常都是 Final。
+**三个 Tool**：`rag_search` 新报告；`edit_report` 精确改事实；`refine_report` 改表达。三个成功结果必须是经过 Canonical Schema 校验的 Final；失败直接 error。
 
 **RAG**：Plan → 合法 Metadata → Query Embedding + Hash Sparse → strict/modality/kb-only 并行 → RRF → chunk ID dedup → Rerank → references → `structure.md`。
 
@@ -1335,7 +1332,6 @@ python -m app.test.test_memory
 - **Unknown:** `report_generation.md`、`multi_disease.md` 和 ReAct prompts 是否计划未来恢复使用；当前源码主路径未引用。
 - **Needs verification:** 医疗文本在浏览器 LocalStorage、日志、LangSmith 和外部模型服务之间的合规/脱敏策略未在仓库形成完整事实。
 - **Needs verification:** Main LLM 一次返回多个 Tool Calls 是否是预期支持场景；代码能执行，但产品语义未定义。
-- **Needs verification:** Edit/Refine 是否在真实模型上稳定保持 `results[]`，Prompt 与 handler 当前没有保证。
 
 ### Documentation Conflicts Found During Verification
 

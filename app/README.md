@@ -1,301 +1,314 @@
-# 医疗影像报告生成 Agent V2（应用层）
+# 后端与 Agent 开发指南
 
-`app/` 是医疗影像报告生成 Agent 的后端应用代码，负责 FastAPI 服务、Tool Calling、RAG 检索、当前会话上下文，以及 Excel 知识库的上传和构建。
+本文面向需要修改 Worker、Agent、RAG、知识库或评测逻辑的开发者。项目整体定位、部署拓扑和首次启动请先看[根 README](../README.md)；浏览器端实现见[前端 README](../front/README.md)。导航与局部规则以本目录及子目录的 `AGENTS.md` 为准，实际行为以源码为最终事实来源。
 
-## 当前架构
+## Backend Overview
+
+后端由两个 FastAPI 应用组成：
+
+- `app/gateway.py` 是外部边界，校验 Bearer Token，并把公开的无状态 API 流式代理到 Worker。
+- `app/chat/server.py` 是 Worker，提供静态前端、会话式 Agent API、知识库管理、配置、会话记录和评测接口。
+
+本地开发时，`python_start.py` 同时启动 Worker（`127.0.0.1:8001`）和 Gateway（`0.0.0.0:8000`）。Docker 中两者是独立容器，Gateway 通过 `WORKER_BASE_URL` 访问 Worker。
 
 ```text
-浏览器（front/）
-        │ HTTP / SSE
-        ▼
-app/chat/server.py                 FastAPI 路由
-        │
-        ├─ app/chat/pipeline.py     Agent 编排与流式对话
-        ├─ app/tools/               rag_search / edit_report / refine_report
-        ├─ app/rag/                 Milvus Dense + Sparse 检索、RRF、Rerank
-        ├─ app/memory/              SessionStore、实体追踪、短期记忆
-        └─ app/data_pipeline/       Excel → Markdown → metadata → Milvus
-
-SQLite（data/sessions.db）          会话、知识库元数据与切片原文
-Milvus Collection                  medical_reports（多个逻辑知识库，共用一个 Collection）
+Browser ── /api/* ───────────────► Worker :8001
+   ▲                                  │
+   │ static HTML/CSS/JS               ├─ Agent / Tools / Memory
+   │                                  ├─ RAG ─► Milvus
+   │                                  └─ SessionStore ─► SQLite
+   │
+External client ── /api/v1/* ──► Gateway :8000 ── /internal/* ──► Worker
+                    Bearer Token
 ```
 
-多知识库通过 Milvus 标量字段 `kb_id` 进行逻辑隔离，不拆分 Collection。当前采用双流存储：SQLite 保存知识库元数据和完整切片原文，负责管理、分页和前端详情展示；Milvus 保存检索标量、Dense/Sparse 向量和受长度约束的检索文本，专门负责 RAG 召回。两端通过 `MD5(kb_id + 文件名 + combined_text)` 生成的 32 位 `chunk_id` 精确对应。
+浏览器管理接口不是稳定的公共集成 API。外部系统应使用 Gateway 的 `/api/v1/*`；Worker 的 `/internal/*` 只供 Gateway 调用。
 
-## 主要功能
+## Architecture
 
-- Tool Calling：模型可选择检索生成、编辑报告、重写报告或直接回复。
-- Dense/Sparse 混合检索：严格、仅模态、仅知识库三种范围并行召回，Milvus RRF 粗排后由外部 Rerank 精排。
-- 多知识库选择：聊天请求携带 `selected_kbs`，检索和 Metadata Navigator 只使用勾选的知识库。
-- 上传与构建解耦：上传只落盘并登记，构建由单独接口异步触发。
-- 切片详情：Excel 解析结果批量写入 SQLite，知识库页面可以分页查看检查类型、层级、模块、影像学表现和意见。
-- 构建进度：`knowledge_bases.progress` 保存 0～100 的真实阶段进度，前端以行内状态展示。
-- 会话持久化：SQLite 保存会话、实体槽位、上一份报告和当前选择的知识库。
-- 当前会话记忆：只保留 STM 和 EntityTracker，不学习或注入跨会话用户偏好。
-- 流式响应：聊天接口使用 SSE 推送思考过程、召回、Rerank、Token 和最终报告；前端在正式回答下附加参考切片。
-- 检索评测：`app/eval/` 读取 SQLite Chunk 和独立 JSON 测试集，支持 SSE 评测/取消、人工标注、LLM 自动生成及原子测试集 CRUD。
-- 评测持久化：`evaluation_state` 保存运行现场与最后一次完整结果；SSE 客户端断开不再终止后台评测。
+一次会话式请求的主要调用链如下：
 
-## 启动
+```text
+POST /api/chat
+  → server.py 恢复或创建会话
+  → pipeline.run_pipeline()
+  → 实体/意图/上下文处理
+  → 构建 tool_orchestrator prompt
+  → LLM 选择一次工具调用批次
+  → rag_search | edit_report | refine_report
+  → 必要时再进行一次禁用工具的最终 LLM 调用
+  → SSE 事件
+  → server.py 持久化轮次、槽位、报告和思考事件
+```
 
-在项目根目录执行：
+当前实现不是无限循环的 ReAct：每轮最多执行一次工具调用批次。工具结果若带有 `is_final` 语义，pipeline 会直接返回；否则才进行一次最终组织回复的模型调用。
+
+## Directory Guide
+
+| 目录/文件 | 职责 | 局部导航 |
+| --- | --- | --- |
+| `gateway.py` | 外部鉴权、公开 API、Worker 代理 | [app/AGENTS.md](AGENTS.md) |
+| `config.py` | 合并 `config.yml` 与环境变量，提供配置 getter | [app/AGENTS.md](AGENTS.md) |
+| `chat/` | Worker、Agent pipeline、LLM 客户端、请求模型 | [chat/AGENTS.md](chat/AGENTS.md) |
+| `tools/` | Tool schema、注册表与 handler | [tools/AGENTS.md](tools/AGENTS.md) |
+| `rag/` | 查询规划、混合召回、元数据导航、Rerank | [rag/README.md](rag/README.md) · [rag/AGENTS.md](rag/AGENTS.md) |
+| `memory/` | 短期记忆、实体槽位、SQLite 会话存储 | [memory/README.md](memory/README.md) · [memory/AGENTS.md](memory/AGENTS.md) |
+| `prompt/` | Prompt 模板与 Builder | [prompt/AGENTS.md](prompt/AGENTS.md) |
+| `data_pipeline/` | Excel → Markdown/SQLite/Milvus 构建链路 | [data_pipeline/README.md](data_pipeline/README.md) · [data_pipeline/AGENTS.md](data_pipeline/AGENTS.md) |
+| `eval/` | 检索评测执行、指标和结果持久化 | [eval/README.md](eval/README.md) · [eval/AGENTS.md](eval/AGENTS.md) |
+| `test/` | pytest 测试与需要外部服务的手动脚本 | [test/AGENTS.md](test/AGENTS.md) |
+| `scripts/` | 运维和诊断脚本 | [app/AGENTS.md](AGENTS.md) |
+
+## Agent Execution
+
+`app/chat/pipeline.py` 的 `run_pipeline()` 是核心入口，主要阶段是：
+
+1. 从 `EntityTracker` 和历史轮次解析当前意图、检查方式、部位、诊断等上下文。
+2. 在配置允许且确有需要时改写检索 Query；缺少关键检查方式或诊断歧义时提前返回交互事件。
+3. 使用 `MemoryRetriever` 从本会话短期记忆中挑选与当前问题相关的轮次。
+4. 通过 Prompt Builder 组合实体、历史、上一份报告和工具说明。
+5. 调用 LLM 获取工具选择；由注册表校验并执行工具。
+6. 直接返回最终工具结果，或做一次不带工具的最终 LLM 调用。
+
+与 pipeline 配套的关键文件：
+
+- `chat/server.py`：HTTP/SSE 边界和持久化时机。
+- `chat/llm_client.py`：普通聊天与流式聊天封装。
+- `chat/schemas.py`：Worker 请求/响应模型。
+- `tools/registry.py`：工具发现、参数校验与分发。
+
+## Tools
+
+| 工具 | 主要用途 | 是否检索 RAG | 典型依赖 |
+| --- | --- | --- | --- |
+| `rag_search` | 检索参考切片并生成结构化影像报告；也处理诊断歧义 | 是 | RAG、实体槽位、`structure.md` |
+| `edit_report` | 按用户指令编辑上一份报告 | 否 | `last_report`、`edit.md` |
+| `refine_report` | 调整上一份报告的表达、细节或风格 | 否 | `last_report`、`refine.md` |
+
+新增或修改工具时，至少检查 `tools/registry.py`、对应 handler、`chat/pipeline.py` 对最终结果的处理以及 [tools/AGENTS.md](tools/AGENTS.md) 中的 Public API、Change Map 和 Testing 是否仍然准确。
+
+## RAG Pipeline
+
+当前检索主链路不是简单的“Embedding → Top K”：
+
+```text
+原始 Query
+  → 标准化 / 可选 LLM 改写
+  → Query Planner
+  → strict / modality / kb_only 多通道过滤
+  → 每通道 Dense(COSINE) + Sparse(IP) Hybrid Search
+  → RRF 融合
+  → 按稳定 chunk_id 去重
+  → Cross-Encoder Rerank
+  → 参考切片 + 结构化报告生成
+```
+
+重要实现约束：
+
+- `MetadataNavigator` 用于校验和解析候选元数据，不负责直接召回。
+- Sparse 向量是基于 BLAKE2 哈希的中文字符/双字词与英文 token 特征，不是 BM25。
+- 相同过滤条件的检索通道会去重，避免重复搜索。
+- Rerank 失败时会保留召回候选顺序作为降级结果，而不是让整次请求失败。
+- `chunk_id` 是跨 Markdown、SQLite、Milvus 和评测集对齐的稳定 32 位 MD5 标识。
+
+算法、过滤字段和配置项的细节见 [RAG README](rag/README.md)。
+
+## Memory and Session State
+
+Memory 与 RAG 是两套不同的数据来源：RAG 从知识库找参考报告，Memory 从当前会话找用户上下文。
+
+运行时状态包括：
+
+- 短期对话记忆（STM）；
+- `EntityTracker` 的检查方式、部位、诊断、临床史和意图槽位；
+- 上一份报告，用于编辑与润色；
+- 诊断歧义候选与当前选择；
+- 本轮选择的知识库 ID。
+
+`SessionStore` 使用 `data/sessions.db` 持久化会话、轮次、session state、思考事件、知识库/切片信息和评测数据。`MemoryRetriever` 则在每次 pipeline 执行期间，从已恢复的短期记忆中选择相关轮次，不是另一套长期向量库。
+
+### 会话生命周期
+
+1. 前端通常生成 `web_*` 的 `session_id`；`POST /api/session/new` 生成 `rag_v2_*` ID。
+2. `/api/chat` 按 ID 从 SQLite 恢复轮次、槽位和上一份报告；不存在时创建新会话。
+3. pipeline 处理本轮请求并持续发出思考/结果事件。
+4. Worker 在结束时写入用户轮次、助手轮次、槽位、报告和相关事件。
+5. `/api/clear` 清空并重建指定会话，`DELETE /api/session` 删除指定会话。
+
+浏览器 LocalStorage 保存的是前端历史列表和渲染快照，不替代后端 SQLite 会话状态。
+
+## Prompt System
+
+Prompt 由 `app/prompt/` 下的 Markdown 模板和 Builder 加载。当前主路径中已经确认的模板包括：
+
+| 模板 | 当前职责 |
+| --- | --- |
+| `tool_orchestrator.md` | 选择工具及组织一次工具调用 |
+| `structure.md` | 根据检索结果生成结构化报告 |
+| `entity_extraction.md` | 抽取/更新实体槽位 |
+| `rewrite.md` | 改写检索 Query |
+| `edit.md` | 编辑上一份报告 |
+| `refine.md` | 润色或细化上一份报告 |
+| `summarize.md` | 历史摘要 |
+
+目录中还保留 `report_generation.md`、`multi_disease.md`、`react_*`、`chat.md` 等模板；它们未出现在已核对的当前主报告生成链路中。修改前应先搜索实际加载点，不要仅凭文件名判断其已启用。
+
+## API and SSE
+
+### 对外 Gateway API
+
+所有请求都需要 `Authorization: Bearer <API_SECRET_KEY>`。
+
+| 方法与路径 | 用途 | Worker 目标 |
+| --- | --- | --- |
+| `POST /api/v1/rag/search` | 无状态检索，返回 `query`、可展示的 `content` 与结构化 `results` | `/internal/rag/search` |
+| `POST /api/v1/report/generate` | 无状态检索并生成报告 | `/internal/report/generate` |
+
+两者都接受 `query`、可选 `top_k`、`rerank_top_k` 和 `selected_kbs`。报告生成额外接受 `modality`、`body_part`、`clinical_history`、`diagnosis`、`selected_diagnosis`。这些请求不会创建或修改聊天会话。
+
+### Worker API 分组
+
+| 分组 | 主要路由 |
+| --- | --- |
+| 对话 | `POST /api/chat`、`POST /api/clear`、`GET /api/info`、`GET /api/memory` |
+| 会话 | `GET /api/sessions`、`POST /api/session/new`、`DELETE /api/session`、`GET /api/session/thinking` |
+| 知识库 | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{kb_id}/build`、`DELETE /api/kb/{kb_id}`、切片/筛选接口 |
+| 评测 | 数据集增删查、`POST /api/eval/auto_generate`、`POST /api/eval/run`、状态与取消接口 |
+| 配置 | `GET/POST /api/config`、`POST /api/test-model` |
+| 内部 | `POST /internal/rag/search`、`POST /internal/report/generate` |
+
+`POST /api/chat` 的 JSON 字段为：
+
+```json
+{
+  "query": "胸部 CT，可见右肺上叶结节",
+  "session_id": "web_...",
+  "selected_diagnosis": null,
+  "selected_kbs": ["kb-id"]
+}
+```
+
+至少需要一个处于可用状态的已选知识库。响应为 `text/event-stream`，每条消息使用 `data: <JSON>`。
+
+### SSE 事件
+
+主聊天链路可能发出：
+
+- 过程：`status`、`intent`、`query_rewrite`、`context_resolve`、`search`、`query_plan`、`recall`、`rerank`、`reasoning`；
+- Agent/记忆：`entity_update`、`intent_switch`、`memory_retrieval`、`tool_executed`、`context_usage`、`cache_hit`；
+- 交互与结果：`ambiguous`、`report`、`message`、`error`、`done`；
+- 内容增量：`token`。
+
+`chat_stream()` 支持 `token`，但当前已核对的主报告/编辑/润色 handler 没有把 `_emit` 传入该调用，初次和最终 Agent 调用也使用非流式 `chat_with_tools()`。因此当前主路径通常是“过程事件 + 最终 `report`/`message`”，不能假设一定会逐 token 输出。新增事件或改变 payload 时，要同步检查 `front/app.js` 的消费分支和[前端 README](../front/README.md)。
+
+评测和自动生成测试集也使用 SSE，但事件集合独立：评测使用 `start`、`progress`、`done`、`cancelled`、`error`；自动生成使用 `start`、`warning`、`progress`、`done`、`error`。
+
+## Knowledge Base Build
+
+每个上传的 `.xlsx` 文件会创建一个逻辑独立的知识库。后台构建流程是：
+
+```text
+Excel
+  → 校验并解析有效行
+  → 每行生成主 chunk 与 Markdown
+  → 写入 SQLite chunks
+  → 构建 metadata tree
+  → 生成 dense + sparse vectors
+  → 删除 Milvus 中该 kb_id 的旧数据
+  → 批量插入
+  → knowledge base 状态变为 active
+```
+
+构建由后台任务执行，状态为 `processing` 时前端每 4 秒轮询 `/api/kbs`。上传、构建、删除或字段映射变化时，优先阅读 [data_pipeline/README.md](data_pipeline/README.md) 和最近的 `AGENTS.md`。
+
+## Milvus Data Model
+
+默认 collection 为 `medical_reports`。核心字段包括：
+
+- 标识与隔离：`id`、`kb_id`、`chunk_id`；
+- 层级元数据：`modality`、`level_1` 至 `level_4`、`module_name`；
+- 报告内容：`imaging_findings`、`opinion`、`combined_text`；
+- 向量：`dense_vector`、`sparse_vector`。
+
+知识库隔离依赖 `kb_id` 过滤。修改 schema、Embedding 维度、Sparse 生成方法或 collection 名称通常需要重建向量数据，并同步检查检索与评测代码。
+
+## Evaluation
+
+评测中心只评估检索，不评估最终报告文本。每个用例包含 Query、一个或多个 `expected_chunk_ids` 以及用于筛选/展示的元数据。执行器记录 Hit@1、Hit@3、Hit@5、目标排名、Rerank 分数和 bad cases，状态与结果持久化到 SQLite。
+
+评测运行和自动生成测试集都支持进度 SSE；页面刷新后可通过 `/api/eval/status` 恢复最近现场，运行中的任务可取消。详细数据格式和 CLI 使用见 [eval/README.md](eval/README.md)。
+
+## Configuration
+
+配置入口是根目录 `config.yml`、`.env` 与 `app/config.py`：
+
+- `config.yml` 保存非敏感的模型、检索、Rerank、Milvus 和记忆参数；
+- `.env` 保存 API Key、服务地址等环境相关值；
+- `app/config.py` 提供统一 getter，并处理环境变量覆盖；
+- Worker 的 `/api/config` 可读写配置，返回时会掩码敏感字段；
+- Gateway 另外读取 `API_SECRET_KEY`、`WORKER_BASE_URL`、`WORKER_REQUEST_TIMEOUT`、`ALLOW_LEGACY_PUBLIC_PROXY`。
+
+配置字段会影响不同模块：LLM/Embedding/Rerank 指向各自客户端，检索 Top K 和规划开关影响 `rag/`，记忆轮数影响 `memory/`，Milvus URI/token/collection 影响数据构建和在线检索。字段变更时同时检查消费者，不要只改配置页面。
+
+## Development
+
+从仓库根目录执行：
 
 ```powershell
+# 安装依赖
 pip install -r requirements.txt
-$env:PYTHONPATH = "$PWD\app"
+
+# 本地同时启动 Worker 与 Gateway
 python python_start.py
+
+# 只启动 Worker（直接访问浏览器管理 UI）
+uvicorn app.chat.server:app --host 0.0.0.0 --port 8001
+
+# 容器启动
+docker compose up -d
 ```
 
-访问 <http://localhost:8000>，API 文档位于 <http://localhost:8000/docs>。
+首次配置、端口映射、环境变量示例和服务验证见[根 README](../README.md)。
 
-配置读取顺序为：环境变量 > 项目根目录 `config.yml` > 默认值。当前远程 Milvus 地址配置在：
+## Testing
 
-```yaml
-milvus:
-  uri: http://<milvus-host>:19530
-  token:
-retrieval:
-  collection_name: medical_reports
-```
-
-`retrieval.db_path` 仅作为本地 Milvus Lite 兼容回退项；配置了 `milvus.uri` 时优先连接远程 Milvus。
-
-## 首次部署：检查 Milvus Schema
-
-当前 Collection 必须包含 `kb_id`（VARCHAR）和 `chunk_id`（VARCHAR(32)）字段及其标量索引。启动服务时会自动校验，但首次部署建议先手动检查：
+优先运行与变更最近的测试，不要默认执行依赖模型、Embedding、Milvus 或大量数据的脚本。
 
 ```powershell
-python app/data_pipeline/migrate_milvus_schema.py --check
-```
+# 查询规划与过滤逻辑
+pytest app/test/test_rag_planning.py -v
 
-如果检查结果显示 `kb_id field: MISSING` 或 `chunk_id field: MISSING`，需要在确认旧数据可重建后执行一次删除重建：
+# 知识库切片存储逻辑
+pytest app/test/test_knowledge_base_chunks.py -v
 
-```powershell
-python app/data_pipeline/migrate_milvus_schema.py `
-  --drop-and-create `
-  --confirm "DROP medical_reports"
-```
-
-该命令会删除旧 Collection；生产环境如需保留旧数据，应先完成数据导出/迁移，再执行重建。
-
-## 知识库工作流
-
-每个 Excel 文件对应一个独立的 `kb_id`，即使一次上传多个文件，也会生成多个知识库记录。
-
-```text
-上传 Excel
-  └─ 保存 report_template/{kb_id}/原文件.xlsx
-  └─ SQLite 状态：uploaded
-        │
-        ▼ POST /api/kb/{kb_id}/build
-后台构建
-  └─ Excel → output_markdown/{kb_id}/...
-  └─ 批量替换 SQLite knowledge_base_chunks（完整原文）
-  └─ 提取 metadata_tree 并保存 SQLite
-  └─ 向量化并增量写入 medical_reports（每条实体带 kb_id + chunk_id）
-  └─ 成功：active；异常：failed
-```
-
-构建阶段的当前进度分配：
-
-| 进度 | 阶段 |
-| --- | --- |
-| `0%` | 进入 `processing` |
-| `10%` | Excel 解析和 Markdown 生成完成 |
-| `15%` | SQLite 切片原文批量事务提交完成 |
-| `20%` | 目录元数据提取完成 |
-| `20%～70%` | Dense Embedding |
-| `70%～82%` | Sparse 向量生成 |
-| `82%～98%` | 写入 Milvus |
-| `100%` | Collection 刷新完成，状态变为 `active` |
-
-SQLite 使用“删除该 `kb_id` 的旧切片 + `executemany` 批量插入”的单事务替换策略。插入任意一条失败时整个事务回滚，不会留下半套新切片。删除 `knowledge_bases` 记录时，`knowledge_base_chunks` 通过 `ON DELETE CASCADE` 自动清理。
-
-知识库状态：
-
-| 状态 | 含义 | 可执行操作 |
-| --- | --- | --- |
-| `uploaded` | 文件已上传，尚未构建 | 触发构建 |
-| `processing` | 正在切片、提取元数据或写入 Milvus | 等待完成 |
-| `active` | 构建完成，可用于聊天检索 | 勾选或删除 |
-| `failed` | 构建过程中发生异常 | 重新构建或删除 |
-
-## 主要 API
-
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| `GET` | `/api/kbs` | 查询 SQLite 中的知识库列表和状态 |
-| `GET` | `/api/kbs/{kb_id}/chunks?page=1&size=50` | 分页查询 SQLite 切片原文，`size` 最大 100 |
-| `GET` | `/api/kb/filter-options` | 返回评测切片选择器的六级级联选项 |
-| `GET` | `/api/kb/chunks?query=关键词&limit=20` | 参数化组合文本与六个精确字段，搜索 active 知识库切片 |
-| `POST` | `/api/kb/upload` | 上传一个或多个 `.xlsx`，只保存文件并创建 `uploaded` 记录 |
-| `POST` | `/api/kb/{kb_id}/build` | 将指定知识库置为 `processing`，后台执行构建 |
-| `DELETE` | `/api/kb/{kb_id}` | 删除 SQLite、Milvus 实体及本地模板/切片目录 |
-| `POST` | `/api/chat` | 聊天；请求体需包含至少一个 `selected_kbs` |
-| `POST` | `/api/eval/run` | SSE 流式执行 Retrieval Eval；逐条发送 Query 进度，重复运行返回 409 |
-| `GET` | `/api/eval/status` | 返回后台实时进度，或最后一次已持久化的完整结果 |
-| `POST` | `/api/eval/cancel` | 设置取消标志，当前 Query 安全完成后停止并重置评测状态 |
-| `POST` | `/api/eval/add_case` | 校验并追加人工 Retrieval Eval 用例，返回最新用例总数 |
-| `POST` | `/api/eval/auto_generate` | 从 active 知识库抽样，流式生成并逐条保存自动评测用例 |
-| `GET` | `/api/eval/dataset` | 获取当前评测用例列表和总数 |
-| `DELETE` | `/api/eval/dataset` | 将测试集原子覆盖为 `[]` |
-| `DELETE` | `/api/eval/dataset/{chunk_id}` | 删除包含指定期望 Chunk ID 的用例 |
-
-`/api/kb/filter-options` 接收可选的 `kb_name`、`exam_type`、`level1`、`level2`、`level3`，按父级路径分别返回 `kb_names`、`exam_types` 和 `level1～level4` 去重数组。`/api/kb/chunks` 额外接受 `level4`，把六个结构化条件与 `query` 文本条件组合后返回 Top 20。API 参数 `exam_type` 对应数据库字段 `modality`。
-
-上述 SQLite 查询中的用户值全部通过 `?` 占位符绑定；动态 SQL 只使用后端固定的字段映射，不接受客户端传入列名。选项查询使用 `TRIM` 并排除 NULL/空字符串。
-
-上传示例：
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/kb/upload `
-  -F "files=@D:\data\head.xlsx" `
-  -F "files=@D:\data\chest.xlsx"
-```
-
-聊天请求的关键字段：
-
-```json
-{
-  "session_id": "session-001",
-  "query": "CT 头颅脑出血",
-  "selected_kbs": ["kb_id_1", "kb_id_2"]
-}
-```
-
-前端只展示 `active` 知识库供勾选；未选择知识库时应在客户端提示“请至少选择一个知识库”。后端也会校验 ID 是否仍为 active。
-
-切片接口响应：
-
-```json
-{
-  "code": 0,
-  "data": {
-    "total": 100,
-    "page": 1,
-    "size": 50,
-    "items": [
-      {
-        "chunk_id": "850001fc663caf5a7353b9938aecd06d",
-        "chunk_index": 1,
-        "modality": "CT",
-        "level_1": "头颅",
-        "module_name": "脑出血",
-        "imaging_findings": "...",
-        "imaging_opinion": "..."
-      }
-    ]
-  }
-}
-```
-
-旧部署中尚未写入 SQLite 切片或仍使用 `kb_id:序号` ID 的知识库，需要执行一次“重新构建”后才能获得稳定 MD5 `chunk_id` 和切片详情。当前已验证数据基线中的 6 个知识库均已完成迁移。
-
-## 前端页面结构
-
-- 全局左侧导航：Agent、知识库管理、配置等一级页面切换。
-- 一级导航采用浅色布局；Agent、知识库和配置页分别拥有自己的局部二级侧栏。
-- Agent 页面：知识库选择器位于工具栏弹窗，只展示 `active` 知识库；计数徽章显示当前选择数量，选择状态保存在 LocalStorage。
-- 知识库页面：左侧为上传、状态、构建和删除操作；右侧为所选知识库的切片详情。
-- 点击知识库后立即请求切片分页接口；构建进度到达 SQLite 入库阶段或构建完成时，当前详情会自动刷新。
-- SSE 的第一个 Token 创建正式助手气泡，最终 `report/message` 更新同一个气泡；`rerank` 来源显示为可折叠参考切片。
-
-## 当前 RAG 检索参数
-
-| 环节 | 当前实现 |
-| --- | --- |
-| Chunk | 一条有效 Excel 数据行对应一个 Chunk |
-| Dense Embedding | `bge-m3`，1024 维 |
-| Dense 索引 | HNSW，COSINE，查询 `ef=64` |
-| Sparse | 中文单字、二元组和英文数字词项的 Hash Sparse，IP |
-| 融合 | Milvus `RRFRanker` |
-| 粗排候选 | `rag_top_k=50` |
-| 精排 | `Qwen/Qwen3-VL-Reranker-8B` |
-| 精排结果 | `rerank_top_k=10` |
-
-`combined_text` 当前按以下顺序构造：检查类型、`level_1～4`、模块名称、影像学表现、影像学意见。Milvus 中的表现和意见分别限制为 4096 字符，`combined_text` 限制为 8192 字符；SQLite 保存未按 Milvus 字段长度截断的原文。
-
-Sparse 分支已经参与 Hybrid Search，但当前实现不是标准 BM25：它没有 IDF 和文档长度归一化。查询前会执行实体槽位更新、上下文补全和术语标准化；条件满足时调用 Query Rewrite，Query Planner 再结合所选知识库的目录树生成标量过滤条件、Dense `semantic_query` 和 Sparse `keyword_query`。
-
-## 召回率优化路线
-
-按建议优先级推进：
-
-1. 使用稳定 `chunk_id` 建立真实黄金评测集，统计 Dense/Sparse/Hybrid 的 Recall@20/50，以及 Rerank 后的 MRR、nDCG。
-2. 修正并验证 Query Rewrite 的完整 `/chat/completions` 调用地址，记录原始、标准化、改写后的 Query 和最终过滤表达式。
-3. 持续评估严格层级、仅模态、仅 `kb_id` 三通道的单路命中率和融合贡献，必要时根据规划置信度调整权重。
-4. 当前 Rerank 前候选池已提高到 50、最终上下文保持 Top 10；继续用评测数据比较 50/80 候选的延迟与收益。
-5. 用 Milvus BM25（服务端版本支持时）或 BGE-M3 Sparse lexical weights 替换当前 Hash Sparse，并评估降低 `drop_ratio` 对医学低频词的收益。
-6. 增加受控医学同义词和缩写扩展，保留原始 Query 作为独立召回通道，避免 LLM 改写漂移。
-7. 最后评估 HNSW `ef=128/256`、RRF权重和字段级多向量表示。
-
-现有检索评测文件仍包含占位 `expected_source`；现在检索已稳定返回 MD5 `chunk_id`，下一步应基于这些 ID 完成黄金集标注后再判断真实召回率。
-
-## 数据管线命令
-
-通常通过 `/api/kb/{kb_id}/build` 触发，不需要手工执行以下命令。排查或离线处理时可使用：
-
-```powershell
-# Excel 转 Markdown（需要指定 kb_id）
-python app/data_pipeline/process_reports.py --input-file D:\data\head.xlsx `
-  --output app/data_pipeline/output_markdown --kb-id kb_id_1
-
-# 检查 Milvus Schema
-python app/data_pipeline/migrate_milvus_schema.py --check
-
-# 全量重建 SQLite / Markdown / Milvus（会删除整个 Collection）
-python app/data_pipeline/rebuild_all_knowledge_bases.py `
-  --confirm "DROP medical_reports"
-
-# 真实 Hybrid Search + Rerank 自动评测
-python app/eval/run_retrieval_eval.py
-```
-
-详细说明见 [`app/data_pipeline/README.md`](data_pipeline/README.md)。
-
-## 磁盘清理
-
-删除 API 会同步清理：
-
-- `app/data_pipeline/report_template/{kb_id}`
-- `app/data_pipeline/output_markdown/{kb_id}`
-
-清理历史遗留且未登记在 SQLite 的目录前，先预览：
-
-```powershell
-python app/scripts/cleanup_disk.py --dry-run
-python app/scripts/cleanup_disk.py
-```
-
-## 目录说明
-
-```text
-app/
-├── chat/                 FastAPI、请求模型和 Agent 编排
-├── tools/                Tool Calling 工具注册与实现
-├── rag/                  查询规划、Metadata Navigator、Milvus 检索和 Rerank
-├── memory/               SessionStore、实体追踪、短期记忆
-├── data_pipeline/        Excel、Markdown、metadata 和向量库构建脚本
-├── eval/                 Retrieval Eval、指标、数据集与用例生成
-├── prompt/               系统提示词与 PromptBuilder
-├── scripts/              运维脚本（如 cleanup_disk.py）
-└── test/                 单元测试、检索评估和 API 测试
-```
-
-运行基础语法检查：
-
-```powershell
-python -m compileall -q app
+# Memory 自带的脚本式测试入口
 python -m app.test.test_memory
-python -m unittest app.test.test_rag_planning
-# 若已安装 pytest：
-python -m pytest app/test/test_knowledge_base_chunks.py -q
-git diff --check
 ```
 
-## 模块文档
+`app/test/test_rerank_flow.py` 在导入/运行时会访问外部模型与检索依赖；`verify_chunk_id_retrieval.py`、`eval_retrieval_v2.py`、`eval_rerank_compare.py` 也属于集成或手动验证脚本。执行完整 `pytest app/test/` 前，先准备相应服务、模型凭据、Milvus 和测试数据。测试分类与前置条件见 [test/AGENTS.md](test/AGENTS.md)。
 
-- [数据管线](data_pipeline/README.md)
-- [RAG 检索](rag/README.md)
-- [当前会话记忆](memory/README.md)
-- [前端](../front/README.md)
+## Change Guide
+
+| 要修改的行为 | 首选入口 | 同时检查 |
+| --- | --- | --- |
+| Worker 路由或 SSE | `chat/server.py` | `chat/schemas.py`、`front/app.js`、Gateway 是否代理 |
+| Agent 决策与调用次数 | `chat/pipeline.py` | Prompt Builder、工具 registry、memory |
+| 新增/修改工具 | `tools/` | `tools/registry.py`、orchestrator prompt、工具测试 |
+| 检索策略或过滤条件 | `rag/` | 配置、Milvus 字段、评测数据与指标 |
+| 会话/实体/摘要 | `memory/` | `server.py` 的恢复与持久化、SQLite schema |
+| 报告格式或文案约束 | `prompt/` | 实际模板加载点、工具 handler、前端 Markdown 渲染 |
+| Excel 导入或向量 schema | `data_pipeline/` | SQLite、Milvus、RAG、评测 chunk ID |
+| 外部公开 API | `gateway.py` | Worker `/internal/*`、鉴权、OpenAPI 请求模型 |
+| 评测流程 | `eval/`、`chat/server.py` | 数据集存储、前端 SSE、状态恢复 |
+
+完成后检查最近的 `AGENTS.md` 是否因文件职责、公共符号、依赖、测试方法或修改路径变化而失效。普通实现细节变化不需要更新导航文档。
+
+## Related Documentation
+
+- [项目总览、安装与部署](../README.md)
+- [前端开发指南](../front/README.md)
+- [后端导航索引](AGENTS.md)
+- [RAG 详细说明](rag/README.md)
+- [Memory 详细说明](memory/README.md)
+- [数据构建说明](data_pipeline/README.md)
+- [评测中心说明](eval/README.md)

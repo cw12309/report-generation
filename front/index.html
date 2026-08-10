@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=33" />
+    <link rel="stylesheet" href="/static/style.css?v=34" />
   </head>
   <body>
     <div class="app">
@@ -231,7 +231,7 @@
             <header class="header">
               <h1>系统配置</h1>
               <p class="subtitle">
-                多模型配置管理，选择一个激活使用，支持添加/删除
+                管理模型、检索参数与对外 API 上线策略
               </p>
             </header>
 
@@ -246,6 +246,9 @@
                 </button>
                 <button class="config-nav-item" data-config="system">
                   系统与功能配置
+                </button>
+                <button class="config-nav-item" data-config="api">
+                  API 上线配置
                 </button>
               </nav>
               <div class="config-main" id="configForm">
@@ -396,6 +399,126 @@
                   </div>
                 </div>
 
+                <!-- API 上线配置分组（UI 先行，当前使用 Mock 数据） -->
+                <div
+                  class="config-group api-config-group"
+                  id="configGroupApi"
+                  style="display: none"
+                >
+                  <h2 class="config-group-title">API 上线配置</h2>
+                  <div class="config-group-content api-config-content">
+                    <section class="config-section api-status-section">
+                      <div class="config-section-header">
+                        <div>
+                          <h3 class="config-section-title">API 服务状态</h3>
+                          <p class="api-section-description">
+                            控制对外 API 的可用状态，并配置调用方看到的服务地址。
+                          </p>
+                        </div>
+                        <label class="api-toggle" for="apiEnabled">
+                          <input type="checkbox" id="apiEnabled" />
+                          <span class="api-toggle-slider" aria-hidden="true"></span>
+                          <span class="api-toggle-label">启用服务</span>
+                        </label>
+                      </div>
+                      <div class="api-status-body">
+                        <div class="api-service-state" id="apiStatusText">
+                          API 服务已关闭
+                        </div>
+                        <label class="api-base-url-field">
+                          <span>API 地址</span>
+                          <input
+                            type="url"
+                            class="config-input"
+                            id="apiBaseUrl"
+                            placeholder="http://localhost:8000/api/v1"
+                          />
+                        </label>
+                      </div>
+                    </section>
+
+                    <section class="config-section">
+                      <div class="config-section-header api-section-heading">
+                        <div>
+                          <h3 class="config-section-title">开放知识库选择</h3>
+                          <p class="api-section-description">
+                            只有勾选的知识库可被外部 API 检索，未开放的知识库仍仅供内部使用。
+                          </p>
+                        </div>
+                      </div>
+                      <div class="api-kb-checkbox-list" id="apiKbCheckboxList">
+                        <!-- Mock 数据动态渲染 -->
+                      </div>
+                    </section>
+
+                    <section class="config-section">
+                      <div class="config-section-header api-section-heading">
+                        <div>
+                          <h3 class="config-section-title">API Key 管理</h3>
+                          <p class="api-section-description">
+                            为不同调用方创建独立 Key。完整 Key 仅在当前 Mock 状态中用于生成调用示例。
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          class="btn btn-sm btn-outline"
+                          id="btnAddApiKey"
+                        >
+                          + 添加 Key
+                        </button>
+                      </div>
+                      <div class="api-key-table" id="apiKeyList">
+                        <!-- Mock 数据动态渲染 -->
+                      </div>
+                    </section>
+
+                    <section class="config-section api-demo-section">
+                      <div class="config-section-header api-section-heading">
+                        <div>
+                          <h3 class="config-section-title">API 调用示例</h3>
+                          <p class="api-section-description">
+                            示例会根据当前选中的 Key 和 API 地址实时更新。
+                          </p>
+                        </div>
+                        <div class="api-demo-tabs" role="tablist" aria-label="代码示例语言">
+                          <button
+                            type="button"
+                            class="api-demo-tab active"
+                            data-api-demo-language="curl"
+                            role="tab"
+                            aria-selected="true"
+                          >
+                            curl
+                          </button>
+                          <button
+                            type="button"
+                            class="api-demo-tab"
+                            data-api-demo-language="python"
+                            role="tab"
+                            aria-selected="false"
+                          >
+                            Python
+                          </button>
+                        </div>
+                      </div>
+                      <pre class="api-demo-code-block"><code id="apiDemoCode"></code></pre>
+                    </section>
+
+                    <div class="api-config-actions">
+                      <div class="config-hint" id="apiConfigHint">
+                        当前为 UI 预览模式，保存操作不会请求后端。
+                      </div>
+                      <button
+                        type="button"
+                        id="btnSaveApiConfig"
+                        class="btn btn-primary"
+                      >
+                        保存配置
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="config-actions">
                   <div class="config-hint" id="configHint">
                     💾 修改配置后点击保存即可生效
@@ -408,6 +531,64 @@
                     💾 保存配置
                   </button>
                 </div>
+              </div>
+            </div>
+
+            <div
+              class="api-key-modal"
+              id="apiKeyModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiKeyModalTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-key-modal-close
+                aria-label="关闭"
+              ></button>
+              <div class="api-key-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiKeyModalTitle">添加 API Key</h3>
+                    <p>填写调用方或租户名称，系统将生成一个 Mock Key。</p>
+                  </div>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-key-modal-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
+                </div>
+                <form id="apiKeyForm">
+                  <div class="api-key-modal-body">
+                    <label for="apiKeyTenantInput">租户名称</label>
+                    <input
+                      type="text"
+                      class="config-input"
+                      id="apiKeyTenantInput"
+                      maxlength="40"
+                      autocomplete="off"
+                      placeholder="例如：影像科生产系统"
+                    />
+                    <p class="api-key-form-error" id="apiKeyFormError" hidden></p>
+                  </div>
+                  <div class="api-key-modal-footer">
+                    <button
+                      type="button"
+                      class="btn btn-outline"
+                      data-api-key-modal-close
+                    >
+                      取消
+                    </button>
+                    <button type="submit" class="btn btn-primary" id="btnConfirmApiKey">
+                      生成 Key
+                    </button>
+                  </div>
+                </form>
               </div>
             </div>
           </div>
@@ -846,6 +1027,6 @@
 
     <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/static/app.js?v=48"></script>
+    <script src="/static/app.js?v=49"></script>
   </body>
 </html>

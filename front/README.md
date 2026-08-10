@@ -1,170 +1,266 @@
-# 前端
+# 前端开发指南
 
-前端由原生 HTML、CSS 和 JavaScript 实现，由 FastAPI 作为静态资源托管，无需 Vue、React 或前端构建工具。
+`front/` 是 Worker 内置的管理与对话界面。它不是独立的 SPA 工程：没有 Node.js 构建步骤，也没有单独部署所需的前端开发服务器。项目总览和启动方式见[根 README](../README.md)，后端接口与 Agent/RAG 运行链路见[后端 README](../app/README.md)。
 
-## 文件
+## Frontend Overview
 
-| 文件 | 说明 |
+前端覆盖五个主要页面：
+
+- Agent：选择知识库、发起对话、查看思考过程、参考切片和上下文占用；
+- 知识库：上传 Excel、构建/重建、查看进度、切片和删除知识库；
+- 评测中心：维护 Retrieval Eval 数据集、自动生成用例、执行/取消评测并恢复状态；
+- 系统配置：配置 LLM、Embedding、Rerank、检索与系统参数并测试模型连接；
+- 会话监控：查看会话、记忆状态和删除后端会话。
+
+“API 上线配置”子页面当前是 UI 先行的 Mock：展示的知识库、API Key、启停状态和保存操作都只存在于浏览器内存，不会调用后端或形成真实鉴权配置。真实公共 API 和 Bearer Token 由 `app/gateway.py` 管理。
+
+## Technology Stack
+
+| 能力 | 当前实现 |
 | --- | --- |
-| `index.html` | 页面骨架、Agent/知识库/配置/监控视图和弹窗 |
-| `app.js` | 路由切换、SSE、会话历史、知识库管理和切片详情 |
-| `style.css` | macOS 风格浅色层级、页面布局、状态、气泡和引用样式 |
+| 页面 | 单个 `index.html` |
+| 样式 | 原生 CSS，集中在 `style.css` |
+| 逻辑 | 原生浏览器 JavaScript，集中在经典脚本 `app.js` |
+| 网络 | Fetch API、ReadableStream、TextDecoder、AbortController |
+| 路由 | 无路由库；通过 `data-page` 和 DOM 显隐切换页面 |
+| 状态 | 无状态管理库；模块级变量 + DOM + LocalStorage |
+| 渲染 | DOM API、模板字符串和有限 Markdown 渲染函数 |
+| 构建 | 无 `package.json`、打包器、转译器或 TypeScript |
+| 测试 | 当前没有独立前端自动化测试或 lint 配置 |
 
-## 页面结构
+不要按 React/Vue 项目寻找组件、store 或 router；也不要为小修改假设存在 npm 命令。
+
+## Getting Started
+
+前端由 FastAPI Worker 从 `front/` 直接提供：
+
+```powershell
+# 从仓库根目录启动完整本地环境
+python python_start.py
+
+# 或只启动 Worker
+uvicorn app.chat.server:app --host 0.0.0.0 --port 8001
+```
+
+完整环境通常从 `http://localhost:8000` 进入；只启动 Worker 时访问 `http://localhost:8001`。以实际 `python_start.py`、Docker 端口映射和日志为准。
+
+直接双击 `index.html` 只能看到静态结构，不能完成正常联调：`app.js` 将 API 基址固定为同源 `/api`，没有前端环境变量或代理配置。
+
+## File Structure
 
 ```text
-全局浅色一级导航
-├─ Agent
-│   ├─ 左侧：当前浏览器的历史对话
-│   └─ 主区：工具栏、知识库选择弹窗、聊天记录和输入框
-├─ 知识库
-│   ├─ 左侧：上传、KB 状态、构建/重建/删除和执行日志
-│   └─ 右侧：所选知识库的 SQLite 切片详情
-├─ 评测
-│   └─ Retrieval Eval 运行按钮、Hit@1/3/5 指标卡和 Query 明细表
-├─ 配置
-│   ├─ 左侧：配置分类
-│   └─ 右侧：模型与检索参数
-└─ 监控
-    └─ 服务端 SQLite 会话列表和详情
+front/
+├─ index.html   # 全部页面结构、弹窗、表单与静态资源入口
+├─ app.js       # 页面交互、状态、Fetch/SSE、渲染和 LocalStorage
+├─ style.css    # 全部布局、组件状态与响应式样式
+└─ README.md    # 本文
 ```
 
-全局导航背景为 `#f0f2f5`；各页面二级侧栏为 `#f9fafb`；主内容区为白色并带轻微左侧阴影。
+Worker 在 `app/chat/server.py` 中把该目录挂载为 `/static`，并让 `/` 返回 `index.html`。当前页面引用：
 
-## 知识库管理
+```html
+<link rel="stylesheet" href="/static/style.css?v=34" />
+<script src="/static/app.js?v=49"></script>
+```
 
-### 上传
+版本查询参数只是浏览器缓存失效标记，不代表前端发布版本。修改 `app.js` 或 `style.css` 后应同步递增对应参数，否则浏览器可能继续使用旧资源。
 
-上传使用普通 `fetch` 和 `multipart/form-data`：
+## Application Architecture
 
 ```text
-POST /api/kb/upload
-files=<file1.xlsx>
-files=<file2.xlsx>
+index.html
+  ├─ data-page 按钮 ─► showPage() ─► DOM 页面显隐
+  ├─ 表单/按钮事件 ─► app.js 中的功能函数
+  └─ style.css 类名 ◄─ app.js 添加/移除状态类
+
+app.js
+  ├─ 模块级状态
+  ├─ Fetch /api/*
+  ├─ Chat SSE 解析与 handleStreamEvent()
+  ├─ Eval SSE 解析与对应 handler
+  ├─ DOM 渲染
+  └─ LocalStorage 历史快照
 ```
 
-一次可以选择多个 Excel，但每个文件独立生成一个 `kb_id`。上传完成后状态为 `uploaded`，不会自动切片或写入 Milvus。
+脚本不是 ES module，函数和状态共享同一个全局脚本作用域。修改函数名、元素 ID 或 CSS class 时，要同时搜索 HTML、JavaScript 和 CSS 的引用。
 
-### 状态与操作
+## Pages and Responsibilities
 
-| 状态 | 行内展示 | 操作 |
-| --- | --- | --- |
-| `uploaded` | 待构建 | 构建、删除 |
-| `processing` | Spinner、进度百分比 | 禁用构建和删除 |
-| `active` | 已激活 | 重新构建、删除、查看切片 |
-| `failed` | 构建失败 | 重新构建、删除 |
+### Agent
 
-构建调用：
+核心流程位于 `sendMessage(selectedDiagnosis)`：
 
-```text
-POST /api/kb/{kb_id}/build
-```
+1. 校验至少选择一个知识库；
+2. 创建用户消息、思考容器和助手输出状态；
+3. `POST /api/chat`，发送 `query`、`session_id`、`selected_diagnosis`、`selected_kbs`；
+4. 使用 `ReadableStream.getReader()` 和 `TextDecoder` 逐行解析 `data:` SSE；
+5. 由 `handleStreamEvent()` 更新思考步骤、诊断选项、报告、参考切片和耗时；
+6. 请求结束后把当前浏览器对话快照保存到 LocalStorage。
 
-列表中存在 `processing` 知识库时，每 4 秒调用 `GET /api/kbs`；全部结束后停止轮询。进度采用行内展示，不使用阻塞式构建弹窗。
+单次聊天请求使用 `AbortController` 设置 60 秒超时。超时、网络失败、HTTP 非成功状态和后端 `error` 事件都会在聊天区域显示系统错误。
 
-### 切片详情
+### Knowledge Bases
 
-点击管理列表中的知识库后调用：
+页面负责：
 
-```text
-GET /api/kbs/{kb_id}/chunks?page=1&size=50
-```
+- 上传 `.xlsx` 文件到 `/api/kb/upload`；
+- 从 `/api/kbs` 加载列表；
+- 触发 `/api/kb/{kb_id}/build`；
+- 查看 `/api/kbs/{kb_id}/chunks`；
+- 删除 `/api/kb/{kb_id}`；
+- 维护 Agent 当前选择的知识库集合。
 
-右侧卡片展示检查类型、目录层级、模块、影像学表现和意见。旧知识库若 SQLite 中没有切片，需要重新构建后才能显示详情。
+如果存在 `processing` 状态，页面每 4 秒刷新知识库列表；没有处理中的任务时停止轮询。代码中还保留 `/api/kb/build` 和 `/api/kb/extract-metadata` 的维护入口，调整时需同时确认 Worker 对应路由仍然受支持。
 
-## Agent 知识库选择
+### Evaluation
 
-知识库管理页不提供聊天复选框。Agent 工具栏中的“选择知识库”按钮打开独立弹窗，只渲染 `status === "active"` 的知识库。
+评测页支持手工添加、删除和清空用例，按知识库/检查方式/多级元数据筛选候选切片，并调用：
 
-勾选 ID 保存在：
+- `/api/eval/auto_generate`：SSE 自动生成测试用例；
+- `/api/eval/run`：SSE 执行 Retrieval Eval；
+- `/api/eval/cancel`：请求取消；
+- `/api/eval/status`：页面加载或轮询时恢复最近运行现场；
+- `/api/eval/dataset`：管理评测数据集。
 
-```text
-localStorage["selectedKnowledgeBaseIds"]
-```
+自动生成消费 `start`、`warning`、`progress`、`done`、`error`；评测运行消费 `start`、`progress`、`done`、`cancelled`、`error`。两者通过 `consumeSSEStream()` 按空行切分标准 SSE frame，与聊天的逐行解析函数不是同一套实现。
 
-页面刷新后会恢复仍然有效的 ID；知识库被删除或不再 active 时自动清理。发送聊天请求时附加：
+### Configuration
 
-```json
-{
-  "query": "CT 头颅脑出血",
-  "session_id": "web_...",
-  "selected_kbs": ["kb_id_1", "kb_id_2"]
-}
-```
+配置页通过 `GET /api/config` 加载配置，通过 `POST /api/config` 保存完整配置对象，通过 `POST /api/test-model` 测试 LLM、Embedding 或 Rerank 连接。后端会掩码返回的密钥；前端不应把真实服务密钥写进 HTML、JavaScript、LocalStorage 或 README。
 
-没有选择知识库时，前端会拦截并提示“请至少选择一个知识库”，后端也会再次校验。
+配置中的 API 子页面使用 `MOCK_API_ONLINE_DATA`。刷新页面会重置，创建/删除 Key 和“保存”都不代表 Gateway 已变更。
 
-## SSE 流式对话
+### Session Monitor
 
-前端使用 `fetch()` + `ReadableStream.getReader()` 解析 `/api/chat` 返回的 `text/event-stream`。
+监控页调用 `/api/sessions` 获取后端会话列表，调用 `/api/memory?session_id=...` 查看记忆，调用 `DELETE /api/session` 删除指定会话。
 
-| 事件 | 用途 |
-| --- | --- |
-| `status` | 当前处理阶段 |
-| `intent` / `intent_switch` | Tool Calling 意图和意图切换 |
-| `query_rewrite` / `context_resolve` | 查询改写和当前会话上下文补全 |
-| `memory_retrieval` | 仅展示当前会话 STM 相关片段 |
-| `search` / `recall` | 检索查询和多通道召回详情 |
-| `rerank` | 收集分数、诊断、来源和切片原文 |
-| `token` | 实时追加到正式 AI 回答气泡 |
-| `reasoning` | 思考面板中的模型推理 |
-| `ambiguous` | 多诊断候选按钮 |
-| `report` | 最终结构化报告，覆盖当前流式气泡内容 |
-| `message` | 最终普通回复，覆盖当前流式气泡内容 |
-| `error` | 显示错误并结束流式光标 |
-| `done` / `[DONE]` | 完成当前流并保存会话 |
+## State and Persistence
 
-第一个 `token` 会创建正式助手气泡，后续 Token 在同一个容器中重新进行安全 Markdown 渲染。最终 `report` 或 `message` 以服务端完整内容为准更新同一气泡，不再新增重复回答。
+当前状态管理是模块级变量，不存在中央 store。重要状态包括：
 
-`rerank` 事件会临时收集引用。回答完成后，气泡底部附加原生 `<details>` “参考切片”面板，每个来源可以继续展开查看具体原文。当前 `source` 是跨 SQLite、Markdown、Milvus 一致的 32 位 MD5 `chunk_id`，不再使用会随 Collection 重建变化的 Milvus 自增主键。
+- `SESSION_ID` 和当前浏览器对话 ID；
+- `isProcessing`、流 reader 与 AbortController；
+- `knowledgeBases`、`selectedKnowledgeBaseIds` 和知识库轮询 timer；
+- 评测运行、取消、轮询和筛选状态；
+- `_configData` 与 API Mock 状态。
 
-## 对话历史与 LocalStorage
+### LocalStorage keys
 
 | Key | 内容 |
 | --- | --- |
-| `chat_history_list` | 对话 ID、标题、session_id、时间 |
-| `chat_messages_{conversationId}` | 气泡 HTML 与思考过程 HTML |
-| `selectedKnowledgeBaseIds` | Agent 当前勾选的知识库 ID 数组 |
+| `chat_history_list` | 浏览器端对话索引、标题、时间和对应 `session_id` |
+| `chat_messages_{conversationId}` | 已渲染的消息 HTML 与思考过程快照 |
+| `selectedKnowledgeBaseIds` | 当前选中的知识库 ID 列表 |
 
-引用折叠面板位于 `.bubble` 内，因此会随消息 HTML 一并保存和恢复。浏览器历史用于快速恢复 UI；服务端仍使用 SQLite 保存会话轮次、实体槽位和思考事件。
+浏览器 `conversationId` 用于管理本地 UI 历史，后端 `session_id` 用于恢复 SQLite 中的轮次、槽位和上一份报告，两者不能互换。新建浏览器对话时会生成 `web_` 前缀的 session ID；后端 `/api/session/new` 使用另一种 ID 格式。
 
-## 歧义交互
+LocalStorage 保存的是渲染快照，不是后端会话事实来源。修改消息 DOM 结构或 class 名时，要检查旧快照恢复是否仍兼容；不要在其中存储敏感医疗信息或密钥，除非部署方已经明确接受浏览器持久化风险。
 
-当后端发送 `ambiguous` 时，前端显示诊断候选。用户点击后会携带 `selected_diagnosis` 再次请求 `/api/chat`，后端可以复用当前会话内的检索缓存并生成对应报告。
+## API Contract
 
-## 运行
+前端固定使用：
 
-启动后端即可访问：
-
-```powershell
-python python_start.py
+```js
+const API_BASE = "/api";
 ```
 
-- 页面：<http://localhost:8000>
-- 前端资源挂载：`/static/*`
+因此所有请求默认同源。当前主要调用如下：
 
-修改 `app.js` 或 `style.css` 后，应同步提升 `index.html` 中的 `?v=` 版本，避免浏览器缓存旧资源。
+| 功能 | 方法与路径 |
+| --- | --- |
+| 对话 | `POST /api/chat`、`POST /api/clear`、`GET /api/memory` |
+| 知识库 | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{id}/build`、`DELETE /api/kb/{id}`、切片和筛选接口 |
+| 配置 | `GET /api/config`、`POST /api/config`、`POST /api/test-model` |
+| 评测 | `/api/eval/dataset`、`/api/eval/auto_generate`、`/api/eval/run`、`/api/eval/cancel`、`/api/eval/status` |
+| 会话监控 | `GET /api/sessions`、`GET /api/memory`、`DELETE /api/session` |
 
-## 评测中心
+路由请求模型、完整列表以及外部 `/api/v1/*` 契约见[后端 README](../app/README.md)。
 
-左侧一级导航的“评测”入口对应 `#pageEval`。点击“开始评测”后调用：
+## Chat SSE Contract
 
-```text
-POST /api/eval/run
-```
+`handleStreamEvent()` 当前显式处理以下类型：
 
-运行期间按钮被禁用，状态区通过 `fetch + ReadableStream` 读取 SSE，逐条显示当前 Query 和精确百分比。收到 `done` 后进度条平滑拉满并隐藏，再渲染 Hit@1、Hit@3、Hit@5 百分比、命中数及 Query 明细表。失败时保留页面并在状态栏显示后端错误，不影响 Agent 对话和知识库轮询。
+| 事件 | 前端行为 |
+| --- | --- |
+| `status` | 更新顶部状态文案 |
+| `intent`、`query_rewrite`、`context_resolve`、`search` | 添加思考步骤 |
+| `recall`、`rerank`、`search_result` | 展示检索细节；`rerank` 同时收集报告参考切片 |
+| `reasoning`、`memory_retrieval`、`tool_executed` | 展示 Agent/记忆细节 |
+| `entity_update`、`intent_switch` | 展示上下文变化 |
+| `context_usage` | 更新上下文占用 |
+| `ambiguous` | 结束思考状态并显示诊断选择按钮 |
+| `token` | 追加助手文本增量 |
+| `report` | 完成助手消息并按“结构化报告”渲染 |
+| `message` | 完成普通助手消息 |
+| `error` | 中止当前助手消息并显示错误 |
+| `done` | 完成消息并追加总耗时 |
 
-评测进行时显示“🛑 取消评测”。点击后前端中断 SSE，并调用 `POST /api/eval/cancel` 请求后端协作式停止；进度条切换为灰色中止状态。当前 Query 会安全收尾，但不会启动下一条，状态清理后可重新开始评测。
+`search_result` 是兼容分支；在已核对的当前主 Worker/pipeline 中没有对应的主要发送点。后端还可能发出 `query_plan`、`cache_hit`，但当前 `handleStreamEvent()` 没有显式分支，会直接忽略。若这些信息需要展示，应同时定义 payload、增加渲染分支并更新本文。
 
-点击“➕ 新增用例”会打开人工录入弹窗。切片字段上方提供“知识库 → 检查类型 → Level 1～4”六个级联筛选器，通过 `GET /api/kb/filter-options` 刷新下级可用值；文本框继续使用 300ms 防抖异步搜索，并将六个精确条件一并传给 `GET /api/kb/chunks`。旧请求会被取消，浮层最多渲染 20 条 active 切片。用户选中后，真实 Chunk ID 写入隐藏字段并提交至 `POST /api/eval/add_case`。
+虽然前端支持 `token`，当前主 Agent 报告路径通常发送过程事件和最终 `report`/`message`，不保证逐 token 输出。不要让 UI 状态转换只依赖首个 `token`。
 
-级联更新不会依赖 DOM `change` 的递归触发：代码直接替换 `<option>`，保留仍然有效的已选值，无效值回退为“全部”；如果父级变化清除了旧子级，会最多追加一次稳定化请求以刷新更深层选项。筛选选项和切片搜索分别使用独立的 `AbortController` 与请求序号，较慢的旧响应不会覆盖新选择。
+聊天 reader 还识别纯文本 `[DONE]` 终止标记。增加多行 data、event/id/retry 字段等 SSE 能力时，应评估是否把聊天解析器统一到 `consumeSSEStream()`，避免两套解析规则继续分化。
 
-进入评测页面或刷新页面时，前端调用 `GET /api/eval/status`。`running` 状态恢复进度条、当前 Query、取消按钮并每 1.5 秒轮询；`completed` 状态直接调用原有结果渲染函数恢复指标和明细，不重新执行检索。当前静态资源版本为 `style.css?v=33`、`app.js?v=48`。
+## Rendering and Styling
 
-点击“🤖 自动生成用例”可设置生成数量与最小切片长度。页面通过 `POST /api/eval/auto_generate` 读取 SSE 流，实时更新进度条和逐条 Query 日志；可主动停止任务，已显示成功的用例已完成落盘。结束后页面会更新测试集总数，并提示重新运行评测。
+- `renderMarkdown()` 先转义 HTML，再处理有限的 `##`/`###` 标题、粗体和换行；它不是完整 Markdown 引擎。
+- Rerank 参考信息使用原生 DOM 和 `<details>`/展开区域渲染，字段来自 SSE payload。
+- 动态后端文本应通过 `escapeHtml()` 或 `textContent` 进入页面。新增 `innerHTML` 模板时要明确区分可信静态模板与外部数据。
+- 视觉状态主要由 CSS class 控制。新增状态时优先复用现有 class 命名和设计变量，并验证窄屏布局。
+- HTML 中存在较多由 `app.js` 查询的固定 ID；重命名必须跨三个文件同步。
 
-进入评测页时，前端通过 `GET /api/eval/dataset` 直接展示测试集，不会触发检索。每行的“❌ 删除”调用单删接口；“🗑️ 清空测试集”经二次确认后将 JSON 重置为空数组。删除完成后自动刷新列表，并将旧指标标记为等待重新评测。
+## Development Workflow
 
-测试集和评测结果表格的第一列是纯展示序号，由当前数组 `index + 1` 动态生成；真实删除主键始终是 32 位 `chunk_id`。单删并重新拉取后，序号会自动连续重排。
+修改前先定位最小范围：
+
+1. 页面结构或可访问性：从 `index.html` 的元素 ID、`data-page` 和对应表单开始。
+2. 行为或 API：在 `app.js` 中搜索路由字符串、事件类型或元素 ID。
+3. 视觉：在 `style.css` 搜索同一 class，并确认 JavaScript 是否动态切换它。
+4. 后端契约：阅读 `app/chat/server.py`、`app/chat/schemas.py` 和最近的 `AGENTS.md`。
+
+变更后至少手工检查：
+
+- 页面导航、弹窗打开/关闭和键盘 Escape；
+- 新建/恢复/清空对话与刷新后的 LocalStorage 恢复；
+- 正常聊天、诊断歧义、错误和 60 秒超时状态；
+- 知识库上传、构建轮询、切片查看与选中状态；
+- 配置加载/保存/模型测试；
+- 评测开始、进度、取消、完成和刷新后恢复；
+- 浏览器控制台无语法错误，网络请求路径和 payload 符合 Worker 接口；
+- 静态资源查询参数已按需更新。
+
+当前没有前端单元测试、端到端测试、lint 或构建命令。可使用浏览器开发者工具做网络与控制台检查；涉及后端契约时，运行后端对应的最小测试，而不是虚构 `npm test`。
+
+## Known Constraints
+
+- `app.js` 和 `style.css` 都是大型单文件，功能之间共享全局状态，改动时容易产生隐式耦合。
+- 页面切换不改变 URL，也没有浏览器前进/后退路由语义。
+- API 基址固定为同源 `/api`，没有运行时前端配置层。
+- 聊天和评测使用两套 SSE 解析实现。
+- 没有自动化前端回归测试。
+- 本地聊天快照包含渲染 HTML，DOM 结构迁移需要兼容旧数据。
+- API 上线配置/API Key 管理目前仅为 Mock UI。
+
+这些约束是当前代码状态，不是路线图。若实际重构消除了某项限制，应在同一次变更中更新本文。
+
+## Change Guide
+
+| 要修改的内容 | 主要位置 | 必须联查 |
+| --- | --- | --- |
+| 新增页面/导航 | `index.html`、页面切换逻辑 | `style.css`、默认页面状态 |
+| 聊天请求字段 | `sendMessage()` | 后端 `ChatRequest`、`/api/chat` |
+| SSE 新事件 | `handleStreamEvent()` | 后端发送点、payload 转义、终态处理 |
+| 消息/报告渲染 | assistant stream 与 `renderMarkdown()` | LocalStorage 恢复、XSS 边界 |
+| 知识库操作 | KB 函数与 modal | Worker KB 路由、轮询终止条件 |
+| 评测流程 | Eval 函数与 `consumeSSEStream()` | Worker Eval 事件、状态恢复 |
+| 配置字段 | 配置表单和序列化 | `/api/config`、`app/config.py`、真实消费者 |
+| 样式或 class | `style.css` | HTML 和 JS 的选择器/动态 class |
+| 静态资源 | `app.js`/`style.css` | `index.html` 中对应 `?v=` |
+
+## Related Documentation
+
+- [项目总览、安装与部署](../README.md)
+- [后端与 Agent 开发指南](../app/README.md)
+- [后端导航索引](../app/AGENTS.md)
+- [RAG 详细说明](../app/rag/README.md)
+- [评测中心说明](../app/eval/README.md)

@@ -1,4 +1,4 @@
-console.log("[APP] app.js v48 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v49 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -3498,6 +3498,385 @@ async function saveLlmConfigFromPanel() {
   }
 }
 
+// ==================== API 上线配置（UI 先行 / Mock） ====================
+
+const MOCK_API_ONLINE_DATA = {
+  api_config: {
+    enabled: true,
+    base_url: "",
+    allowed_kbs: ["kb-radiology-standard", "kb-neuro-ct"],
+    available_kbs: [
+      { kb_id: "kb-radiology-standard", kb_name: "影像报告规范库", chunk_count: 1280 },
+      { kb_id: "kb-neuro-ct", kb_name: "神经系统 CT 模板库", chunk_count: 642 },
+      { kb_id: "kb-chest-dr", kb_name: "胸部 DR 报告库", chunk_count: 518 },
+      { kb_id: "kb-abdomen-mr", kb_name: "腹部 MR 模板库", chunk_count: 703 },
+    ],
+  },
+  api_keys: [
+    {
+      id: "key-radiology-prod",
+      tenant_name: "影像科生产系统",
+      key: "sk-mock-radiology-prod-8f39d2a1",
+      created_at: "2026-08-05 09:30:18",
+    },
+    {
+      id: "key-integration-test",
+      tenant_name: "院内集成测试",
+      key: "sk-mock-integration-test-4c72a9e6",
+      created_at: "2026-08-06 14:12:05",
+    },
+  ],
+};
+
+let _apiOnlineState = null;
+let _apiDemoLanguage = "curl";
+let _selectedApiKeyId = null;
+
+function getDefaultApiBaseUrl() {
+  const currentOrigin = window.location.origin && window.location.origin !== "null"
+    ? window.location.origin
+    : "http://localhost:8000";
+  return `${currentOrigin.replace(/\/$/, "")}/api/v1`;
+}
+
+function ensureApiOnlineState() {
+  if (_apiOnlineState) return;
+  _apiOnlineState = JSON.parse(JSON.stringify(MOCK_API_ONLINE_DATA));
+  _apiOnlineState.api_config.base_url = getDefaultApiBaseUrl();
+  _selectedApiKeyId = _apiOnlineState.api_keys[0]?.id || null;
+}
+
+function maskApiKey(apiKey) {
+  if (!apiKey) return "—";
+  if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}••••${apiKey.slice(-2)}`;
+  return `${apiKey.slice(0, 10)}••••••••${apiKey.slice(-4)}`;
+}
+
+function renderApiServiceStatus() {
+  const enabledInput = document.getElementById("apiEnabled");
+  const statusEl = document.getElementById("apiStatusText");
+  const baseUrlInput = document.getElementById("apiBaseUrl");
+  if (!enabledInput || !statusEl || !baseUrlInput) return;
+
+  const enabled = Boolean(_apiOnlineState.api_config.enabled);
+  enabledInput.checked = enabled;
+  baseUrlInput.value = _apiOnlineState.api_config.base_url;
+  statusEl.textContent = enabled
+    ? "API 服务运行中，可接受已授权请求"
+    : "API 服务已关闭，外部请求将被拒绝";
+  statusEl.classList.toggle("is-enabled", enabled);
+}
+
+function renderApiKnowledgeBases() {
+  const listEl = document.getElementById("apiKbCheckboxList");
+  if (!listEl) return;
+  const config = _apiOnlineState.api_config;
+  const selected = new Set(config.allowed_kbs);
+  const items = config.available_kbs || [];
+
+  if (!items.length) {
+    listEl.innerHTML = '<div class="api-key-empty">暂无可开放的知识库</div>';
+    return;
+  }
+
+  listEl.innerHTML = items.map((kb) => {
+    const checked = selected.has(kb.kb_id);
+    return `
+      <label class="api-kb-checkbox-item ${checked ? "is-selected" : ""}">
+        <input
+          type="checkbox"
+          value="${escapeHtml(kb.kb_id)}"
+          ${checked ? "checked" : ""}
+        />
+        <span class="api-kb-checkbox-copy">
+          <strong title="${escapeHtml(kb.kb_name)}">${escapeHtml(kb.kb_name)}</strong>
+          <span>${Number(kb.chunk_count || 0).toLocaleString("zh-CN")} 个知识切片</span>
+        </span>
+      </label>
+    `;
+  }).join("");
+}
+
+function renderApiKeyList() {
+  const listEl = document.getElementById("apiKeyList");
+  if (!listEl) return;
+  const keys = _apiOnlineState.api_keys || [];
+  if (_selectedApiKeyId && !keys.some((item) => item.id === _selectedApiKeyId)) {
+    _selectedApiKeyId = keys[0]?.id || null;
+  }
+
+  const header = `
+    <div class="api-key-table-header" aria-hidden="true">
+      <span>租户名</span>
+      <span>Key</span>
+      <span>创建时间</span>
+      <span>操作</span>
+    </div>
+  `;
+  if (!keys.length) {
+    listEl.innerHTML = `${header}<div class="api-key-empty">尚未创建 API Key</div>`;
+    return;
+  }
+
+  listEl.innerHTML = header + keys.map((item) => {
+    const selected = item.id === _selectedApiKeyId;
+    return `
+      <div
+        class="api-key-row ${selected ? "is-selected" : ""}"
+        data-api-key-id="${escapeHtml(item.id)}"
+        role="button"
+        tabindex="0"
+        aria-label="选择 ${escapeHtml(item.tenant_name)} 的 API Key"
+      >
+        <span class="api-key-tenant">
+          <span class="api-key-selected-dot" aria-hidden="true"></span>
+          <span>${escapeHtml(item.tenant_name)}</span>
+        </span>
+        <span class="api-key-mask">${escapeHtml(maskApiKey(item.key))}</span>
+        <span>${escapeHtml(item.created_at)}</span>
+        <button
+          type="button"
+          class="api-key-delete"
+          data-delete-api-key="${escapeHtml(item.id)}"
+          aria-label="删除 ${escapeHtml(item.tenant_name)} 的 API Key"
+        >
+          删除
+        </button>
+      </div>
+    `;
+  }).join("");
+}
+
+function getSelectedApiKey() {
+  return _apiOnlineState.api_keys.find((item) => item.id === _selectedApiKeyId)
+    || _apiOnlineState.api_keys[0]
+    || null;
+}
+
+function buildApiDemoCode(language = _apiDemoLanguage) {
+  ensureApiOnlineState();
+  const config = _apiOnlineState.api_config;
+  const selectedKey = getSelectedApiKey();
+  const apiKey = selectedKey?.key || "sk-your-api-key";
+  const baseUrl = (config.base_url || getDefaultApiBaseUrl()).replace(/\/$/, "");
+  const url = `${baseUrl}/rag/search`;
+  const selectedKbs = config.allowed_kbs || [];
+
+  if (language === "python") {
+    return `import requests
+
+url = "${url}"
+headers = {
+    "Authorization": "Bearer ${apiKey}",
+    "Content-Type": "application/json",
+}
+payload = {
+    "query": "CT 头颅脑出血",
+    "selected_kbs": ${JSON.stringify(selectedKbs, null, 4).replace(/\n/g, "\n    ")},
+}
+
+response = requests.post(url, headers=headers, json=payload, timeout=120)
+response.raise_for_status()
+print(response.json())`;
+  }
+
+  const payload = JSON.stringify({
+    query: "CT 头颅脑出血",
+    selected_kbs: selectedKbs,
+  });
+  return `curl --request POST "${url}" \\
+  --header "Authorization: Bearer ${apiKey}" \\
+  --header "Content-Type: application/json" \\
+  --data '${payload}'`;
+}
+
+function renderApiDemoCode() {
+  const codeEl = document.getElementById("apiDemoCode");
+  if (!codeEl) return;
+  codeEl.textContent = buildApiDemoCode();
+  document.querySelectorAll(".api-demo-tab").forEach((tab) => {
+    const active = tab.dataset.apiDemoLanguage === _apiDemoLanguage;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+}
+
+function renderApiConfig() {
+  ensureApiOnlineState();
+  renderApiServiceStatus();
+  renderApiKnowledgeBases();
+  renderApiKeyList();
+  renderApiDemoCode();
+}
+
+function createMockApiKey() {
+  const bytes = new Uint8Array(12);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i += 1) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return `sk-mock-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+function openApiKeyModal() {
+  const modal = document.getElementById("apiKeyModal");
+  const input = document.getElementById("apiKeyTenantInput");
+  const errorEl = document.getElementById("apiKeyFormError");
+  if (!modal || !input) return;
+  input.value = "";
+  if (errorEl) {
+    errorEl.textContent = "";
+    errorEl.hidden = true;
+  }
+  modal.hidden = false;
+  requestAnimationFrame(() => input.focus());
+}
+
+function closeApiKeyModal() {
+  const modal = document.getElementById("apiKeyModal");
+  if (modal) modal.hidden = true;
+}
+
+function formatApiKeyCreatedAt(date = new Date()) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function addMockApiKey(tenantName) {
+  const key = createMockApiKey();
+  const item = {
+    id: `key-${Date.now().toString(36)}`,
+    tenant_name: tenantName,
+    key,
+    created_at: formatApiKeyCreatedAt(),
+  };
+  _apiOnlineState.api_keys.unshift(item);
+  _selectedApiKeyId = item.id;
+  renderApiKeyList();
+  renderApiDemoCode();
+  showToast(`已为“${tenantName}”生成 Mock Key`, "success");
+}
+
+function deleteMockApiKey(keyId) {
+  const item = _apiOnlineState.api_keys.find((key) => key.id === keyId);
+  _apiOnlineState.api_keys = _apiOnlineState.api_keys.filter((key) => key.id !== keyId);
+  if (_selectedApiKeyId === keyId) {
+    _selectedApiKeyId = _apiOnlineState.api_keys[0]?.id || null;
+  }
+  renderApiKeyList();
+  renderApiDemoCode();
+  showToast(item ? `已删除“${item.tenant_name}”的 Mock Key` : "Key 已删除", "success");
+}
+
+function bindApiConfigInteractions() {
+  const enabledInput = document.getElementById("apiEnabled");
+  const baseUrlInput = document.getElementById("apiBaseUrl");
+  const kbList = document.getElementById("apiKbCheckboxList");
+  const keyList = document.getElementById("apiKeyList");
+  const keyForm = document.getElementById("apiKeyForm");
+  const tenantInput = document.getElementById("apiKeyTenantInput");
+  const keyFormError = document.getElementById("apiKeyFormError");
+
+  document.getElementById("btnAddApiKey")?.addEventListener("click", openApiKeyModal);
+  document.querySelectorAll("[data-api-key-modal-close]").forEach((element) => {
+    element.addEventListener("click", closeApiKeyModal);
+  });
+
+  enabledInput?.addEventListener("change", () => {
+    ensureApiOnlineState();
+    _apiOnlineState.api_config.enabled = enabledInput.checked;
+    renderApiServiceStatus();
+  });
+
+  baseUrlInput?.addEventListener("input", () => {
+    ensureApiOnlineState();
+    _apiOnlineState.api_config.base_url = baseUrlInput.value.trim();
+    renderApiDemoCode();
+  });
+
+  kbList?.addEventListener("change", (event) => {
+    const input = event.target.closest('input[type="checkbox"]');
+    if (!input) return;
+    ensureApiOnlineState();
+    _apiOnlineState.api_config.allowed_kbs = Array.from(
+      kbList.querySelectorAll('input[type="checkbox"]:checked'),
+      (checkbox) => checkbox.value,
+    );
+    input.closest(".api-kb-checkbox-item")?.classList.toggle("is-selected", input.checked);
+    renderApiDemoCode();
+  });
+
+  const selectKeyRow = (row) => {
+    if (!row) return;
+    _selectedApiKeyId = row.dataset.apiKeyId;
+    renderApiKeyList();
+    renderApiDemoCode();
+  };
+
+  keyList?.addEventListener("click", (event) => {
+    const deleteButton = event.target.closest("[data-delete-api-key]");
+    if (deleteButton) {
+      event.stopPropagation();
+      deleteMockApiKey(deleteButton.dataset.deleteApiKey);
+      return;
+    }
+    selectKeyRow(event.target.closest(".api-key-row"));
+  });
+
+  keyList?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const row = event.target.closest(".api-key-row");
+    if (!row) return;
+    event.preventDefault();
+    selectKeyRow(row);
+  });
+
+  keyForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const tenantName = tenantInput?.value.trim() || "";
+    if (!tenantName) {
+      if (keyFormError) {
+        keyFormError.textContent = "请输入租户名称";
+        keyFormError.hidden = false;
+      }
+      tenantInput?.focus();
+      return;
+    }
+    addMockApiKey(tenantName);
+    closeApiKeyModal();
+  });
+
+  document.querySelectorAll(".api-demo-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      _apiDemoLanguage = tab.dataset.apiDemoLanguage || "curl";
+      renderApiDemoCode();
+    });
+  });
+
+  document.getElementById("btnSaveApiConfig")?.addEventListener("click", async (event) => {
+    ensureApiOnlineState();
+    const button = event.currentTarget;
+    const hint = document.getElementById("apiConfigHint");
+    button.disabled = true;
+    button.textContent = "保存中...";
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    if (hint) {
+      const selectedCount = _apiOnlineState.api_config.allowed_kbs.length;
+      hint.textContent = `Mock 配置已保存：开放 ${selectedCount} 个知识库，${_apiOnlineState.api_keys.length} 个 Key。`;
+    }
+    button.disabled = false;
+    button.textContent = "保存配置";
+    showToast("API 上线配置已保存（Mock）", "success");
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeApiKeyModal();
+  });
+}
+
   document.addEventListener("DOMContentLoaded", () => {
   const btnSaveConfig = document.getElementById("btnSaveConfig");
   if (btnSaveConfig) {
@@ -3534,6 +3913,7 @@ async function saveLlmConfigFromPanel() {
   }
   // 绑定配置导航切换
   const navItems = document.querySelectorAll(".config-nav-item");
+  const sharedConfigActions = document.querySelector("#configForm > .config-actions");
   navItems.forEach(item => {
     item.addEventListener("click", () => {
       const targetKey = item.dataset.config;
@@ -3544,8 +3924,15 @@ async function saveLlmConfigFromPanel() {
       if (targetGroup) {
         targetGroup.style.display = "block";
       }
+      if (sharedConfigActions) {
+        sharedConfigActions.style.display = targetKey === "api" ? "none" : "flex";
+      }
+      if (targetKey === "api") {
+        renderApiConfig();
+      }
     });
   });
+  bindApiConfigInteractions();
   // 页面加载后立即加载配置，确保 Agent 页面打开时模型下拉框就有内容
   loadConfig();
   refreshKnowledgeBases();

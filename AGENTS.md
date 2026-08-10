@@ -33,6 +33,7 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 
 | Directory            | Responsibility                                |
 | -------------------- | --------------------------------------------- |
+| `front/`             | 原生 Web 前端；一级页面依次为 Agent、Knowledge Base、API 上线、Eval、Monitor、Config |
 | `app/`               | 核心应用代码                                  |
 | `app/chat/`          | Worker 服务、Agent 编排、LLM 客户端、工具函数 |
 | `app/tools/`         | Tool Calling 工具注册与实现                   |
@@ -49,6 +50,7 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 - **应用启动**: `python_start.py` (本地开发), `uvicorn app.chat.server:app` (Docker Worker)
 - **API Gateway**: `app/gateway.py` — 无状态全局 Key 鉴权、Deployment Key 转发 + 代理
 - **Worker 服务**: `app/chat/server.py` — 所有业务接口与 Deployment 管理/对话
+- **Web 前端**: `front/index.html` + `front/app.js` — 六个一级页面、DOM 切换和 API/SSE 交互
 - **API 上线**: `app/chat/deployments.py` — Deployment Key、KB 范围、SSE 映射和 conversation lock
 - **Agent 主流程**: `app/chat/pipeline.py` → `run_pipeline()`
 - **CLI 入口**: `app/chat/main.py` → `main()`

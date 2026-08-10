@@ -413,7 +413,7 @@ Response: text/event-stream
 
 用途：把一组固定的 Active 知识库上线为独立的有状态对话 API。调用方只提交 `message`、可选 `conversation_id` 和可选 `selected_diagnosis`，不能在请求中替换 `selected_kbs`。首次不传 `conversation_id` 时，服务会在首个 SSE 事件中返回新 ID；后续请求复用该 ID，即可继续使用同一 Session 的实体、历史、上一份报告和歧义上下文。
 
-Deployment 通过 Config 页“API 上线”区域或 Worker 管理路由创建。创建和轮换时只显示一次明文 Key；数据库只保存 SHA-256 摘要与可识别前缀。停用、软删除或绑定知识库失效时，公开调用会被拒绝。
+Deployment 通过侧边栏独立“API 上线”页面或 Worker 管理路由创建。创建和轮换时只显示一次明文 Key；数据库只保存 SHA-256 摘要与可识别前缀。停用、软删除或绑定知识库失效时，公开调用会被拒绝。
 
 Gateway 公开的 `/api/v1/*` 路由会转发到 Worker 的 `/internal/*` 路由；外部调用方不应直接访问 Internal API。
 

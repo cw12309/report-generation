@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=35" />
+    <link rel="stylesheet" href="/static/style.css?v=37" />
   </head>
   <body>
     <div class="app">
@@ -22,19 +22,23 @@
           </button>
           <button class="sidebar-btn" data-page="kb" title="知识库管理">
             <span class="sidebar-icon">📚</span>
-            <span class="sidebar-label">知识库</span>
+            <span class="sidebar-label">Knowledge Base</span>
+          </button>
+          <button class="sidebar-btn" data-page="deployments" title="API 上线">
+            <span class="sidebar-icon">🚀</span>
+            <span class="sidebar-label">API 上线</span>
           </button>
           <button class="sidebar-btn" data-page="eval" title="评测中心">
             <span class="sidebar-icon">🧪</span>
-            <span class="sidebar-label">评测</span>
-          </button>
-          <button class="sidebar-btn" data-page="config" title="系统配置">
-            <span class="sidebar-icon">⚙️</span>
-            <span class="sidebar-label">配置</span>
+            <span class="sidebar-label">Eval</span>
           </button>
           <button class="sidebar-btn" data-page="monitor" title="会话记录">
             <span class="sidebar-icon">📊</span>
-            <span class="sidebar-label">记录</span>
+            <span class="sidebar-label">Monitor</span>
+          </button>
+          <button class="sidebar-btn" data-page="config" title="系统配置">
+            <span class="sidebar-icon">⚙️</span>
+            <span class="sidebar-label">Config</span>
           </button>
         </div>
       </nav>
@@ -226,12 +230,267 @@
             </div>
           </div>
 
+          <!-- API 上线页面 -->
+          <div class="page" id="pageDeployments">
+            <header class="header api-page-header">
+              <div>
+                <h1>API 上线</h1>
+                <p class="subtitle">
+                  将一个或多个知识库发布为独立的多轮 Agent API。上线后，外部系统通过 Deployment Endpoint 和 API Key 调用，知识库范围由 Deployment 固定控制。
+                </p>
+              </div>
+              <div class="api-page-actions">
+                <button type="button" class="btn btn-outline" id="btnOpenApiGuide">
+                  使用说明
+                </button>
+                <button type="button" class="btn btn-primary" id="btnOpenApiDeploymentCreate">
+                  + 创建 API
+                </button>
+              </div>
+            </header>
+
+            <div class="api-page-container">
+              <section class="config-section api-status-section">
+                <div class="config-section-header">
+                  <div>
+                    <h2 class="config-section-title">Deployment Service</h2>
+                    <p class="api-section-description">
+                      外部系统通过 Deployment Endpoint 和独立 API Key 调用；不同 Deployment 使用不同密钥。
+                    </p>
+                  </div>
+                  <span class="api-deployment-summary" id="apiDeploymentSummary">正在加载…</span>
+                </div>
+                <div class="api-status-body">
+                  <div class="api-service-state" id="apiStatusText">正在检查服务状态</div>
+                  <label class="api-base-url-field" for="apiBaseUrl">
+                    <span>当前公共基址</span>
+                    <input type="url" class="config-input" id="apiBaseUrl" readonly />
+                  </label>
+                </div>
+              </section>
+
+              <section class="config-section api-deployment-list-section">
+                <div class="config-section-header api-section-heading">
+                  <div>
+                    <h2 class="config-section-title">Deployment List</h2>
+                    <p class="api-section-description">
+                      查看固定知识库范围、健康状态、Endpoint、Key Prefix 和最近调用时间。
+                    </p>
+                  </div>
+                  <button type="button" class="btn btn-sm btn-outline" id="btnRefreshApiDeployments">刷新</button>
+                </div>
+                <div class="api-deployment-list" id="apiDeploymentList" aria-live="polite"></div>
+              </section>
+            </div>
+
+            <!-- 创建 Deployment -->
+            <div class="api-key-modal" id="apiDeploymentCreateModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentCreateTitle" hidden>
+              <button type="button" class="api-key-modal-backdrop" data-api-create-close aria-label="关闭创建窗口"></button>
+              <div class="api-key-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiDeploymentCreateTitle">创建 API</h3>
+                    <p>选择一个或多个 Active Knowledge Base，发布为支持多轮对话的 Agent API。</p>
+                  </div>
+                  <button type="button" class="api-key-modal-close" data-api-create-close aria-label="关闭">×</button>
+                </div>
+                <form id="apiDeploymentForm">
+                  <div class="api-key-modal-body">
+                    <label for="apiDeploymentName">名称</label>
+                    <input id="apiDeploymentName" class="config-input" maxlength="120" autocomplete="off" required placeholder="例如：胸部报告 API" />
+                    <label for="apiDeploymentDescription">描述（可选）</label>
+                    <textarea id="apiDeploymentDescription" class="config-input" maxlength="2000" rows="3" placeholder="例如：供 HIS 系统服务端调用"></textarea>
+                    <div class="api-field-label">Knowledge Base（仅显示 Active）</div>
+                    <div class="api-kb-checkbox-list api-kb-checkbox-list-modal" id="apiKbCheckboxList"></div>
+                    <p class="api-key-form-error" id="apiDeploymentFormError" role="alert" hidden></p>
+                  </div>
+                  <div class="api-key-modal-footer">
+                    <button type="button" class="btn btn-outline" data-api-create-close>取消</button>
+                    <button type="submit" id="btnCreateApiDeployment" class="btn btn-primary">创建并上线</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <!-- 创建/轮换后的一次性密钥 -->
+            <div class="api-key-modal" id="apiSecretModal" role="dialog" aria-modal="true" aria-labelledby="apiSecretModalTitle" hidden>
+              <button type="button" class="api-key-modal-backdrop" data-api-secret-close aria-label="关闭密钥窗口"></button>
+              <div class="api-key-modal-dialog api-secret-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiSecretModalTitle">API 已上线</h3>
+                    <p id="apiSecretDeploymentName"></p>
+                  </div>
+                  <button type="button" class="api-key-modal-close" data-api-secret-close aria-label="关闭">×</button>
+                </div>
+                <div class="api-key-modal-body">
+                  <div class="api-secret-warning" role="alert">
+                    <strong>此密钥只显示一次，请立即保存。</strong>
+                    <span>关闭后无法再次查看；遗失时只能重新生成。</span>
+                  </div>
+                  <div class="api-secret-grid">
+                    <label for="apiRevealedEndpoint"><span>Endpoint · POST</span></label>
+                    <div class="api-copy-row">
+                      <input id="apiRevealedEndpoint" class="config-input" readonly />
+                      <button type="button" class="btn btn-outline" id="btnCopyApiEndpoint">复制 Endpoint</button>
+                    </div>
+                    <label for="apiRevealedKey"><span>API Key</span></label>
+                    <div class="api-copy-row">
+                      <input id="apiRevealedKey" class="config-input api-secret-value" readonly />
+                      <button type="button" class="btn btn-primary" id="btnCopyApiKey">复制 API Key</button>
+                    </div>
+                  </div>
+                  <p class="api-secret-guidance">请由服务器端系统或 Secret Manager 保存，不要提交到 Git，也不要放入公开网页 JavaScript。</p>
+                </div>
+                <div class="api-key-modal-footer">
+                  <button type="button" class="btn btn-primary" data-api-secret-close>我已保存，关闭</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Deployment 详情与 API Usage -->
+            <div class="api-key-modal" id="apiDeploymentDetailModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentDetailTitle" hidden>
+              <button type="button" class="api-key-modal-backdrop" data-api-detail-close aria-label="关闭详情"></button>
+              <div class="api-key-modal-dialog api-detail-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiDeploymentDetailTitle">Deployment 详情</h3>
+                    <p id="apiDetailDescription">—</p>
+                  </div>
+                  <button type="button" class="api-key-modal-close" data-api-detail-close aria-label="关闭">×</button>
+                </div>
+                <div class="api-key-modal-body api-detail-body">
+                  <div class="api-detail-grid">
+                    <div><span>Deployment ID</span><code id="apiDetailId">—</code></div>
+                    <div><span>Status</span><strong id="apiDetailStatus">—</strong></div>
+                    <div><span>Health</span><strong id="apiDetailHealth">—</strong></div>
+                    <div><span>API Key Prefix</span><code id="apiDetailKeyPrefix">—</code></div>
+                    <div><span>Created At</span><strong id="apiDetailCreated">—</strong></div>
+                    <div><span>Updated At</span><strong id="apiDetailUpdated">—</strong></div>
+                    <div><span>Last Used At</span><strong id="apiDetailLastUsed">从未调用</strong></div>
+                  </div>
+                  <div class="api-detail-section">
+                    <div class="api-field-label">Knowledge Bases</div>
+                    <div id="apiDetailKnowledgeBases" class="api-detail-kbs"></div>
+                    <div id="apiDetailHealthWarning" class="api-health-warning" hidden></div>
+                  </div>
+                  <div class="api-detail-section">
+                    <div class="api-field-label">Endpoint · POST</div>
+                    <div class="api-copy-row">
+                      <code id="apiDetailEndpoint">—</code>
+                      <button type="button" class="btn btn-sm btn-outline" id="btnCopyApiDetailEndpoint">复制</button>
+                    </div>
+                  </div>
+
+                  <div class="api-detail-section api-usage-section">
+                    <div class="api-section-heading api-usage-heading">
+                      <div>
+                        <h4>API Usage</h4>
+                        <p>示例始终使用 <code>YOUR_API_KEY</code>，完整 Key 只在创建或轮换弹窗中出现。</p>
+                      </div>
+                      <div class="api-demo-tabs" role="tablist" aria-label="代码示例语言">
+                        <button type="button" class="api-demo-tab active" data-api-demo-language="curl" role="tab" aria-selected="true">cURL</button>
+                        <button type="button" class="api-demo-tab" data-api-demo-language="python" role="tab" aria-selected="false">Python</button>
+                      </div>
+                    </div>
+                    <pre class="api-demo-code-block"><code id="apiDemoCode"></code></pre>
+                  </div>
+
+                  <div class="api-detail-section api-multiturn-section">
+                    <h4>多轮对话</h4>
+                    <p>第一次请求省略 <code>conversation_id</code>，保存服务端首先返回的 ID：</p>
+                    <pre class="api-compact-code"><code>{"type":"conversation","conversation_id":"conv_xxx"}</code></pre>
+                    <p>之后复用同一 ID：</p>
+                    <pre class="api-compact-code"><code>{"message":"把右侧病灶描述得详细一点","conversation_id":"conv_xxx"}</code></pre>
+                    <strong>后续请求复用相同 <code>conversation_id</code> 即可保持上下文。</strong>
+                  </div>
+
+                  <div class="api-detail-section">
+                    <h4>Public SSE Contract</h4>
+                    <p><code>conversation</code> · <code>status</code> · <code>message</code> · <code>report</code> · <code>ambiguous</code> · <code>error</code> · <code>done</code> · <code>[DONE]</code></p>
+                    <pre class="api-compact-code"><code>data: {"type":"conversation","conversation_id":"conv_xxx"}
+
+data: {"type":"status","stage":"retrieving","message":"正在检索知识库"}
+
+data: {"type":"report","content":"...","data":{"results":[]}}
+
+data: {"type":"done","conversation_id":"conv_xxx"}
+
+data: [DONE]</code></pre>
+                  </div>
+
+                  <div class="api-detail-section api-key-guidance">
+                    <h4>API Key 使用说明</h4>
+                    <ul>
+                      <li>API Key 只属于当前 Deployment，不同 Deployment 使用不同 Key。</li>
+                      <li>完整 Key 只在创建或重新生成时显示一次。</li>
+                      <li>不要提交到 Git，也不要放入浏览器公开前端代码；推荐由服务端 Secret Manager 保存。</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 编辑 Deployment -->
+            <div class="api-key-modal" id="apiDeploymentModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentModalTitle" hidden>
+              <button type="button" class="api-key-modal-backdrop" data-api-deployment-modal-close aria-label="关闭"></button>
+              <div class="api-key-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiDeploymentModalTitle">编辑 Deployment</h3>
+                    <p>更新后，后续 API 请求将使用新的固定 Knowledge Base Scope。</p>
+                  </div>
+                  <button type="button" class="api-key-modal-close" data-api-deployment-modal-close aria-label="关闭">×</button>
+                </div>
+                <form id="apiDeploymentEditForm">
+                  <div class="api-key-modal-body">
+                    <input type="hidden" id="apiEditDeploymentId" />
+                    <label for="apiEditDeploymentName">名称</label>
+                    <input type="text" class="config-input" id="apiEditDeploymentName" maxlength="120" autocomplete="off" required />
+                    <label for="apiEditDeploymentDescription">描述</label>
+                    <textarea class="config-input" id="apiEditDeploymentDescription" maxlength="2000" rows="3"></textarea>
+                    <div class="api-field-label">Knowledge Base（仅显示 Active）</div>
+                    <div class="api-kb-checkbox-list api-kb-checkbox-list-modal" id="apiEditKbCheckboxList"></div>
+                    <p class="api-key-form-error" id="apiDeploymentEditError" role="alert" hidden></p>
+                  </div>
+                  <div class="api-key-modal-footer">
+                    <button type="button" class="btn btn-outline" data-api-deployment-modal-close>取消</button>
+                    <button type="submit" class="btn btn-primary" id="btnSaveApiDeployment">保存修改</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            <!-- API 上线使用指南 -->
+            <div class="api-key-modal" id="apiDeploymentGuideModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentGuideTitle" hidden>
+              <button type="button" class="api-key-modal-backdrop" data-api-guide-close aria-label="关闭使用说明"></button>
+              <div class="api-key-modal-dialog api-guide-modal-dialog">
+                <div class="api-key-modal-header">
+                  <div>
+                    <h3 id="apiDeploymentGuideTitle">API 上线使用指南</h3>
+                    <p>从创建 Deployment 到完成多轮 HTTP + SSE 调用。</p>
+                  </div>
+                  <button type="button" class="api-key-modal-close" data-api-guide-close aria-label="关闭">×</button>
+                </div>
+                <div class="api-guide-modal-body">
+                  <nav class="api-guide-toc" id="apiGuideToc" aria-label="使用指南目录" hidden></nav>
+                  <article class="api-guide-content" id="apiGuideContent" aria-live="polite">
+                    <p class="api-guide-loading">正在加载使用说明…</p>
+                  </article>
+                </div>
+                <div class="api-key-modal-footer">
+                  <button type="button" class="btn btn-primary" data-api-guide-close>关闭</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 配置页面 -->
           <div class="page" id="pageConfig">
             <header class="header">
               <h1>系统配置</h1>
               <p class="subtitle">
-                管理模型、检索参数与对外 API 上线策略
+                管理模型、检索、向量数据库与系统运行参数
               </p>
             </header>
 
@@ -246,9 +505,6 @@
                 </button>
                 <button class="config-nav-item" data-config="system">
                   系统与功能配置
-                </button>
-                <button class="config-nav-item" data-config="api">
-                  API 上线配置
                 </button>
               </nav>
               <div class="config-main" id="configForm">
@@ -399,135 +655,6 @@
                   </div>
                 </div>
 
-                <!-- Stateful Agent API Deployment 管理 -->
-                <div
-                  class="config-group api-config-group"
-                  id="configGroupApi"
-                  style="display: none"
-                >
-                  <h2 class="config-group-title">API 上线</h2>
-                  <div class="config-group-content api-config-content">
-                    <section class="config-section api-status-section">
-                      <div class="config-section-header">
-                        <div>
-                          <h3 class="config-section-title">Stateful Deployment Chat API</h3>
-                          <p class="api-section-description">
-                            每个 Deployment 固定绑定一组 Active 知识库，并使用独立 API Key 提供多轮 Agent 能力。
-                          </p>
-                        </div>
-                        <span class="api-deployment-summary" id="apiDeploymentSummary">正在加载…</span>
-                      </div>
-                      <div class="api-status-body">
-                        <div class="api-service-state" id="apiStatusText">
-                          通过 Gateway 对外提供服务
-                        </div>
-                        <label class="api-base-url-field">
-                          <span>公共基址</span>
-                          <input
-                            type="url"
-                            class="config-input"
-                            id="apiBaseUrl"
-                            placeholder="http://localhost:8000/api/v1"
-                            readonly
-                          />
-                        </label>
-                      </div>
-                    </section>
-
-                    <section class="config-section">
-                      <div class="config-section-header api-section-heading">
-                        <div>
-                          <h3 class="config-section-title">创建 Deployment</h3>
-                          <p class="api-section-description">
-                            上线后客户端不能修改知识库范围；完整密钥只显示一次。
-                          </p>
-                        </div>
-                      </div>
-                      <form class="api-deployment-form" id="apiDeploymentForm">
-                        <div class="api-deployment-fields">
-                          <label>
-                            <span>名称</span>
-                            <input id="apiDeploymentName" class="config-input" maxlength="120" required placeholder="例如：胸部报告 API" />
-                          </label>
-                          <label>
-                            <span>描述</span>
-                            <textarea id="apiDeploymentDescription" class="config-input" maxlength="2000" rows="2" placeholder="例如：供 HIS 系统调用"></textarea>
-                          </label>
-                        </div>
-                        <div>
-                          <div class="api-field-label">Knowledge Base（仅显示 Active）</div>
-                          <div class="api-kb-checkbox-list" id="apiKbCheckboxList"></div>
-                        </div>
-                        <div class="api-create-actions">
-                          <span class="api-key-form-error" id="apiDeploymentFormError" hidden></span>
-                          <button type="submit" id="btnCreateApiDeployment" class="btn btn-primary">上线 API</button>
-                        </div>
-                      </form>
-                    </section>
-
-                    <section class="config-section api-secret-section" id="apiSecretReveal" hidden>
-                      <div class="config-section-header api-section-heading">
-                        <div>
-                          <h3 class="config-section-title">API 已上线</h3>
-                          <p class="api-section-description">
-                            密钥仅显示一次，请立即保存；关闭或刷新页面后无法再次查看。
-                          </p>
-                        </div>
-                      </div>
-                      <div class="api-secret-grid">
-                        <label><span>Endpoint</span><input id="apiRevealedEndpoint" class="config-input" readonly /></label>
-                        <button type="button" class="btn btn-outline" id="btnCopyApiEndpoint">复制 Endpoint</button>
-                        <label><span>API Key</span><input id="apiRevealedKey" class="config-input api-secret-value" readonly /></label>
-                        <button type="button" class="btn btn-outline" id="btnCopyApiKey">复制密钥</button>
-                      </div>
-                    </section>
-
-                    <section class="config-section">
-                      <div class="config-section-header api-section-heading">
-                        <div>
-                          <h3 class="config-section-title">Deployment 列表</h3>
-                          <p class="api-section-description">查看健康状态、编辑知识库、轮换密钥或关闭入口。删除只关闭入口，历史 Session 会保留。</p>
-                        </div>
-                        <button type="button" class="btn btn-sm btn-outline" id="btnRefreshApiDeployments">刷新</button>
-                      </div>
-                      <div class="api-deployment-list" id="apiDeploymentList"></div>
-                    </section>
-
-                    <section class="config-section api-demo-section">
-                      <div class="config-section-header api-section-heading">
-                        <div>
-                          <h3 class="config-section-title">API 调用示例</h3>
-                          <p class="api-section-description">
-                            选择一个 Deployment 查看 cURL/Python SSE 与多轮调用示例。
-                          </p>
-                        </div>
-                        <div class="api-demo-tabs" role="tablist" aria-label="代码示例语言">
-                          <button
-                            type="button"
-                            class="api-demo-tab active"
-                            data-api-demo-language="curl"
-                            role="tab"
-                            aria-selected="true"
-                          >
-                            curl
-                          </button>
-                          <button
-                            type="button"
-                            class="api-demo-tab"
-                            data-api-demo-language="python"
-                            role="tab"
-                            aria-selected="false"
-                          >
-                            Python
-                          </button>
-                        </div>
-                      </div>
-                      <pre class="api-demo-code-block"><code id="apiDemoCode"></code></pre>
-                      <p class="api-multiturn-hint">首次请求省略 <code>conversation_id</code>；从 <code>conversation</code> 事件取得 ID，后续请求复用它即可恢复 Memory、Entity 和 Last Report。</p>
-                    </section>
-                  </div>
-                </div>
-
                 <div class="config-actions">
                   <div class="config-hint" id="configHint">
                     💾 修改配置后点击保存即可生效
@@ -543,68 +670,6 @@
               </div>
             </div>
 
-            <div
-              class="api-key-modal"
-              id="apiDeploymentModal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="apiDeploymentModalTitle"
-              hidden
-            >
-              <button
-                type="button"
-                class="api-key-modal-backdrop"
-                data-api-deployment-modal-close
-                aria-label="关闭"
-              ></button>
-              <div class="api-key-modal-dialog">
-                <div class="api-key-modal-header">
-                  <div>
-                    <h3 id="apiDeploymentModalTitle">编辑 Deployment</h3>
-                    <p>修改名称、描述或后续请求使用的固定知识库范围。</p>
-                  </div>
-                  <button
-                    type="button"
-                    class="api-key-modal-close"
-                    data-api-deployment-modal-close
-                    aria-label="关闭"
-                  >
-                    ×
-                  </button>
-                </div>
-                <form id="apiDeploymentEditForm">
-                  <div class="api-key-modal-body">
-                    <input type="hidden" id="apiEditDeploymentId" />
-                    <label for="apiEditDeploymentName">名称</label>
-                    <input
-                      type="text"
-                      class="config-input"
-                      id="apiEditDeploymentName"
-                      maxlength="120"
-                      autocomplete="off"
-                      required
-                    />
-                    <label for="apiEditDeploymentDescription">描述</label>
-                    <textarea class="config-input" id="apiEditDeploymentDescription" maxlength="2000" rows="3"></textarea>
-                    <div class="api-field-label">Knowledge Base</div>
-                    <div class="api-kb-checkbox-list api-kb-checkbox-list-modal" id="apiEditKbCheckboxList"></div>
-                    <p class="api-key-form-error" id="apiDeploymentEditError" hidden></p>
-                  </div>
-                  <div class="api-key-modal-footer">
-                    <button
-                      type="button"
-                      class="btn btn-outline"
-                      data-api-deployment-modal-close
-                    >
-                      取消
-                    </button>
-                    <button type="submit" class="btn btn-primary" id="btnSaveApiDeployment">
-                      保存修改
-                    </button>
-                  </div>
-                </form>
-              </div>
-            </div>
           </div>
 
           <!-- 评测中心页面 -->
@@ -1041,6 +1106,6 @@
 
     <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/static/app.js?v=50"></script>
+    <script src="/static/app.js?v=52"></script>
   </body>
 </html>

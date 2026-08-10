@@ -195,11 +195,22 @@ Worker 把 `front/` 挂载到 `/static`，`/` 返回 `index.html`。静态资源
 | --- | --- | --- |
 | Agent | `pageAgent` | KB 选择、聊天、思考步骤、参考切片、Memory 面板和本地历史 |
 | Knowledge Base | `pageKB` | 上传、构建、轮询进度、切片详情、删除 |
-| Config | `pageConfig` | 模型/检索/系统配置、模型连通性测试；真实 Deployment/API Key 管理与示例 |
+| API 上线 | `pageDeployments` | Deployment 创建/详情/编辑/启停/删除、Key 轮换、健康度与外部接入示例 |
 | Eval | `pageEval` | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测 |
 | Monitor | `pageMonitor` | 后端会话列表、Memory 查看和 Session 删除 |
+| Config | `pageConfig` | 模型/检索/系统配置和模型连通性测试 |
 
 页面切换依赖 `data-page` 与 DOM class，不改变 URL，没有前进/后退路由语义。
+
+```text
+Sidebar
+  ├─ Agent            → pageAgent
+  ├─ Knowledge Base   → pageKB
+  ├─ API 上线         → pageDeployments
+  ├─ Eval             → pageEval
+  ├─ Monitor          → pageMonitor
+  └─ Config           → pageConfig
+```
 
 ### 6.3 Chat UI 数据流
 
@@ -219,13 +230,13 @@ textarea + selected KB Set
 
 ### 6.4 前端保存哪些状态
 
-- 内存：`SESSION_ID`、当前 conversation ID、处理中标志、reader/controller、KB 列表和选择、KB timer、Eval 状态、配置对象、Deployment 列表及一次性明文 Key。
+- 内存：`SESSION_ID`、当前 conversation ID、处理中标志、reader/controller、KB 列表和选择、KB timer、Eval 状态、配置对象与 Deployment 列表。明文 Deployment Key 只短暂进入一次性弹窗的输入框。
 - LocalStorage：`chat_history_list`、`chat_messages_{conversationId}`、`selectedKnowledgeBaseIds`。
 - 不在浏览器保存为权威状态：Entity Slots、Last Report、后端 Turns、Eval 结果和 KB 元数据；它们由 Worker/SQLite 管理。
 
 LocalStorage 保存消息 `innerHTML` 和 Thinking `outerHTML`。它能恢复 UI，但不是 Session 真相来源，也意味着浏览器可能持久化医学文本。
 
-API 上线 UI 不把明文 Deployment Key 写入 LocalStorage。创建或轮换后只在当前页面的一次性提示区显示；刷新后必须重新轮换，无法从后端取回原 Key。
+API 上线 UI 不把明文 Deployment Key 写入 LocalStorage、SessionStorage、URL 或 dataset。创建或轮换后只在一次性弹窗显示；关闭弹窗或离开页面会清空 DOM 值，之后只能重新轮换，无法从后端取回原 Key。详情中的 cURL/Python 示例始终使用 `YOUR_API_KEY`。
 
 ### 6.5 SSE
 
@@ -253,6 +264,7 @@ API 上线 UI 不把明文 Deployment Key 写入 LocalStorage。创建或轮换�
 - 页面结构、表单、ID：`front/index.html`。
 - Chat/SSE/API/LocalStorage：`front/app.js`。
 - 布局、状态和响应式：`front/style.css`。
+- Deployment 页面与密钥安全：`pageDeployments`、`bindApiDeploymentInteractions()`、一次性 Key 弹窗和 API Usage 示例。
 - 请求模型和事件发送点：`app/chat/schemas.py`、`app/chat/server.py`、`app/chat/pipeline.py`、`app/tools/`。
 - 修改 JS/CSS 后同步更新 `index.html` 的资源 `?v=`。
 
@@ -612,7 +624,7 @@ Deployment 还有第三种 ID：外部只看 `conv_*`，`api_conversations` 把�
 | `knowledge_bases` | KB 名称、状态、进度、源路径、Metadata Tree | Chat KB validation、Navigator、KB UI |
 | `knowledge_base_chunks` | 稳定 Chunk ID、来源、层级、报告原文 | KB UI、Eval 用例选择 |
 | `evaluation_state` | 运行进度、最后结果、时间 | Eval 状态恢复 |
-| `api_deployments` | 名称、状态、Key 摘要/前缀、最后使用与软删除时间 | Config UI、Deployment Chat 鉴权 |
+| `api_deployments` | 名称、状态、Key 摘要/前缀、最后使用与软删除时间 | API 上线 UI、Deployment Chat 鉴权 |
 | `api_deployment_knowledge_bases` | Deployment 固定 KB 范围 | 管理 API、运行时健康检查 |
 | `api_conversations` | 外部 conversation 与内部 Session 映射 | Deployment 多轮恢复 |
 
@@ -798,7 +810,7 @@ SSE Streaming 是 HTTP 响应可以逐事件发送；LLM Token Streaming 是模�
 | --- | --- | --- |
 | `ChatRequest` | Query、Session、诊断选择、KB 范围 | Frontend → Worker |
 | `DeploymentChatRequest` | message、可选 conversation/诊断；拒绝 KB 字段 | External Client → Gateway/Worker |
-| Deployment | 固定 KB、状态、Key 摘要/前缀、健康状态 | Config UI/SessionStore → Worker auth |
+| Deployment | 固定 KB、状态、Key 摘要/前缀、健康状态 | API 上线 UI/SessionStore → Worker auth |
 | API Conversation | `(deployment_id, conversation_id) → internal_session_id` | Worker → Stateful executor |
 | Entity Slots | modality/body part/history/diagnosis/intent | EntityTracker/SQLite → Prompt/Planner/Tools |
 | `QueryPlan` | semantic/keyword/diagnosis Query、filters、slot confidence | Planner → Retrieval/SSE |
@@ -978,7 +990,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `python_start.py` | 本地 Worker/Gateway 启动拓扑 | 本地启动问题 |
 | `compose.yaml` | Docker 网络、端口和 volume | 部署与数据持久化 |
 | `config.yml` | Active 模型、检索和 Milvus 默认值 | 行为/环境配置 |
-| `front/index.html` | 五个页面和所有固定 DOM ID | 页面结构/表单 |
+| `front/index.html` | 六个页面和所有固定 DOM ID | 页面结构/表单 |
 | `front/app.js` | Frontend 状态、API、SSE、LocalStorage | 所有前端行为 |
 | `front/style.css` | 全部视觉和状态 class | 样式/响应式 |
 | `app/gateway.py` | Public auth 与 stream proxy | 外部 API、安全边界 |
@@ -1044,7 +1056,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | Gateway API | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes |
 | Stateful API | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage` |
 | Stateless API | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers |
-| Deployment/API 上线 | `chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、Config UI、部署测试 |
+| Deployment/API 上线 | `front/index.html`、`front/app.js`、`front/style.css`、`chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、部署测试 |
 | Excel Schema | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README |
 | Chunk 组成/ID | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval |
 | Milvus Schema | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config |
@@ -1262,7 +1274,7 @@ python -m app.test.test_memory
 
 **Memory 四组件**：STM 保存窗口；EntityTracker 保存结构化语境；MemoryRetriever选相关历史；SessionStore跨请求恢复。
 
-**Deployment**：Config 页固定 Active KB 并创建独立 Key；外部用 `conversation_id` 多轮调用同一 Stateful Pipeline，只收到白名单 SSE。
+**Deployment**：独立“API 上线”页固定 Active KB 并创建独立 Key；外部用 `conversation_id` 多轮调用同一 Stateful Pipeline，只收到白名单 SSE。
 
 **Data Pipeline**：Excel Row → Chunk/Markdown → SQLite + Metadata Tree → Dense/Sparse → shared Milvus，`kb_id` 隔离，`chunk_id` 对齐。
 

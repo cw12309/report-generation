@@ -4,15 +4,14 @@
 
 ## Frontend Overview
 
-前端覆盖五个主要页面：
+前端按侧边栏顺序覆盖六个主要页面：
 
 - Agent：选择知识库、发起对话、查看思考过程、参考切片和上下文占用；
-- 知识库：上传 Excel、构建/重建、查看进度、切片和删除知识库；
-- 评测中心：维护 Retrieval Eval 数据集、自动生成用例、执行/取消评测并恢复状态；
-- 系统配置：配置 LLM、Embedding、Rerank、检索与系统参数并测试模型连接；
-- 会话监控：查看会话、记忆状态和删除后端会话。
-
-“API 上线”子页面管理真实 Deployment：选择固定的 Active 知识库、创建/编辑/启停/软删除 Deployment、轮换独立 API Key、查看健康状态，并生成可复制的 cURL/Python 多轮 SSE 示例。明文 Key 只在创建或轮换成功后显示一次，不写入 LocalStorage。
+- Knowledge Base：上传 Excel、构建/重建、查看进度、切片和删除知识库；
+- API 上线：创建和管理绑定固定 Active KB 的 Deployment，提供独立 Key 与多轮 SSE 接入示例；
+- Eval：维护 Retrieval Eval 数据集、自动生成用例、执行/取消评测并恢复状态；
+- Monitor：查看会话、记忆状态和删除后端会话；
+- Config：配置 LLM、Embedding、Rerank、检索与系统参数并测试模型连接。
 
 ## Technology Stack
 
@@ -50,17 +49,20 @@ uvicorn app.chat.server:app --host 0.0.0.0 --port 8001
 
 ```text
 front/
+├─ docs/
+│  └─ api-deployment-guide.md # 面向调用方的 API 上线使用手册
 ├─ index.html   # 全部页面结构、弹窗、表单与静态资源入口
 ├─ app.js       # 页面交互、状态、Fetch/SSE、渲染和 LocalStorage
 ├─ style.css    # 全部布局、组件状态与响应式样式
-└─ README.md    # 本文
+├─ README.md    # 面向人类开发者的 Frontend 使用与开发入口
+└─ AGENTS.md    # 面向 AI Coding Agent 的 Page Map、State Map、API Map、SSE Map 和 Change Map
 ```
 
 Worker 在 `app/chat/server.py` 中把该目录挂载为 `/static`，并让 `/` 返回 `index.html`。当前页面引用：
 
 ```html
-<link rel="stylesheet" href="/static/style.css?v=35" />
-<script src="/static/app.js?v=50"></script>
+<link rel="stylesheet" href="/static/style.css?v=37" />
+<script src="/static/app.js?v=52"></script>
 ```
 
 版本查询参数只是浏览器缓存失效标记，不代表前端发布版本。修改 `app.js` 或 `style.css` 后应同步递增对应参数，否则浏览器可能继续使用旧资源。
@@ -69,7 +71,7 @@ Worker 在 `app/chat/server.py` 中把该目录挂载为 `/static`，并让 `/` 
 
 ```text
 index.html
-  ├─ data-page 按钮 ─► showPage() ─► DOM 页面显隐
+  ├─ .sidebar-btn[data-page] ─► app.js 点击监听器 ─► pageMap ─► .page.active 切换
   ├─ 表单/按钮事件 ─► app.js 中的功能函数
   └─ style.css 类名 ◄─ app.js 添加/移除状态类
 
@@ -124,13 +126,21 @@ app.js
 
 自动生成消费 `start`、`warning`、`progress`、`done`、`error`；评测运行消费 `start`、`progress`、`done`、`cancelled`、`error`。两者通过 `consumeSSEStream()` 按空行切分标准 SSE frame，与聊天的逐行解析函数不是同一套实现。
 
+### API Deployment
+
+独立的“API 上线”页调用现有 `/api/deployments` 管理接口。创建和编辑时只能选择至少一个 Active KB；列表展示启用状态、运行健康度、固定 KB、Key 前缀、创建时间和最后使用时间，并提供详情、复制 Endpoint、编辑、轮换 Key、启停和软删除操作。Degraded 状态的详情会展示后端返回的不可用原因。
+
+页面顶部“使用说明”会打开内置帮助窗口；面向调用方的完整流程和可复制示例以 [API 上线使用指南](docs/api-deployment-guide.md) 为单一文档源。
+
+创建或轮换成功后的明文 Key 只进入一次性弹窗。弹窗关闭或离开页面时会清空对应 DOM 值，示例代码始终使用 `YOUR_API_KEY`，Key 不写入 LocalStorage、SessionStorage、URL、HTML dataset 或日志。关闭后无法从后端找回原 Key，只能再次轮换。
+
+详情页生成 `/api/v1/deployments/{deployment_id}/chat` 的 cURL/Python 示例。请求只包含 `message`、可选 `conversation_id` 和 `selected_diagnosis`，不允许调用方传 `selected_kbs`。首次调用从公开 SSE 的 `conversation` 事件保存 ID，后续请求复用它以继续多轮会话。公开事件白名单为 `conversation`、`status`、`message`、`report`、`ambiguous`、`error`、`done` 和终止标记 `[DONE]`。
+
 ### Configuration
 
 配置页通过 `GET /api/config` 加载配置，通过 `POST /api/config` 保存完整配置对象，通过 `POST /api/test-model` 测试 LLM、Embedding 或 Rerank 连接。后端会掩码返回的密钥；前端不应把真实服务密钥写进 HTML、JavaScript、LocalStorage 或 README。
 
-配置中的 API 子页面调用 `/api/deployments` 管理真实 Deployment。创建和编辑时只能选择 Active KB；列表显示启用状态、运行健康度、固定 KB、Key 前缀和最后使用时间。创建/轮换返回的明文 Key 仅保存在当前页面内存并显示在一次性提示区，刷新后无法找回，只能再次轮换。
-
-页面生成的外部地址是 `/api/v1/deployments/{deployment_id}/chat`。示例请求只包含 `message`、`conversation_id` 和可选 `selected_diagnosis`，不允许调用方传 `selected_kbs`。这套公开 Chat 使用独立的稳定 SSE 契约，不应直接复用 Agent 页的内部事件展示逻辑。
+Deployment 管理不再属于 Config 页；修改 Config 时不要重新引入 API 上线表单或 Deployment 事件绑定。
 
 ### Session Monitor
 
@@ -144,7 +154,7 @@ app.js
 - `isProcessing`、流 reader 与 AbortController；
 - `knowledgeBases`、`selectedKnowledgeBaseIds` 和知识库轮询 timer；
 - 评测运行、取消、轮询和筛选状态；
-- `_configData`、Deployment 列表/知识库选择，以及仅存在于当前页面内存的一次性明文 Key。
+- `_configData`、Deployment 列表和知识库选择；明文 Key 仅短暂写入一次性弹窗，关闭时立即清空。
 
 ### LocalStorage keys
 
@@ -227,6 +237,7 @@ const API_BASE = "/api";
 - 新建/恢复/清空对话与刷新后的 LocalStorage 恢复；
 - 正常聊天、诊断歧义、错误和 60 秒超时状态；
 - 知识库上传、构建轮询、切片查看与选中状态；
+- API 上线列表的加载/空态/错误态、创建、详情、编辑、复制 Endpoint、轮换、启停、删除和一次性 Key 清理；
 - 配置加载/保存/模型测试；
 - 评测开始、进度、取消、完成和刷新后恢复；
 - 浏览器控制台无语法错误，网络请求路径和 payload 符合 Worker 接口；
@@ -257,12 +268,13 @@ const API_BASE = "/api";
 | 知识库操作 | KB 函数与 modal | Worker KB 路由、轮询终止条件 |
 | 评测流程 | Eval 函数与 `consumeSSEStream()` | Worker Eval 事件、状态恢复 |
 | 配置字段 | 配置表单和序列化 | `/api/config`、`app/config.py`、真实消费者 |
-| API 上线/Deployment | Config 页 Deployment 函数与弹窗 | Worker 管理路由、Gateway 公开路由、Key 一次性显示、SSE 示例 |
+| API 上线/Deployment | `pageDeployments`、Deployment 函数与弹窗 | Worker 管理路由、Gateway 公开路由、Key 一次性显示、SSE 示例 |
 | 样式或 class | `style.css` | HTML 和 JS 的选择器/动态 class |
 | 静态资源 | `app.js`/`style.css` | `index.html` 中对应 `?v=` |
 
 ## Related Documentation
 
+- [API 上线使用指南](docs/api-deployment-guide.md)
 - [项目总览、安装与部署](../README.md)
 - [后端与 Agent 开发指南](../app/README.md)
 - [后端导航索引](../app/AGENTS.md)

@@ -304,12 +304,20 @@ sidebarBtns.forEach(btn => {
     if (panel) panel.style.display = "none";
 
     const page = btn.dataset.page;
+    if (page !== "deployments") {
+      closeApiDeploymentCreate();
+      closeApiDeploymentModal();
+      closeApiDeploymentDetail();
+      closeDeploymentSecret();
+      closeApiDeploymentGuide();
+    }
     sidebarBtns.forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     pages.forEach(p => p.classList.remove("active"));
     const pageMap = {
       agent: "pageAgent",
       kb: "pageKB",
+      deployments: "pageDeployments",
       eval: "pageEval",
       config: "pageConfig",
       monitor: "pageMonitor",
@@ -322,6 +330,8 @@ sidebarBtns.forEach(btn => {
       refreshKnowledgeBases();
     } else if (page === "eval") {
       restoreEvaluationState();
+    } else if (page === "deployments") {
+      loadApiDeployments();
     }
     if (page === "config") {
       loadConfig();
@@ -3504,7 +3514,11 @@ let _apiDeployments = [];
 let _apiDeploymentKnowledgeBases = [];
 let _apiDemoLanguage = "curl";
 let _selectedApiDeploymentId = null;
-let _revealedApiCredential = null;
+let _apiDetailDeploymentId = null;
+let _apiDeploymentsLoading = false;
+let _apiGuideLoaded = false;
+
+const API_DEPLOYMENT_GUIDE_URL = "/static/docs/api-deployment-guide.md";
 
 function getDefaultApiBaseUrl() {
   const currentOrigin = window.location.origin && window.location.origin !== "null"
@@ -3525,7 +3539,8 @@ async function apiManagementRequest(path, options = {}) {
     const message = typeof detail === "string"
       ? detail
       : detail?.message || payload.message || `HTTP ${response.status}`;
-    throw new Error(message);
+    const code = typeof detail === "object" ? detail?.code : payload.code;
+    throw new Error(code ? `${message}（${code}）` : message);
   }
   return payload;
 }
@@ -3594,7 +3609,7 @@ function renderApiKnowledgeBaseChoices(containerId, selectedIds = []) {
         />
         <span class="api-kb-checkbox-copy">
           <strong title="${escapeHtml(kb.kb_name)}">${escapeHtml(kb.kb_name)}</strong>
-          <span>${escapeHtml(kb.kb_id)} · Active</span>
+          <span>${escapeHtml(kb.description || kb.kb_id)} · Active</span>
         </span>
       </label>
     `;
@@ -3614,12 +3629,25 @@ function renderApiDeploymentList() {
     _selectedApiDeploymentId = _apiDeployments[0]?.deployment_id || null;
   }
   if (!_apiDeployments.length) {
-    listEl.innerHTML = '<div class="api-key-empty">尚未上线任何 API Deployment</div>';
+    listEl.innerHTML = `
+      <div class="api-deployment-empty">
+        <div class="api-deployment-empty-icon">🚀</div>
+        <h3>还没有上线 API</h3>
+        <p>选择一个或多个知识库，将其发布为支持多轮对话的 Agent API。</p>
+        <button type="button" class="btn btn-primary" data-api-action="create-first">创建第一个 API</button>
+      </div>
+    `;
     return;
   }
   listEl.innerHTML = _apiDeployments.map((item) => {
     const selected = item.deployment_id === _selectedApiDeploymentId;
     const kbNames = (item.knowledge_bases || []).map((kb) => kb.kb_name || kb.kb_id);
+    const visibleKbNames = kbNames.slice(0, 2);
+    const remainingKbCount = Math.max(0, kbNames.length - visibleKbNames.length);
+    const kbSummary = [
+      ...visibleKbNames,
+      ...(remainingKbCount ? [`+${remainingKbCount}`] : []),
+    ].join("、") || "无";
     const isActive = item.status === "active";
     const isHealthy = item.health === "healthy";
     return `
@@ -3632,16 +3660,17 @@ function renderApiDeploymentList() {
           </div>
           <p>${escapeHtml(item.description || "暂无描述")}</p>
           <div class="api-deployment-meta">
-            <span><strong>KB</strong> ${escapeHtml(kbNames.join("、") || "无")}</span>
+            <span title="${escapeHtml(kbNames.join("、"))}"><strong>KB</strong> ${escapeHtml(kbSummary)}</span>
             <span><strong>Key</strong> ${escapeHtml(item.api_key_prefix || "—")}</span>
             <span><strong>创建</strong> ${escapeHtml(formatApiDate(item.created_at))}</span>
-            <span><strong>最近调用</strong> ${escapeHtml(formatApiDate(item.last_used_at))}</span>
+            <span><strong>最近调用</strong> ${item.last_used_at ? escapeHtml(formatApiDate(item.last_used_at)) : "从未调用"}</span>
           </div>
           <code>${escapeHtml(item.endpoint)}</code>
         </div>
         <div class="api-deployment-actions">
+          <button type="button" class="btn btn-sm btn-primary" data-api-action="view" data-deployment-id="${escapeHtml(item.deployment_id)}">查看详情</button>
           <button type="button" class="btn btn-sm btn-outline" data-api-action="copy" data-deployment-id="${escapeHtml(item.deployment_id)}">复制 Endpoint</button>
-          <button type="button" class="btn btn-sm btn-outline" data-api-action="edit" data-deployment-id="${escapeHtml(item.deployment_id)}">编辑 KB</button>
+          <button type="button" class="btn btn-sm btn-outline" data-api-action="edit" data-deployment-id="${escapeHtml(item.deployment_id)}">编辑</button>
           <button type="button" class="btn btn-sm btn-outline" data-api-action="rotate" data-deployment-id="${escapeHtml(item.deployment_id)}">重新生成密钥</button>
           <button type="button" class="btn btn-sm btn-outline" data-api-action="toggle" data-deployment-id="${escapeHtml(item.deployment_id)}">${isActive ? "停用" : "启用"}</button>
           <button type="button" class="btn btn-sm btn-danger" data-api-action="delete" data-deployment-id="${escapeHtml(item.deployment_id)}">删除</button>
@@ -3654,9 +3683,7 @@ function renderApiDeploymentList() {
 function buildApiDemoCode(language = _apiDemoLanguage) {
   const deployment = getSelectedApiDeployment();
   if (!deployment) return "请先创建并选择一个 Deployment。";
-  const apiKey = _revealedApiCredential?.deployment_id === deployment.deployment_id
-    ? _revealedApiCredential.api_key
-    : "rg_live_YOUR_SECRET";
+  const apiKey = "YOUR_API_KEY";
   const url = getDeploymentEndpoint(deployment);
 
   if (language === "python") {
@@ -3716,21 +3743,31 @@ function renderApiDemoCode() {
   });
 }
 
-function renderApiSecret(deployment) {
-  const section = document.getElementById("apiSecretReveal");
-  if (!section || !deployment?.api_key) return;
-  _revealedApiCredential = {
-    deployment_id: deployment.deployment_id,
-    api_key: deployment.api_key,
-  };
+function showDeploymentSecret(deployment) {
+  const modal = document.getElementById("apiSecretModal");
+  if (!modal || !deployment?.api_key) return;
+  document.getElementById("apiSecretDeploymentName").textContent = deployment.name || deployment.deployment_id;
   document.getElementById("apiRevealedEndpoint").value = getDeploymentEndpoint(deployment);
   document.getElementById("apiRevealedKey").value = deployment.api_key;
-  section.hidden = false;
-  renderApiDemoCode();
+  modal.hidden = false;
+  requestAnimationFrame(() => document.getElementById("btnCopyApiKey")?.focus());
 }
 
-async function renderApiConfig() {
+function closeDeploymentSecret() {
+  const modal = document.getElementById("apiSecretModal");
+  if (modal) modal.hidden = true;
+  const endpointInput = document.getElementById("apiRevealedEndpoint");
+  const keyInput = document.getElementById("apiRevealedKey");
+  const deploymentName = document.getElementById("apiSecretDeploymentName");
+  if (endpointInput) endpointInput.value = "";
+  if (keyInput) keyInput.value = "";
+  if (deploymentName) deploymentName.textContent = "";
+}
+
+async function loadApiDeployments() {
   const listEl = document.getElementById("apiDeploymentList");
+  if (_apiDeploymentsLoading) return;
+  _apiDeploymentsLoading = true;
   if (listEl) listEl.innerHTML = '<div class="api-key-empty">正在加载 Deployment…</div>';
   try {
     const [deploymentData, kbData] = await Promise.all([
@@ -3749,6 +3786,8 @@ async function renderApiConfig() {
   } catch (error) {
     if (listEl) listEl.innerHTML = `<div class="api-key-empty">加载失败：${escapeHtml(error.message)}</div>`;
     showToast(`Deployment 加载失败：${error.message}`, "error");
+  } finally {
+    _apiDeploymentsLoading = false;
   }
 }
 
@@ -3759,6 +3798,291 @@ async function copyApiText(text, label) {
   } catch (error) {
     showToast(`复制失败：${error.message}`, "error");
   }
+}
+
+function appendApiGuideInline(parent, text) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > cursor) {
+      parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+    }
+    const token = match[0];
+    const element = document.createElement(token.startsWith("**") ? "strong" : "code");
+    element.textContent = token.startsWith("**") ? token.slice(2, -2) : token.slice(1, -1);
+    parent.appendChild(element);
+    cursor = match.index + token.length;
+  }
+  if (cursor < text.length) {
+    parent.appendChild(document.createTextNode(text.slice(cursor)));
+  }
+}
+
+function splitApiGuideTableRow(line) {
+  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+}
+
+function appendApiGuideCodeBlock(container, language, codeText) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "api-guide-code-block";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "api-guide-code-toolbar";
+  const label = document.createElement("span");
+  label.textContent = language || "text";
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "btn btn-sm btn-outline";
+  copyButton.dataset.apiGuideCopy = "true";
+  copyButton.textContent = "复制";
+  toolbar.append(label, copyButton);
+
+  const pre = document.createElement("pre");
+  const code = document.createElement("code");
+  code.textContent = codeText;
+  pre.appendChild(code);
+  wrapper.append(toolbar, pre);
+  container.appendChild(wrapper);
+}
+
+function renderApiGuideMarkdown(markdown) {
+  const content = document.getElementById("apiGuideContent");
+  const toc = document.getElementById("apiGuideToc");
+  if (!content || !toc) return;
+  content.replaceChildren();
+  toc.replaceChildren();
+
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const headings = [];
+  const isTableDivider = (line) => {
+    const cells = splitApiGuideTableRow(line);
+    return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+  };
+  const isBlockStart = (index) => {
+    const line = lines[index] || "";
+    return /^```/.test(line.trim())
+      || /^#{1,4}\s+/.test(line)
+      || /^\s*(?:[-*]|\d+\.)\s+/.test(line)
+      || (line.includes("|") && isTableDivider(lines[index + 1] || ""));
+  };
+
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    const fence = trimmed.match(/^```([^`]*)$/);
+    if (fence) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^```\s*$/.test(lines[index].trim())) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      appendApiGuideCodeBlock(content, fence[1].trim(), codeLines.join("\n"));
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      const level = Math.min(heading[1].length + 1, 6);
+      const element = document.createElement(`h${level}`);
+      element.id = `api-guide-heading-${headings.length + 1}`;
+      appendApiGuideInline(element, heading[2].trim());
+      content.appendChild(element);
+      headings.push({ id: element.id, title: heading[2].trim() });
+      index += 1;
+      continue;
+    }
+
+    if (line.includes("|") && isTableDivider(lines[index + 1] || "")) {
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      splitApiGuideTableRow(line).forEach((cellText) => {
+        const cell = document.createElement("th");
+        appendApiGuideInline(cell, cellText);
+        headerRow.appendChild(cell);
+      });
+      thead.appendChild(headerRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+        const row = document.createElement("tr");
+        splitApiGuideTableRow(lines[index]).forEach((cellText) => {
+          const cell = document.createElement("td");
+          appendApiGuideInline(cell, cellText);
+          row.appendChild(cell);
+        });
+        tbody.appendChild(row);
+        index += 1;
+      }
+      table.appendChild(tbody);
+      const tableWrap = document.createElement("div");
+      tableWrap.className = "api-guide-table-wrap";
+      tableWrap.appendChild(table);
+      content.appendChild(tableWrap);
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*([-*]|\d+\.)\s+(.+)$/);
+    if (listMatch) {
+      const ordered = /\d+\./.test(listMatch[1]);
+      const list = document.createElement(ordered ? "ol" : "ul");
+      while (index < lines.length) {
+        const itemMatch = lines[index].match(/^\s*([-*]|\d+\.)\s+(.+)$/);
+        if (!itemMatch || /\d+\./.test(itemMatch[1]) !== ordered) break;
+        const item = document.createElement("li");
+        appendApiGuideInline(item, itemMatch[2].trim());
+        list.appendChild(item);
+        index += 1;
+      }
+      content.appendChild(list);
+      continue;
+    }
+
+    const paragraphLines = [trimmed];
+    index += 1;
+    while (index < lines.length && lines[index].trim() && !isBlockStart(index)) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+    const paragraph = document.createElement("p");
+    appendApiGuideInline(paragraph, paragraphLines.join(" "));
+    content.appendChild(paragraph);
+  }
+
+  const tocLabels = [
+    "快速开始", "创建一个 API", "API Key", "第一次调用",
+    "conversation_id", "第二轮调用", "Public SSE Events", "Python 完整示例", "常见问题",
+  ];
+  tocLabels.forEach((labelText) => {
+    const heading = headings.find((item) => item.title.includes(labelText));
+    if (!heading) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.apiGuideTarget = heading.id;
+    button.textContent = labelText;
+    toc.appendChild(button);
+  });
+  toc.hidden = toc.childElementCount === 0;
+}
+
+async function loadApiDeploymentGuide() {
+  if (_apiGuideLoaded) return;
+  const content = document.getElementById("apiGuideContent");
+  if (!content) return;
+  const loading = document.createElement("p");
+  loading.className = "api-guide-loading";
+  loading.textContent = "正在加载使用说明…";
+  content.replaceChildren(loading);
+
+  try {
+    const response = await fetch(API_DEPLOYMENT_GUIDE_URL, {
+      cache: "no-store",
+      headers: { "Accept": "text/markdown, text/plain" },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderApiGuideMarkdown(await response.text());
+    _apiGuideLoaded = true;
+  } catch (error) {
+    const message = document.createElement("p");
+    message.className = "api-guide-error";
+    message.textContent = `使用说明加载失败：${error.message}`;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn btn-outline";
+    retry.textContent = "重试";
+    retry.addEventListener("click", loadApiDeploymentGuide, { once: true });
+    content.replaceChildren(message, retry);
+  }
+}
+
+function openApiDeploymentGuide() {
+  const modal = document.getElementById("apiDeploymentGuideModal");
+  if (!modal) return;
+  modal.hidden = false;
+  loadApiDeploymentGuide();
+  requestAnimationFrame(() => modal.querySelector(".api-key-modal-close")?.focus());
+}
+
+function closeApiDeploymentGuide() {
+  const modal = document.getElementById("apiDeploymentGuideModal");
+  if (modal) modal.hidden = true;
+}
+
+function openApiDeploymentCreate() {
+  const modal = document.getElementById("apiDeploymentCreateModal");
+  const form = document.getElementById("apiDeploymentForm");
+  const errorEl = document.getElementById("apiDeploymentFormError");
+  if (!modal || !form) return;
+  form.reset();
+  if (errorEl) {
+    errorEl.textContent = "";
+    errorEl.hidden = true;
+  }
+  renderApiKnowledgeBaseChoices("apiKbCheckboxList");
+  modal.hidden = false;
+  requestAnimationFrame(() => document.getElementById("apiDeploymentName")?.focus());
+}
+
+function closeApiDeploymentCreate() {
+  const modal = document.getElementById("apiDeploymentCreateModal");
+  if (modal) modal.hidden = true;
+}
+
+function closeApiDeploymentDetail() {
+  const modal = document.getElementById("apiDeploymentDetailModal");
+  if (modal) modal.hidden = true;
+  _apiDetailDeploymentId = null;
+}
+
+async function openApiDeploymentDetail(deployment) {
+  const detail = await apiManagementRequest(
+    `/deployments/${encodeURIComponent(deployment.deployment_id)}`,
+  );
+  _apiDetailDeploymentId = detail.deployment_id;
+  _selectedApiDeploymentId = detail.deployment_id;
+  const itemIndex = _apiDeployments.findIndex((item) => item.deployment_id === detail.deployment_id);
+  if (itemIndex >= 0) _apiDeployments[itemIndex] = detail;
+
+  document.getElementById("apiDeploymentDetailTitle").textContent = detail.name || "Deployment 详情";
+  document.getElementById("apiDetailDescription").textContent = detail.description || "暂无描述";
+  document.getElementById("apiDetailId").textContent = detail.deployment_id;
+  document.getElementById("apiDetailStatus").textContent = detail.status === "active" ? "Active" : "Disabled";
+  document.getElementById("apiDetailHealth").textContent = detail.health === "healthy" ? "Healthy" : "Degraded";
+  document.getElementById("apiDetailKeyPrefix").textContent = detail.api_key_prefix || "—";
+  document.getElementById("apiDetailCreated").textContent = formatApiDate(detail.created_at);
+  document.getElementById("apiDetailUpdated").textContent = formatApiDate(detail.updated_at);
+  document.getElementById("apiDetailLastUsed").textContent = detail.last_used_at
+    ? formatApiDate(detail.last_used_at)
+    : "从未调用";
+  document.getElementById("apiDetailEndpoint").textContent = detail.endpoint;
+
+  const kbContainer = document.getElementById("apiDetailKnowledgeBases");
+  kbContainer.innerHTML = (detail.knowledge_bases || []).map((kb) => `
+    <span class="api-detail-kb ${kb.status === "active" ? "healthy" : "degraded"}">
+      ${escapeHtml(kb.kb_name || kb.kb_id)} · ${escapeHtml(kb.status || "unknown")}
+    </span>
+  `).join("") || '<span class="api-key-empty">未绑定知识库</span>';
+
+  const warning = document.getElementById("apiDetailHealthWarning");
+  const unavailable = detail.unavailable_kbs || [];
+  warning.hidden = !unavailable.length;
+  warning.textContent = unavailable.length
+    ? `不可用知识库：${unavailable.map((kb) => `${kb.kb_name || kb.kb_id}（${kb.status || "unknown"}）`).join("、")}`
+    : "";
+
+  renderApiDeploymentList();
+  renderApiDemoCode();
+  document.getElementById("apiDeploymentDetailModal").hidden = false;
+  requestAnimationFrame(() => document.querySelector(".api-key-modal-close[data-api-detail-close]")?.focus());
 }
 
 function closeApiDeploymentModal() {
@@ -3780,29 +4104,26 @@ function openApiDeploymentModal(deployment) {
   requestAnimationFrame(() => document.getElementById("apiEditDeploymentName")?.focus());
 }
 
-async function refreshApiDeployments({ preserveSecret = true } = {}) {
-  if (!preserveSecret) {
-    _revealedApiCredential = null;
-    const secretSection = document.getElementById("apiSecretReveal");
-    if (secretSection) secretSection.hidden = true;
-  }
-  await renderApiConfig();
+async function refreshApiDeployments() {
+  await loadApiDeployments();
 }
 
 async function rotateApiDeploymentKey(deployment) {
-  if (!window.confirm(`确定重新生成“${deployment.name}”的密钥吗？旧密钥会立即失效。`)) return;
+  if (!window.confirm("生成新密钥后，旧密钥将立即失效。使用旧密钥的客户端将无法继续调用。确定继续吗？")) return;
   const updated = await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}/rotate-key`,
     { method: "POST" },
   );
   _selectedApiDeploymentId = updated.deployment_id;
-  renderApiSecret(updated);
   await refreshApiDeployments();
-  showToast("新密钥已生成，请立即保存", "success");
+  showDeploymentSecret(updated);
 }
 
 async function toggleApiDeployment(deployment) {
   const action = deployment.status === "active" ? "disable" : "enable";
+  if (action === "disable" && !window.confirm(
+    "停用后，该 API 将立即停止接受新的调用，但历史 Conversation 不会删除。确定停用吗？",
+  )) return;
   const updated = await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}/${action}`,
     { method: "POST" },
@@ -3813,7 +4134,9 @@ async function toggleApiDeployment(deployment) {
 }
 
 async function deleteApiDeployment(deployment) {
-  if (!window.confirm(`确定删除“${deployment.name}”吗？入口会立即关闭，历史会话仍会保留。`)) return;
+  if (!window.confirm(
+    `确定删除“${deployment.name}”吗？删除后该 Deployment 将不能继续调用，但不会删除绑定知识库，历史 Conversation 数据也会保留。`,
+  )) return;
   await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}`,
     { method: "DELETE" },
@@ -3821,11 +4144,11 @@ async function deleteApiDeployment(deployment) {
   if (_selectedApiDeploymentId === deployment.deployment_id) {
     _selectedApiDeploymentId = null;
   }
-  await refreshApiDeployments({ preserveSecret: false });
+  await refreshApiDeployments();
   showToast("Deployment 已删除", "success");
 }
 
-function bindApiConfigInteractions() {
+function bindApiDeploymentInteractions() {
   const createForm = document.getElementById("apiDeploymentForm");
   const kbList = document.getElementById("apiKbCheckboxList");
   const deploymentList = document.getElementById("apiDeploymentList");
@@ -3841,6 +4164,21 @@ function bindApiConfigInteractions() {
   bindKbChoiceStyle(kbList);
   bindKbChoiceStyle(document.getElementById("apiEditKbCheckboxList"));
 
+  document.getElementById("btnOpenApiGuide")?.addEventListener("click", openApiDeploymentGuide);
+  document.querySelectorAll("[data-api-guide-close]").forEach((element) => {
+    element.addEventListener("click", closeApiDeploymentGuide);
+  });
+  document.getElementById("btnOpenApiDeploymentCreate")?.addEventListener("click", openApiDeploymentCreate);
+  document.querySelectorAll("[data-api-create-close]").forEach((element) => {
+    element.addEventListener("click", closeApiDeploymentCreate);
+  });
+  document.querySelectorAll("[data-api-secret-close]").forEach((element) => {
+    element.addEventListener("click", closeDeploymentSecret);
+  });
+  document.querySelectorAll("[data-api-detail-close]").forEach((element) => {
+    element.addEventListener("click", closeApiDeploymentDetail);
+  });
+
   createForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const button = document.getElementById("btnCreateApiDeployment");
@@ -3850,6 +4188,11 @@ function bindApiConfigInteractions() {
       (checkbox) => checkbox.value,
     );
     errorEl.hidden = true;
+    if (!selectedKbs.length) {
+      errorEl.textContent = "请至少选择一个 Active Knowledge Base";
+      errorEl.hidden = false;
+      return;
+    }
     button.disabled = true;
     button.textContent = "上线中…";
     try {
@@ -3862,21 +4205,25 @@ function bindApiConfigInteractions() {
         }),
       });
       _selectedApiDeploymentId = deployment.deployment_id;
-      renderApiSecret(deployment);
+      closeApiDeploymentCreate();
       createForm.reset();
       await refreshApiDeployments();
-      showToast("API 已上线，请立即保存密钥", "success");
+      showDeploymentSecret(deployment);
     } catch (error) {
       errorEl.textContent = error.message;
       errorEl.hidden = false;
     } finally {
       button.disabled = false;
-      button.textContent = "上线 API";
+      button.textContent = "创建并上线";
     }
   });
 
   deploymentList?.addEventListener("click", async (event) => {
     const actionButton = event.target.closest("[data-api-action]");
+    if (actionButton?.dataset.apiAction === "create-first") {
+      openApiDeploymentCreate();
+      return;
+    }
     const card = event.target.closest("[data-api-select]");
     const deploymentId = actionButton?.dataset.deploymentId || card?.dataset.apiSelect;
     const deployment = _apiDeployments.find((item) => item.deployment_id === deploymentId);
@@ -3888,6 +4235,7 @@ function bindApiConfigInteractions() {
     actionButton.disabled = true;
     try {
       const action = actionButton.dataset.apiAction;
+      if (action === "view") await openApiDeploymentDetail(deployment);
       if (action === "copy") await copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
       if (action === "edit") openApiDeploymentModal(deployment);
       if (action === "rotate") await rotateApiDeploymentKey(deployment);
@@ -3914,6 +4262,11 @@ function bindApiConfigInteractions() {
       (checkbox) => checkbox.value,
     );
     errorEl.hidden = true;
+    if (!selectedKbs.length) {
+      errorEl.textContent = "请至少选择一个 Active Knowledge Base";
+      errorEl.hidden = false;
+      return;
+    }
     button.disabled = true;
     try {
       await apiManagementRequest(`/deployments/${encodeURIComponent(deploymentId)}`, {
@@ -3942,8 +4295,16 @@ function bindApiConfigInteractions() {
     });
   });
 
-  document.getElementById("btnRefreshApiDeployments")?.addEventListener("click", () => {
-    refreshApiDeployments().catch((error) => showToast(error.message, "error"));
+  document.getElementById("btnRefreshApiDeployments")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      await refreshApiDeployments();
+    } catch (error) {
+      showToast(error.message, "error");
+    } finally {
+      button.disabled = false;
+    }
   });
   document.getElementById("btnCopyApiEndpoint")?.addEventListener("click", () => {
     copyApiText(document.getElementById("apiRevealedEndpoint").value, "Endpoint");
@@ -3951,9 +4312,32 @@ function bindApiConfigInteractions() {
   document.getElementById("btnCopyApiKey")?.addEventListener("click", () => {
     copyApiText(document.getElementById("apiRevealedKey").value, "API Key");
   });
+  document.getElementById("btnCopyApiDetailEndpoint")?.addEventListener("click", () => {
+    const deployment = _apiDeployments.find((item) => item.deployment_id === _apiDetailDeploymentId);
+    if (deployment) copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
+  });
+  document.getElementById("apiGuideContent")?.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-api-guide-copy]");
+    if (!copyButton) return;
+    const code = copyButton.closest(".api-guide-code-block")?.querySelector("code")?.textContent || "";
+    if (code) copyApiText(code, "示例");
+  });
+  document.getElementById("apiGuideToc")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-api-guide-target]");
+    if (!button) return;
+    document.getElementById(button.dataset.apiGuideTarget)?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeApiDeploymentModal();
+    if (event.key !== "Escape") return;
+    closeApiDeploymentCreate();
+    closeApiDeploymentModal();
+    closeApiDeploymentDetail();
+    closeDeploymentSecret();
+    closeApiDeploymentGuide();
   });
 }
 
@@ -3993,7 +4377,6 @@ function bindApiConfigInteractions() {
   }
   // 绑定配置导航切换
   const navItems = document.querySelectorAll(".config-nav-item");
-  const sharedConfigActions = document.querySelector("#configForm > .config-actions");
   navItems.forEach(item => {
     item.addEventListener("click", () => {
       const targetKey = item.dataset.config;
@@ -4004,15 +4387,9 @@ function bindApiConfigInteractions() {
       if (targetGroup) {
         targetGroup.style.display = "block";
       }
-      if (sharedConfigActions) {
-        sharedConfigActions.style.display = targetKey === "api" ? "none" : "flex";
-      }
-      if (targetKey === "api") {
-        renderApiConfig();
-      }
     });
   });
-  bindApiConfigInteractions();
+  bindApiDeploymentInteractions();
   // 页面加载后立即加载配置，确保 Agent 页面打开时模型下拉框就有内容
   loadConfig();
   refreshKnowledgeBases();

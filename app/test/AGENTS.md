@@ -14,6 +14,8 @@
 | `test_memory.py`                          | pytest: 记忆系统（STM + EntityTracker）测试 |
 | `test_rerank_flow.py`                     | pytest: Rerank 流程测试                     |
 | `test_knowledge_base_chunks.py`           | pytest: 知识库切片 CRUD 测试                |
+| `test_api_deployments.py`                 | pytest: Deployment 安全、存储、事件和并发锁 |
+| `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成与回归 |
 | `verify_chunk_id_retrieval.py`            | pytest: chunk_id 三端一致性验证             |
 | `eval_retrieval.py`                       | 手动脚本: 检索评测（旧版）                  |
 | `eval_retrieval_v2.py`                    | 手动脚本: 检索评测（新版）                  |
@@ -46,6 +48,9 @@ pytest app/test/
 
 ```powershell
 pytest app/test/test_rag_planning.py -v
+
+# API 上线：纯逻辑/存储 + FastAPI 路由集成
+pytest app/test/test_api_deployments.py app/test/test_api_deployment_routes.py -v
 ```
 
 运行手动脚本：
@@ -60,6 +65,7 @@ python app/test/eval_rerank_compare.py
 - pytest 测试文件必须以 `test_` 开头
 - 手动脚本不需要 pytest 框架
 - `tests_api/` 中的测试依赖外部 API 服务，可能需要网络和认证
+- `test_api_deployment_routes.py` 使用隔离的临时 SQLite、Milvus/Pipeline 替身，不调用真实模型或外部服务
 - 测试数据文件（如 `retrieval_eval_dataset.jsonl`）与测试代码放在一起
 
 ## Common Pitfalls

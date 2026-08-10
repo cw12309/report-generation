@@ -10,7 +10,7 @@
 
 | File         | Responsibility                                                                    |
 | ------------ | --------------------------------------------------------------------------------- |
-| `gateway.py` | API Gateway：Bearer Token 鉴权 + HTTP 代理到 Worker                               |
+| `gateway.py` | API Gateway：全局 API Key 鉴权、Deployment Key 内部转发 + HTTP 流式代理到 Worker |
 | `config.py`  | 统一配置管理：`config.yml` + `.env` 解析、OpenAI 客户端工厂、所有配置 getter 函数 |
 
 ## Symbol Map
@@ -20,8 +20,10 @@
 - `app` — FastAPI Gateway 实例，端口 8000
 - `RAGSearchPayload` — 检索请求模型
 - `ReportGeneratePayload` — 报告生成请求模型
-- 路由: `POST /api/v1/rag/search`, `POST /api/v1/report/generate`
+- `DeploymentChatPayload` — 公开 Deployment Chat 请求模型，拒绝 `selected_kbs`
+- 路由: `POST /api/v1/rag/search`, `POST /api/v1/report/generate`, `POST /api/v1/deployments/{id}/chat`
 - `verify_api_key()` — Bearer Token 鉴权依赖
+- `extract_deployment_api_key()` — 提取 Deployment Bearer 并通过内部 Header 交给 Worker 校验
 
 ### `config.py`
 
@@ -102,7 +104,7 @@ config.py
 
 ### 修改 Gateway 鉴权
 
-优先检查: `gateway.py` → `verify_api_key()`, `.env` → `API_SECRET_KEY`
+无状态全局 Key 优先检查: `gateway.py` → `verify_api_key()`, `.env` → `API_SECRET_KEY`。Deployment Key 优先检查 `extract_deployment_api_key()`、Header 剥离/注入、Worker `/internal/deployments/{id}/chat`。
 
 ### 添加新的配置项
 
@@ -117,6 +119,7 @@ config.py
 - `config.py` 是配置的唯一入口，其他模块不直接读取 `config.yml` 或 `.env`
 - 密钥只从 `.env` 或环境变量读取，不回退到 `config.yml`
 - `gateway.py` 不 import Worker 代码，只做 HTTP 代理
+- Gateway 不读取 Deployment 数据库；Deployment Key 的动态摘要校验和状态检查由 Worker 完成
 - 新增配置 getter 函数遵循 `get_<name>()` 命名规范
 
 ## Common Pitfalls

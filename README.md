@@ -4,7 +4,7 @@
 
 这是一个面向医学影像报告**文本生成**的 Agent + RAG 系统。用户可以用自然语言提供检查类型、部位、诊断、病史或报告修改要求；系统从选定的医学报告模板知识库检索参考内容，并由 LLM 生成、编辑或重写结构化医学影像报告文本。
 
-系统由 FastAPI Gateway 和 Worker 组成。Worker 负责会话、Agent 编排、Tool Calling、RAG、知识库构建和评测；SQLite 保存会话、知识库元数据与切片原文，Milvus 保存 Dense/Sparse 向量和检索字段。浏览器使用有状态的 SSE Chat，外部服务也可以通过带 Bearer Token 的无状态 API 直接检索或生成报告。
+系统由 FastAPI Gateway 和 Worker 组成。Worker 负责会话、Agent 编排、Tool Calling、RAG、知识库构建和评测；SQLite 保存会话、知识库元数据与切片原文，Milvus 保存 Dense/Sparse 向量和检索字段。浏览器使用有状态的 SSE Chat；外部服务既可以通过全局 Bearer Token 调用无状态检索/生成 API，也可以通过绑定固定知识库的 Deployment API Key 进行有状态多轮对话。
 
 本项目当前处理的是文本查询、医学报告模板和结构化报告文本，不读取或分析 DICOM、CT、MR 等医学影像像素。
 
@@ -20,7 +20,8 @@
 - `rag_search`、`edit_report`、`refine_report` 三类业务工具。
 - STM、EntityTracker、MemoryRetriever 和 SQLite Session 持久化。
 - SSE 状态、检索、报告和完成事件。
-- Stateful Chat 与 Stateless Retrieval/Generation API。
+- Stateful Chat、Stateless Retrieval/Generation 与 Deployment Stateful Chat API。
+- 可视化 Deployment 创建、固定知识库、启停、轮换密钥和健康状态管理。
 - Excel → Markdown → Embedding → Milvus 的知识库构建流程。
 - Retrieval Eval、Hit@1/3/5、评测进度持久化和恢复。
 
@@ -39,12 +40,14 @@ Browser / External API Client
               │ HTTP / SSE
               ▼
 Gateway (app/gateway.py)
-  ├─ Bearer authentication for /api/v1/*
+  ├─ Global Bearer authentication for stateless /api/v1/*
+  ├─ Deployment Bearer forwarding for stateful deployment chat
   └─ Streaming proxy to Worker
               │ HTTP :8001
               ▼
 Worker (app/chat/server.py)
   ├─ Stateful Chat / SSE
+  ├─ Deployment management / stateful public chat
   ├─ Stateless internal APIs
   ├─ Knowledge Base APIs
   ├─ Evaluation APIs
@@ -312,7 +315,7 @@ Embedding 模型和维度必须与现有 Milvus Dense Vector 一致；更换后�
 
 | 变量 | 用途 |
 | --- | --- |
-| `API_SECRET_KEY` | `/api/v1/*` Bearer Token；生产环境必须显式配置 |
+| `API_SECRET_KEY` | 无状态 `/api/v1/rag/search` 与 `/api/v1/report/generate` 的全局 Bearer Token；生产环境必须显式配置 |
 | `WORKER_BASE_URL` | Gateway 转发到 Worker 的地址 |
 | `WORKER_REQUEST_TIMEOUT` | Gateway 上游请求超时秒数 |
 | `ALLOW_LEGACY_PUBLIC_PROXY` | 是否允许旧版 Web UI 代理接受非私网来源 |
@@ -399,9 +402,38 @@ Authorization: Bearer <token>
 
 用途：无状态执行检索和报告生成。可额外提供 Modality、Body Part、Clinical History、Diagnosis 等结构化上下文，但不会持久化 Session。
 
+### Deployment Stateful Chat
+
+```text
+POST /api/v1/deployments/{deployment_id}/chat
+Authorization: Bearer <deployment_api_key>
+Content-Type: application/json
+Response: text/event-stream
+```
+
+用途：把一组固定的 Active 知识库上线为独立的有状态对话 API。调用方只提交 `message`、可选 `conversation_id` 和可选 `selected_diagnosis`，不能在请求中替换 `selected_kbs`。首次不传 `conversation_id` 时，服务会在首个 SSE 事件中返回新 ID；后续请求复用该 ID，即可继续使用同一 Session 的实体、历史、上一份报告和歧义上下文。
+
+Deployment 通过 Config 页“API 上线”区域或 Worker 管理路由创建。创建和轮换时只显示一次明文 Key；数据库只保存 SHA-256 摘要与可识别前缀。停用、软删除或绑定知识库失效时，公开调用会被拒绝。
+
 Gateway 公开的 `/api/v1/*` 路由会转发到 Worker 的 `/internal/*` 路由；外部调用方不应直接访问 Internal API。
 
 ## API Examples
+
+### Create a Deployment
+
+管理 API 通过浏览器管理面或私网/本机 Worker 路由使用；不要把 Worker 管理端口直接暴露到公网。
+
+```bash
+curl -X POST http://localhost:8000/api/deployments \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "胸部报告助手",
+    "description": "供业务系统调用",
+    "selected_kbs": ["example-kb-id"]
+  }'
+```
+
+响应包含 `deployment_id`、`endpoint` 和仅出现一次的 `api_key`。后续列表/详情只返回形如 `rg_live_xxxxxxxx****` 的前缀；遗失明文时调用 `POST /api/deployments/{id}/rotate-key`，旧 Key 会立即失效。
 
 ### Stateful Chat
 
@@ -446,6 +478,34 @@ curl -X POST http://localhost:8000/api/v1/report/generate \
     "diagnosis": ["肺结节"]
   }'
 ```
+
+### Deployment Stateful Chat
+
+第一轮：
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/deployments/<deployment-id>/chat \
+  -H "Authorization: Bearer <deployment-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"胸部 CT，考虑肺结节"}'
+```
+
+响应开头包含：
+
+```text
+data: {"type":"conversation","conversation_id":"conv_..."}
+```
+
+第二轮把该 ID 原样传回：
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/deployments/<deployment-id>/chat \
+  -H "Authorization: Bearer <deployment-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"把上一份报告写得更简洁","conversation_id":"conv_..."}'
+```
+
+公开事件只包含稳定集合：`conversation`、`status`、`message`、`report`、`ambiguous`、`error`、`done`，最后仍发送 `data: [DONE]`。内部 Query Plan、Memory、Tool 和 Rerank 细节不会暴露给外部调用方。
 
 Docker Compose 部署时，将示例中的 `localhost:8000` 改为 `localhost:7860`。
 
@@ -641,6 +701,7 @@ python app/test/eval_rerank_compare.py
 | `app/gateway.py` | Gateway 鉴权和 Worker 代理 |
 | `app/config.py` | 配置 Getter 和 OpenAI-compatible Client Factory |
 | `app/chat/server.py` | Worker 路由、SSE、Session、KB 和 Eval 入口 |
+| `app/chat/deployments.py` | Deployment 密钥、知识库范围、公开事件映射与会话锁 |
 | `app/chat/pipeline.py` | Agent 主编排 |
 | `app/chat/llm_client.py` | Chat、Embedding 和 Rerank 上层调用封装 |
 | `app/tools/registry.py` | Tool 注册、Schema 暴露和执行 |

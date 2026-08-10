@@ -2,7 +2,7 @@
 
 from typing import Optional, List, Dict, Any, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # =============================================================================
@@ -14,6 +14,29 @@ class ChatRequest(BaseModel):
     session_id: str = Field(default="default", description="会话 ID")
     selected_diagnosis: Optional[str] = Field(default=None, description="选择的诊断（歧义场景）")
     selected_kbs: List[str] = Field(default_factory=list, description="本轮检索的知识库 ID")
+
+
+class DeploymentCreateRequest(BaseModel):
+    """创建一个固定知识库范围的 Stateful Agent Deployment。"""
+    name: str = Field(..., min_length=1, max_length=120)
+    description: str = Field(default="", max_length=2000)
+    selected_kbs: List[str] = Field(..., min_length=1)
+
+
+class DeploymentUpdateRequest(BaseModel):
+    """更新 Deployment 元数据或知识库范围。"""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    selected_kbs: Optional[List[str]] = Field(default=None, min_length=1)
+
+
+class DeploymentChatRequest(BaseModel):
+    """Gateway 调用的公开多轮 Agent Contract；KB 范围不属于请求。"""
+    message: str = Field(..., min_length=1, max_length=4000)
+    conversation_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    selected_diagnosis: Optional[str] = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ConfigSaveRequest(BaseModel):

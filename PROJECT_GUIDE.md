@@ -17,7 +17,8 @@
 - Metadata-aware Dense/Sparse Hybrid Retrieval 与 Rerank；
 - Excel 知识库上传、构建、切片查看和删除；
 - Retrieval Eval、进度恢复和数据集维护；
-- 带 Bearer Token 的无状态检索与报告生成 API。
+- 带全局 Bearer Token 的无状态检索与报告生成 API；
+- 将固定 Active KB 上线为独立 Deployment，并用独立 Key 提供有状态多轮 SSE Chat。
 
 明确边界：本项目处理的是**医学影像报告文本**。它不读取 DICOM，不分析 CT/MR 像素，不运行视觉诊断模型，也不能被描述为独立的医学图像诊断系统。真实临床应用仍需要医生审核、隐私治理和合规控制。
 
@@ -34,7 +35,7 @@
                           └────────────┬─────────────┘
                                        │ same-origin /api/* + SSE
                                        ▼
-External Client ── Bearer ──► ┌──────────────────────┐
+External Client ── global/deployment Bearer ──► ┌──────────────────────┐
                               │ Gateway              │
                               │ auth + stream proxy  │
                               └──────────┬───────────┘
@@ -45,7 +46,7 @@ External Client ── Bearer ──► ┌────────────�
                               │ routes + runtime hub │
                               └───────┬──────┬───────┘
                                       │      │
-                       Stateful Chat ─┘      └─ KB / Eval / Config APIs
+      Browser/Deployment Stateful Chat ─┘      └─ KB / Eval / Config APIs
                                       │
                                       ▼
                               ┌──────────────────────┐
@@ -78,6 +79,7 @@ Offline: Excel ─► Markdown + SQLite Chunks + Metadata Tree
                               └─► Dense/Sparse ─► shared Milvus Collection
 
 Shared state: SQLite SessionStore ─► Sessions / Turns / State / Thinking
+                                  ├► Deployment / fixed KB / conversation map
                                   └► KB metadata/chunks / Eval state
 
 External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
@@ -103,7 +105,7 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 4. **恢复 Session**
 
-   `_get_or_create_session()` 从 `data/sessions.db` 加载 Turns、Entity Slots、Last Report 和 Selected KBs，再重建 STM、EntityTracker 和 MilvusClient；新 ID 则创建数据库记录。歧义缓存实际从进程内 `_ambiguity_cache` 恢复。
+   `_get_or_create_session()` 从 `data/sessions.db` 加载 Turns、Entity Slots、Last Report、Selected KBs 和 Last Ambiguity，再重建 STM、EntityTracker 和 MilvusClient；新 ID 则创建数据库记录。进程内 `_ambiguity_cache` 是热缓存，SQLite state 是重启后的恢复来源。
 
 5. **Entity 与 Intent**
 
@@ -147,7 +149,7 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 关键理解：SSE 事件在 Pipeline 执行期间已经陆续进入队列；SQLite 持久化发生在 Pipeline 返回后、`done` 之前。浏览器断开聊天流并不会显式取消已创建的后台 `run()` task。
 
-## 5. Stateful 和 Stateless 两条路径
+## 5. Stateful、Stateless 和 Deployment 三条路径
 
 ### Stateful Chat
 
@@ -161,19 +163,23 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 `POST /api/v1/report/generate` 先复用同一个 `_stateless_search()`，再创建临时 EntityTracker，并复用 `create_rag_search_handler()` 与 `structure.md` 生成报告。它没有 Last Report、STM 或持久化，但可以接受 modality、body part、clinical history、diagnosis 和 selected diagnosis。
 
+### Deployment Stateful Chat
+
+`POST /api/v1/deployments/{deployment_id}/chat` 面向外部集成，但复用与浏览器 Chat 相同的 `_stateful_chat_events()` 和 `run_pipeline()`。每个 Deployment 绑定固定的 Active KB，调用方用该 Deployment 的独立 Bearer Key，只能提交 `message`、可选 `conversation_id` 和 `selected_diagnosis`，不能覆盖 `selected_kbs`。
+
+首次不传 `conversation_id` 时，Worker 原子创建 `conv_* → internal session_id` 映射并在首个 SSE 事件返回外部 ID；后续请求复用它即可恢复 Turns、Slots、Last Report、Thinking 和 Ambiguity。映射键包含 `deployment_id`，因此两个 Deployment 可安全使用同名 conversation。单进程内同一 conversation 通过 `ConversationLockRegistry` 串行，不同 conversation 可以并行。
+
 重要差异：Stateful Pipeline 在 Tool 决策前执行 Query 标准化和可选 Rewrite；Stateless `_stateless_search()` 直接把去空白的原 Query 交给 `search_reports()`，只做 Query Planning，不经过 `standardize_query()/rewrite_query()`。
 
-| 维度 | Stateful Chat | Stateless Retrieval | Stateless Generation |
-| --- | --- | --- | --- |
-| 入口 | `/api/chat` | `/api/v1/rag/search` | `/api/v1/report/generate` |
-| 鉴权 | Legacy 来源限制；Worker 直连无 Bearer | Gateway Bearer | Gateway Bearer |
-| Session/Memory | 有 | 无 | 无 |
-| Last Report | 有 | 无 | 无 |
-| Query Rewrite | 有条件执行 | 不执行 | 不执行 |
-| Retrieval/Rerank | Tool 选择后可执行 | 总是执行 | 总是执行 |
-| Report LLM | 仅 `rag_search` | 无 | 有，复用 RAG Tool handler |
-| 响应 | SSE | JSON（Gateway 仍透明流式代理字节） | JSON |
-| KB 为空 | 拒绝 | 使用全部 Active KB | 使用全部 Active KB |
+| 维度 | Browser Stateful | Deployment Stateful | Stateless Retrieval | Stateless Generation |
+| --- | --- | --- | --- | --- |
+| 入口 | `/api/chat` | `/api/v1/deployments/{id}/chat` | `/api/v1/rag/search` | `/api/v1/report/generate` |
+| 鉴权 | Legacy 来源限制 | Deployment Bearer | 全局 Gateway Bearer | 全局 Gateway Bearer |
+| Session/Memory | 有，调用方给 session ID | 有，conversation 映射 | 无 | 无 |
+| KB 范围 | 每轮请求选择 | Deployment 固定 | 请求选择或全部 Active | 请求选择或全部 Active |
+| Query Rewrite | 有条件执行 | 有条件执行 | 不执行 | 不执行 |
+| Report LLM | Tool 选择后可执行 | Tool 选择后可执行 | 无 | 有，复用 RAG Tool handler |
+| 响应 | 内部细节 SSE | 稳定白名单 SSE | JSON | JSON |
 
 ## 6. Frontend：用户看到的系统
 
@@ -189,7 +195,7 @@ Worker 把 `front/` 挂载到 `/static`，`/` 返回 `index.html`。静态资源
 | --- | --- | --- |
 | Agent | `pageAgent` | KB 选择、聊天、思考步骤、参考切片、Memory 面板和本地历史 |
 | Knowledge Base | `pageKB` | 上传、构建、轮询进度、切片详情、删除 |
-| Config | `pageConfig` | 模型/检索/系统配置、模型连通性测试；API 上线子页是 Mock |
+| Config | `pageConfig` | 模型/检索/系统配置、模型连通性测试；真实 Deployment/API Key 管理与示例 |
 | Eval | `pageEval` | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测 |
 | Monitor | `pageMonitor` | 后端会话列表、Memory 查看和 Session 删除 |
 
@@ -213,11 +219,13 @@ textarea + selected KB Set
 
 ### 6.4 前端保存哪些状态
 
-- 内存：`SESSION_ID`、当前 conversation ID、处理中标志、reader/controller、KB 列表和选择、KB timer、Eval 状态、配置对象和 Mock API 状态。
+- 内存：`SESSION_ID`、当前 conversation ID、处理中标志、reader/controller、KB 列表和选择、KB timer、Eval 状态、配置对象、Deployment 列表及一次性明文 Key。
 - LocalStorage：`chat_history_list`、`chat_messages_{conversationId}`、`selectedKnowledgeBaseIds`。
 - 不在浏览器保存为权威状态：Entity Slots、Last Report、后端 Turns、Eval 结果和 KB 元数据；它们由 Worker/SQLite 管理。
 
 LocalStorage 保存消息 `innerHTML` 和 Thinking `outerHTML`。它能恢复 UI，但不是 Session 真相来源，也意味着浏览器可能持久化医学文本。
+
+API 上线 UI 不把明文 Deployment Key 写入 LocalStorage。创建或轮换后只在当前页面的一次性提示区显示；刷新后必须重新轮换，无法从后端取回原 Key。
 
 ### 6.5 SSE
 
@@ -250,22 +258,23 @@ LocalStorage 保存消息 `innerHTML` 和 Thinking `outerHTML`。它能恢复 UI
 
 ## 7. Gateway：为什么还需要一层 Gateway
 
-Gateway 是安全与部署边界，不是业务层。它创建一个复用的 `httpx.AsyncClient`，剥离 hop-by-hop 和 Authorization 等头，透明转发请求体和上游响应流。
+Gateway 是安全与部署边界，不是业务层。它创建一个复用的 `httpx.AsyncClient`，剥离 hop-by-hop、Authorization 和伪造的内部 Deployment Header，再透明转发请求体和上游响应流。
 
-- 负责：`/api/v1/*` Bearer 校验、请求模型的边界验证、Worker 超时/不可用映射、Legacy 来源限制和流式代理。
+- 负责：Stateless 全局 Bearer 校验、Deployment Bearer 语法提取与受控内部 Header 注入、请求模型边界验证、Worker 超时/不可用映射、Legacy 来源限制和流式代理。
 - 不负责：Session、LLM、Tool、RAG、SQLite、Milvus 或报告生成。
 - Public Stateless：`/api/v1/rag/search`、`/api/v1/report/generate`，必须 Bearer。
+- Public Deployment：`/api/v1/deployments/{id}/chat`，Gateway 不读 SQLite；Key 摘要、状态与 KB 健康由 Worker 动态校验。
 - Stateful Legacy：其他路径走 catch-all。默认只允许 loopback/private/link-local 来源；`ALLOW_LEGACY_PUBLIC_PROXY=true` 才放开。
 
 Gateway 与 Worker 分离让公开进程不导入模型或数据库代码，也能使 Worker 在 Docker 中不暴露主机端口。需要注意：本地浏览器访问 `:8000` 时也经过 Legacy Proxy；直接访问 `:8001` 才是直连 Worker。
 
 ## 8. Worker：整个后端运行中心
 
-`app/chat/server.py` 是高连接度运行中心。它创建 FastAPI、SessionStore 和评测锁，启动时校验 Milvus Schema，挂载前端，并注册 Chat、Session、KB、Config、Eval 和 Internal API。
+`app/chat/server.py` 是高连接度运行中心。它创建 FastAPI、SessionStore、评测锁和 Deployment conversation 锁，启动时校验 Milvus Schema，挂载前端，并注册 Chat、Deployment、Session、KB、Config、Eval 和 Internal API。
 
 它的合理职责是 HTTP/SSE 边界和资源生命周期；当前它还直接编排知识库后台构建、模型连通性测试、评测后台 task 和 Session 重建，所以任何跨模块契约变化都容易汇聚到这里。修改它时通常要联查 Pydantic Schema、Frontend、SessionStore 和实际业务模块。
 
-Worker 不是鉴权边界。将 `:8001` 暴露到公网会绕过 Gateway 的 Bearer 和 Legacy 来源限制。
+Worker 不是完整的公网鉴权边界。Deployment internal route 会自行校验动态 Key，但将 `:8001` 暴露到公网仍会绕过 Stateless 全局 Bearer、Legacy 来源限制以及其他管理接口的网络边界。
 
 ## 9. Agent Pipeline：系统的大脑
 
@@ -584,9 +593,11 @@ Browser SESSION_ID
 - `Last Report`：`session_state.last_report`，供 edit/refine 和多病变合并。
 - `Selected KBs`：`session_state.selected_kbs`；但 `/api/chat` 仍要求每轮请求显式传入。
 - `Thinking Events`：`thinking` 表，保存 Pipeline 发出的过程事件；手工排队的最终 `done` 不在该列表。
-- `Ambiguity`：表中有 `last_ambiguity` 字段和 save/load 方法，但 Worker 当前保存时不传它，实际使用进程内 `_ambiguity_cache`。
+- `Ambiguity`：`session_state.last_ambiguity` 随本轮保存并在恢复时加载；进程内 `_ambiguity_cache` 继续作为热缓存。
 
 Frontend 的 `conversationId` 只组织 LocalStorage UI；后端 `session_id` 才标识 SQLite Session。前端生成 `web_*`，后端 `/api/session/new` 生成 `rag_v2_*`。
+
+Deployment 还有第三种 ID：外部只看 `conv_*`，`api_conversations` 把它映射到不可猜测的内部 Session ID。映射以 `(deployment_id, conversation_id)` 为主键，防止不同 Deployment 串话。
 
 ## 31. SQLite 到底存了什么
 
@@ -601,6 +612,9 @@ Frontend 的 `conversationId` 只组织 LocalStorage UI；后端 `session_id` �
 | `knowledge_bases` | KB 名称、状态、进度、源路径、Metadata Tree | Chat KB validation、Navigator、KB UI |
 | `knowledge_base_chunks` | 稳定 Chunk ID、来源、层级、报告原文 | KB UI、Eval 用例选择 |
 | `evaluation_state` | 运行进度、最后结果、时间 | Eval 状态恢复 |
+| `api_deployments` | 名称、状态、Key 摘要/前缀、最后使用与软删除时间 | Config UI、Deployment Chat 鉴权 |
+| `api_deployment_knowledge_bases` | Deployment 固定 KB 范围 | 管理 API、运行时健康检查 |
+| `api_conversations` | 外部 conversation 与内部 Session 映射 | Deployment 多轮恢复 |
 
 每次操作创建短连接，启用 WAL、foreign keys、30 秒 busy timeout，并显式提交/回滚。SQLite 保存可展示原文和业务状态；Milvus 保存在线向量检索副本。两者通过 `kb_id/chunk_id` 对齐，而不是互相替代。
 
@@ -768,6 +782,8 @@ Frontend 实际处理 §6.5 列出的分支；差异是：
 
 `reasoning` 来自 Report JSON 的可选字段，会单独显示在 Thinking；正式 `report` 内容不会包含 reasoning。Eval/自动生成使用独立的 `start/progress/warning/done/cancelled/error` 集合。
 
+Deployment Chat 不直接暴露上述内部事件集合。`map_public_event()` 只允许 `status`、`message`、`report`、`ambiguous`、`error`、`done`，Worker 还在流开头增加 `conversation`，末尾发送 `[DONE]`。`report` 同时携带可展示 `content` 和结构化 `data`；Query Plan、Memory、Tool、Recall/Rerank 与 reasoning 细节不会进入公开契约。
+
 ## 43. Streaming 并不等于所有 Token 都实时输出
 
 SSE Streaming 是 HTTP 响应可以逐事件发送；LLM Token Streaming 是模型生成的每个 delta 被立即转发。两者不是同一件事。
@@ -781,6 +797,9 @@ SSE Streaming 是 HTTP 响应可以逐事件发送；LLM Token Streaming 是模�
 | 结构 | 核心含义 | 谁创建 → 谁使用 |
 | --- | --- | --- |
 | `ChatRequest` | Query、Session、诊断选择、KB 范围 | Frontend → Worker |
+| `DeploymentChatRequest` | message、可选 conversation/诊断；拒绝 KB 字段 | External Client → Gateway/Worker |
+| Deployment | 固定 KB、状态、Key 摘要/前缀、健康状态 | Config UI/SessionStore → Worker auth |
+| API Conversation | `(deployment_id, conversation_id) → internal_session_id` | Worker → Stateful executor |
 | Entity Slots | modality/body part/history/diagnosis/intent | EntityTracker/SQLite → Prompt/Planner/Tools |
 | `QueryPlan` | semantic/keyword/diagnosis Query、filters、slot confidence | Planner → Retrieval/SSE |
 | Tool Call | ID、name、arguments | Main LLM → Registry/Pipeline |
@@ -911,7 +930,7 @@ Worker request runtime                         SQLite SessionStore
   EntityTracker ◄── entity_slots ────────────── session_state
   last_report ◄──── last_report ─────────────── session_state
   selected_kbs ◄── request + persisted copy ─── session_state
-  last_ambiguity ◄─ process-global dict          field exists but unused by Worker
+  last_ambiguity ◄─ cache + session_state persistence
        │
        ▼
   Pipeline mutates runtime objects
@@ -919,13 +938,14 @@ Worker request runtime                         SQLite SessionStore
        └──── persist Turn / Slots / Report / KBs / Thinking ──► SQLite
 ```
 
-记忆方式：Browser 保存“怎么显示”，Runtime 保存“本轮怎么工作”，SQLite 保存“下轮怎么恢复”。歧义缓存是当前例外：它只在 Worker 进程内跨请求存活。
+记忆方式：Browser 保存“怎么显示”，Runtime 保存“本轮怎么工作”，SQLite 保存“下轮怎么恢复”。Deployment 入口先用 `api_conversations` 找到内部 Session，再进入同一恢复/保存流程；同一 conversation 在一个 Worker 进程内由 keyed lock 串行。
 
 ## 49. 模块依赖关系
 
 ```text
 front/* ─HTTP/SSE─► gateway.py ─HTTP─► chat/server.py
                                          │
+                                         ├─► chat/deployments.py
                                          ├─► chat/pipeline.py
                                          │     ├─► prompt/
                                          │     ├─► memory/
@@ -963,7 +983,8 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `front/style.css` | 全部视觉和状态 class | 样式/响应式 |
 | `app/gateway.py` | Public auth 与 stream proxy | 外部 API、安全边界 |
 | `app/config.py` | 配置解析、getter、client factory | 新配置或热重载 |
-| `app/chat/server.py` | Worker 路由、Session、SSE、KB、Eval | 后端入口/跨模块问题 |
+| `app/chat/server.py` | Worker 路由、共享 Stateful 执行、Deployment、Session、SSE、KB、Eval | 后端入口/跨模块问题 |
+| `app/chat/deployments.py` | Key 摘要、KB scope、公开 SSE 与 conversation lock | API 上线安全/契约 |
 | `app/chat/pipeline.py` | 一轮 Agent 主编排 | Tool 决策和请求生命周期 |
 | `app/chat/llm_client.py` | Chat/Embedding/Rerank 上层调用 | 模型调用、streaming |
 | `app/chat/schemas.py` | Worker Pydantic contract | Stateful/管理 API 字段 |
@@ -985,7 +1006,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `app/memory/short_term.py` | STM window 与摘要 | 多轮历史问题 |
 | `app/memory/entity_tracker.py` | Slots、Intent、Context Resolution | 实体和指代问题 |
 | `app/memory/retriever.py` | STM semantic selection | 历史相关性/Embedding |
-| `app/memory/session_store.py` | SQLite 所有共享表 | Session/KB/Eval 持久化 |
+| `app/memory/session_store.py` | SQLite 所有共享表 | Session/KB/Eval/Deployment 持久化 |
 | `app/data_pipeline/process_reports.py` | Excel → Chunk/Markdown | Excel schema/切片 |
 | `app/data_pipeline/build_vector_db.py` | Milvus schema 与写入 | Embedding/schema/rebuild |
 | `app/data_pipeline/extract_metadata.py` | Markdown → Metadata Tree | Planner 候选来源 |
@@ -994,6 +1015,8 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | `app/eval/metrics.py` | Hit@K 定义 | 新指标/聚合 |
 | `app/test/test_rag_planning.py` | Planner/Channels 的纯测试 | RAG 逻辑回归 |
 | `app/test/test_knowledge_base_chunks.py` | SQLite Chunk/Excel parser 测试 | 建库数据变更 |
+| `app/test/test_api_deployments.py` | Deployment 纯逻辑、存储、安全和锁 | API 上线底层变更 |
+| `app/test/test_api_deployment_routes.py` | 管理 API、公开 SSE、多轮和原接口回归 | API 上线端到端契约 |
 
 ## 51. 修改入口：我想改 X 应该去哪
 
@@ -1021,6 +1044,7 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 | Gateway API | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes |
 | Stateful API | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage` |
 | Stateless API | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers |
+| Deployment/API 上线 | `chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、Config UI、部署测试 |
 | Excel Schema | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README |
 | Chunk 组成/ID | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval |
 | Milvus Schema | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config |
@@ -1077,6 +1101,10 @@ RRF 只融合多个 ANN 排名，不深入联合理解 Query 与全文；Cross-E
 
 Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以明确请求获取可重复结果，不引入服务器会话生命周期。
 
+### 为什么还需要 Deployment API
+
+Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品契约。Deployment 把 KB 范围、启停状态和独立 Key 固定在服务端，同时复用 Stateful Pipeline；外部系统获得多轮能力，却不能越权切换知识库或看到内部 Agent 事件。
+
 ## 53. 当前架构最值得注意的问题
 
 以下均来自当前源码审计；只记录，不在本文档任务中修复。
@@ -1095,9 +1123,9 @@ Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以�
 
    Worker 把 async `chat_stream` 注入同步 `EntityTracker._extract_llm()`；代码不 await coroutine，就调用 `.strip()`，捕获异常后回退规则，并可能产生“coroutine was never awaited”。因此文档声称的在线 LLM 实体抽取实际未工作。
 
-4. **同一 Session 没有请求级并发控制**
+4. **浏览器 Stateful Chat 的同一 Session 没有请求级并发控制**
 
-   每个请求独立从 SQLite 重建状态、计算相同 `turn_index`、再插入和覆盖 state。两个并发请求可发生 Lost Update、重复顺序号、Last Report/Slots 后写覆盖前写。SQLite WAL 只保证数据库事务，不保证业务 Session 序列化。
+   Deployment Chat 已按 `(deployment_id, conversation_id)` 使用 keyed lock；浏览器 `/api/chat` 仍允许同一 `session_id` 并发。两个浏览器请求可能同时从 SQLite 重建状态、计算相同 `turn_index`，造成 Lost Update、重复顺序号或 Last Report/Slots 覆盖。
 
 5. **主 Report Schema 与 edit/refine Prompt 漂移**
 
@@ -1107,15 +1135,15 @@ Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以�
 
    Worker 实际上传到 `/app/app/data_pipeline/report_template` 并生成 `output_markdown`；Compose 挂载的是 `./app/report_template:/app/app/report_template` 和旧 `xlsx_slices`，未挂载实际上传/Markdown目录。容器重建可能丢失源 Excel/Markdown，除非部署环境另有外部保护。
 
-7. **Worker 直连绕过鉴权**
+7. **Worker 直连绕过完整公网边界**
 
-   这是设计边界而非代码漏洞：Worker `/api/*` 和 `/internal/*` 自身无 Bearer。任何网络或 Compose 变更若公开 `:8001`，将绕过 Gateway。
+   Deployment internal chat 会自行验证动态 Key，但 Stateless internal、Legacy Chat 和管理 API 仍依赖 Gateway/网络拓扑。任何网络或 Compose 变更若公开 `:8001`，会绕过完整公网边界。
 
 ### Medium Priority
 
-1. **MilvusClient 生命周期不完整**：Chat、`/api/info`、`/api/memory` 每次 `_get_or_create_session()` 新建 client，未见 finally close；长时间运行可能积累连接资源。
+1. **MilvusClient 生命周期仍不完全统一**：共享 Stateful executor 会在 finally 中 close，但 `/api/info`、`/api/memory` 等恢复 Session 的辅助路径仍需逐一核对 client 生命周期。
 2. **配置热重载不完整**：YAML reload 后，Chat/Embedding model、Rerank model/key、Pipeline Top-K、collection 等导入时常量仍旧；UI 的“已生效”文案过强。
-3. **歧义持久化名实不符**：SQLite 有 `last_ambiguity`，但 Worker save/load 不使用它；实际全局 dict 重启丢失，clear/delete 也未清理对应 cache。
+3. **Deployment lock 只在单 Worker 进程内有效**：多进程/多副本部署时，同一 conversation 仍可能被不同 Worker 并发处理；需要共享锁或按 conversation 做粘性路由。
 4. **Memory 重复 Embedding**：`MemoryRetriever` 每轮新建，“增量索引”无法跨请求复用；恢复后的每条 STM 消息每轮都重新 Embedding。
 5. **STM Summary 未进入主 Pipeline Prompt**：STM 会生成规则摘要，Memory API 可显示，但 Pipeline 只用 `get_history()`，不调用 `build_messages()`/`get_summaries()` 注入已淘汰内容。
 6. **Eval 覆盖面易被高估**：当前只评估无 metadata filter 的 kb-only Dense/Sparse + Rerank，不覆盖 Rewrite/Planner/Navigator/三通道选择或 Agent。
@@ -1134,6 +1162,7 @@ Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以�
 6. Memory Embedding 失败时硬编码 1024 维零向量；若配置维度变化，降级向量可能与成功向量不兼容。
 7. Frontend LocalStorage 持久化渲染后的医学文本，隐私和数据保留策略需部署方明确。
 8. `config.yml` 包含具体环境服务地址；未覆盖环境变量时可能意外连接到非预期远程服务。
+9. Deployment 当前没有 Rate Limit、Quota、Billing、Key 过期时间、细粒度权限或使用分析。
 
 ## 54. 测试体系
 
@@ -1144,7 +1173,7 @@ Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以�
 | Memory | `test_memory.py` 自定义/pytest-compatible 测规则实体、switch、resolve、retriever | 无在线 async Entity LLM、SQLite restore 并发测试 |
 | Tools | 主要靠集成/手工 | 三个 handler、Schema 保持、歧义缓存缺单测 |
 | Data Pipeline | `test_knowledge_base_chunks.py` 测 Excel parser 和 SQLite chunks | 无完整 Markdown→Embedding→Milvus 事务/失败恢复测试 |
-| API | `tests_api/` 多为外部模型连通性脚本 | 无 FastAPI TestClient、Gateway auth/proxy、SSE contract 测试 |
+| API | Deployment 有纯逻辑/存储测试和 FastAPI TestClient 集成测试；`tests_api/` 多为外部模型连通性脚本 | 其他 Gateway/Worker 路由仍缺系统化 contract 测试 |
 | Eval | Eval runner 自身及 CLI validate | metrics 有简单纯函数但无专门 test；不测 Planner/Agent |
 | Frontend | 人工浏览器检查 | 无 unit、E2E、lint、类型检查 |
 
@@ -1153,6 +1182,7 @@ Stateful 支持自然多轮、编辑和歧义；Stateless 便于外部系统以�
 ```powershell
 pytest app/test/test_rag_planning.py -v
 pytest app/test/test_knowledge_base_chunks.py -v
+pytest app/test/test_api_deployments.py app/test/test_api_deployment_routes.py -v
 python -m app.test.test_memory
 ```
 
@@ -1163,6 +1193,10 @@ python -m app.test.test_memory
 ### Chat 不工作
 
 先看 Gateway/Worker health 和浏览器 Network；确认 KB Active 且 request 有 `selected_kbs`；再看 `server.py::chat` 日志、SSE 是否收到 error/done、模型/Milvus启动校验。
+
+### Deployment API 不工作
+
+先区分 401（Bearer 缺失/Key 错误）、403（disabled/deleted）、404（Deployment 或 conversation 不存在）和 409（绑定 KB 已失效）。管理页查看 health/unavailable KB；确认请求没有 `selected_kbs`，首轮保存 `conversation` 事件里的 ID，后续请求使用同一 Deployment 和 conversation。轮换后旧 Key 立即失效。
 
 ### Agent 选错 Tool
 
@@ -1200,7 +1234,7 @@ python -m app.test.test_memory
 
 先固定 Dataset、Active KB 集、Embedding/Rerank模型和 Top-K；检查黄金 ID 仍存在；查看 bad cases 的 first rank/score。记住当前 Eval 不测 Planner，不能用它直接判断 metadata 规划退化。
 
-## 56. 项目的“最重要十个概念”
+## 56. 项目的“最重要十一个概念”
 
 1. 系统生成医学影像**文本**，不分析图像像素。
 2. Agent 不等于 RAG；Agent 决定直接回复或调用哪个 Tool。
@@ -1212,6 +1246,7 @@ python -m app.test.test_memory
 8. `is_final` 让报告 Tool 直接结束，避免主 LLM 二次改写。
 9. Stable Chunk ID 串联 Markdown、SQLite、Milvus 和 Eval。
 10. Data Pipeline 与 Online Retrieval 通过模型、维度、Sparse、schema、metadata 和 ID 强耦合。
+11. Deployment 用固定 KB + 独立 Key + conversation 映射把 Stateful Pipeline 安全地提供给外部系统。
 
 ## 57. 5-Minute Refresh
 
@@ -1227,6 +1262,8 @@ python -m app.test.test_memory
 
 **Memory 四组件**：STM 保存窗口；EntityTracker 保存结构化语境；MemoryRetriever选相关历史；SessionStore跨请求恢复。
 
+**Deployment**：Config 页固定 Active KB 并创建独立 Key；外部用 `conversation_id` 多轮调用同一 Stateful Pipeline，只收到白名单 SSE。
+
 **Data Pipeline**：Excel Row → Chunk/Markdown → SQLite + Metadata Tree → Dense/Sparse → shared Milvus，`kb_id` 隔离，`chunk_id` 对齐。
 
 **Eval**：Query + expected chunk IDs → kb-only Hybrid + Rerank → Hit@1/3/5；不评估报告，也不覆盖 Planner。
@@ -1240,7 +1277,7 @@ python -m app.test.test_memory
 不要从头机械读到尾，按目标顺序：
 
 1. 2 分钟：§1–3，恢复业务边界和架构。
-2. 5 分钟：§4–5，追踪 Stateful/Stateless 生命周期。
+2. 5 分钟：§4–5，追踪 Browser Stateful、Deployment Stateful 与 Stateless 生命周期。
 3. 4 分钟：§9–13，恢复 Agent、Tool 和 Final Result。
 4. 7 分钟：§14–25，恢复 Planner、Metadata、Hybrid、RRF、Rerank 和报告上下文。
 5. 4 分钟：§26–31，恢复 Prompt、Memory、Session、SQLite。
@@ -1257,6 +1294,8 @@ python -m app.test.test_memory
 | --- | --- |
 | Gateway | 公开 FastAPI 边界，Bearer/来源检查并代理 Worker |
 | Worker | 承载前端、业务 API、Agent、KB、Eval 的 FastAPI 进程 |
+| Deployment | 固定一组 Active KB、独立 Key 和启停状态的外部 Stateful Chat 发布单元 |
+| API Conversation | 对外 `conv_*` 与内部 SQLite Session 的 Deployment 隔离映射 |
 | Pipeline | `run_pipeline()` 的一轮 Agent 编排，不是无限循环 |
 | Tool | 主 LLM 可选择的业务动作，具有 JSON Schema 和 handler |
 | RAG | 从共享医学模板 KB 检索参考并辅助生成报告的链路 |
@@ -1278,6 +1317,7 @@ python -m app.test.test_memory
 
 - **Unknown:** 实际生产是否始终覆盖 `API_SECRET_KEY`，源码无法证明部署环境值。
 - **Unknown:** 真实并发量、延迟目标、SLA 和 Session 同时请求概率没有仓库内规范。
+- **Unknown:** 生产是否采用多 Worker 进程/多副本；当前 Deployment conversation lock 只在单进程内有效。
 - **Unknown:** 当前外部 Chat/Embedding/Rerank/Milvus 服务的可用性、版本和 Tool Calling兼容性；本次未联网调用验证。
 - **Unknown:** Docker 部署是否通过 Compose 之外的 volume/备份补偿了源 Excel 与 Markdown 挂载路径。
 - **Unknown:** `report_generation.md`、`multi_disease.md` 和 ReAct prompts 是否计划未来恢复使用；当前源码主路径未引用。
@@ -1287,13 +1327,10 @@ python -m app.test.test_memory
 
 ### Documentation Conflicts Found During Verification
 
-- `app/chat/AGENTS.md` 声称 LLM 网络请求统一由 `llm_client.py` 封装；实际 Rewrite、Planning、Rerank、建库 Embedding 和 Model Test 都有直接客户端。
-- `app/chat/AGENTS.md` 把 `RAGSearchRequest/ReportGenerateRequest` 列在 `chat/schemas.py`；实际定义在 `chat/server.py`。
 - `app/tools/AGENTS.md` 与 `app/prompt/AGENTS.md` 把 `report_generation.md/multi_disease.md` 描述为当前 `rag_search` 输入；实际 handler 只构建 `structure.md`。
 - `app/rag/AGENTS.md` 把全局 `metadata.json` 描述为主要 Navigator 依赖；正式 Stateful/Stateless 服务传入 SQLite 中所选/Active KB 的 Metadata Trees，JSON 仅是直接构造 fallback。
 - `app/rag/AGENTS.md` 固定描述特定 Rerank model；真实 model 由配置选择，不应视为代码常量语义。
 - `app/data_pipeline/AGENTS.md` 中若干函数签名/metadata 消费关系与当前源码不完全一致；操作时以 `process_reports.py`、`extract_metadata.py` 和调用点为准。
 - README 将 Eval 概括为“复用生产检索链”；更精确的事实是它复用 Dense/Sparse Retrieval 和 Rerank，但自己构造无 filter Plan，不执行 Rewrite/Planner/Navigator。
-- `SessionStore` schema 和 Memory 文档暗示歧义可持久化；Worker 当前实际使用进程内 `_ambiguity_cache`，保存 state 时未传 `last_ambiguity`。
 
 这些冲突未在本次任务中修改其他文档或代码。未来修复实现或文档后，应同步更新本节。

@@ -10,11 +10,12 @@
 浏览器 / 外部 API
     │ HTTP/SSE :8000
     ▼
-Gateway (app/gateway.py) — Bearer Token 鉴权 + 代理
+Gateway (app/gateway.py) — 全局/Deployment Bearer Token 边界 + 代理
     │ http://worker:8001
     ▼
 Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
     ├─ pipeline.py — Agent 主流程
+    ├─ deployments.py — API 上线密钥、公开事件和会话锁
     ├─ tools/ — Tool Calling 工具 (rag_search, edit_report, refine_report)
     ├─ rag/ — 查询改写 → 查询规划 → 多路召回 → Rerank
     ├─ memory/ — STM + EntityTracker + SessionStore
@@ -46,8 +47,9 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 ## Key Entry Points
 
 - **应用启动**: `python_start.py` (本地开发), `uvicorn app.chat.server:app` (Docker Worker)
-- **API Gateway**: `app/gateway.py` — 对外鉴权 + 代理
-- **Worker 服务**: `app/chat/server.py` — 所有业务接口
+- **API Gateway**: `app/gateway.py` — 无状态全局 Key 鉴权、Deployment Key 转发 + 代理
+- **Worker 服务**: `app/chat/server.py` — 所有业务接口与 Deployment 管理/对话
+- **API 上线**: `app/chat/deployments.py` — Deployment Key、KB 范围、SSE 映射和 conversation lock
 - **Agent 主流程**: `app/chat/pipeline.py` → `run_pipeline()`
 - **CLI 入口**: `app/chat/main.py` → `main()`
 - **配置**: `app/config.py` + `config.yml` + `.env`

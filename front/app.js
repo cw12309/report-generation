@@ -1,4 +1,4 @@
-console.log("[APP] app.js v49 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v50 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -3498,39 +3498,13 @@ async function saveLlmConfigFromPanel() {
   }
 }
 
-// ==================== API 上线配置（UI 先行 / Mock） ====================
+// ==================== Stateful Agent API Deployments ====================
 
-const MOCK_API_ONLINE_DATA = {
-  api_config: {
-    enabled: true,
-    base_url: "",
-    allowed_kbs: ["kb-radiology-standard", "kb-neuro-ct"],
-    available_kbs: [
-      { kb_id: "kb-radiology-standard", kb_name: "影像报告规范库", chunk_count: 1280 },
-      { kb_id: "kb-neuro-ct", kb_name: "神经系统 CT 模板库", chunk_count: 642 },
-      { kb_id: "kb-chest-dr", kb_name: "胸部 DR 报告库", chunk_count: 518 },
-      { kb_id: "kb-abdomen-mr", kb_name: "腹部 MR 模板库", chunk_count: 703 },
-    ],
-  },
-  api_keys: [
-    {
-      id: "key-radiology-prod",
-      tenant_name: "影像科生产系统",
-      key: "sk-mock-radiology-prod-8f39d2a1",
-      created_at: "2026-08-05 09:30:18",
-    },
-    {
-      id: "key-integration-test",
-      tenant_name: "院内集成测试",
-      key: "sk-mock-integration-test-4c72a9e6",
-      created_at: "2026-08-06 14:12:05",
-    },
-  ],
-};
-
-let _apiOnlineState = null;
+let _apiDeployments = [];
+let _apiDeploymentKnowledgeBases = [];
 let _apiDemoLanguage = "curl";
-let _selectedApiKeyId = null;
+let _selectedApiDeploymentId = null;
+let _revealedApiCredential = null;
 
 function getDefaultApiBaseUrl() {
   const currentOrigin = window.location.origin && window.location.origin !== "null"
@@ -3539,43 +3513,73 @@ function getDefaultApiBaseUrl() {
   return `${currentOrigin.replace(/\/$/, "")}/api/v1`;
 }
 
-function ensureApiOnlineState() {
-  if (_apiOnlineState) return;
-  _apiOnlineState = JSON.parse(JSON.stringify(MOCK_API_ONLINE_DATA));
-  _apiOnlineState.api_config.base_url = getDefaultApiBaseUrl();
-  _selectedApiKeyId = _apiOnlineState.api_keys[0]?.id || null;
+async function apiManagementRequest(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    cache: "no-store",
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : detail?.message || payload.message || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return payload;
 }
 
-function maskApiKey(apiKey) {
-  if (!apiKey) return "—";
-  if (apiKey.length <= 12) return `${apiKey.slice(0, 4)}••••${apiKey.slice(-2)}`;
-  return `${apiKey.slice(0, 10)}••••••••${apiKey.slice(-4)}`;
+function getDeploymentEndpoint(deployment) {
+  const relative = deployment?.endpoint
+    || `/api/v1/deployments/${deployment?.deployment_id || "DEPLOYMENT_ID"}/chat`;
+  const origin = getDefaultApiBaseUrl().replace(/\/api\/v1$/, "");
+  return `${origin}${relative}`;
+}
+
+function getSelectedApiDeployment() {
+  return _apiDeployments.find((item) => item.deployment_id === _selectedApiDeploymentId)
+    || _apiDeployments[0]
+    || null;
+}
+
+function formatApiDate(value) {
+  if (!value) return "—";
+  return String(value).replace("T", " ").replace(/\.\d+Z?$/, "").slice(0, 19);
 }
 
 function renderApiServiceStatus() {
-  const enabledInput = document.getElementById("apiEnabled");
   const statusEl = document.getElementById("apiStatusText");
   const baseUrlInput = document.getElementById("apiBaseUrl");
-  if (!enabledInput || !statusEl || !baseUrlInput) return;
-
-  const enabled = Boolean(_apiOnlineState.api_config.enabled);
-  enabledInput.checked = enabled;
-  baseUrlInput.value = _apiOnlineState.api_config.base_url;
-  statusEl.textContent = enabled
-    ? "API 服务运行中，可接受已授权请求"
-    : "API 服务已关闭，外部请求将被拒绝";
-  statusEl.classList.toggle("is-enabled", enabled);
+  const summaryEl = document.getElementById("apiDeploymentSummary");
+  if (!statusEl || !baseUrlInput) return;
+  const activeCount = _apiDeployments.filter((item) => item.status === "active").length;
+  const readyCount = _apiDeployments.filter(
+    (item) => item.status === "active" && item.health === "healthy",
+  ).length;
+  const degradedCount = _apiDeployments.filter((item) => item.health === "degraded").length;
+  baseUrlInput.value = getDefaultApiBaseUrl();
+  statusEl.textContent = readyCount
+    ? `${readyCount} 个 Deployment 正在接受请求`
+    : activeCount
+      ? "Active Deployment 的知识库当前不可用"
+    : "尚无 Active Deployment";
+  statusEl.classList.toggle("is-enabled", readyCount > 0);
+  if (summaryEl) {
+    summaryEl.textContent = degradedCount
+      ? `${_apiDeployments.length} 个 · ${degradedCount} 个异常`
+      : `${_apiDeployments.length} 个 Deployment`;
+  }
 }
 
-function renderApiKnowledgeBases() {
-  const listEl = document.getElementById("apiKbCheckboxList");
+function renderApiKnowledgeBaseChoices(containerId, selectedIds = []) {
+  const listEl = document.getElementById(containerId);
   if (!listEl) return;
-  const config = _apiOnlineState.api_config;
-  const selected = new Set(config.allowed_kbs);
-  const items = config.available_kbs || [];
+  const selected = new Set(selectedIds);
+  const items = _apiDeploymentKnowledgeBases.filter((kb) => kb.status === "active");
 
   if (!items.length) {
-    listEl.innerHTML = '<div class="api-key-empty">暂无可开放的知识库</div>';
+    listEl.innerHTML = '<div class="api-key-empty">暂无 Active 知识库，请先完成知识库构建。</div>';
     return;
   }
 
@@ -3590,104 +3594,115 @@ function renderApiKnowledgeBases() {
         />
         <span class="api-kb-checkbox-copy">
           <strong title="${escapeHtml(kb.kb_name)}">${escapeHtml(kb.kb_name)}</strong>
-          <span>${Number(kb.chunk_count || 0).toLocaleString("zh-CN")} 个知识切片</span>
+          <span>${escapeHtml(kb.kb_id)} · Active</span>
         </span>
       </label>
     `;
   }).join("");
 }
 
-function renderApiKeyList() {
-  const listEl = document.getElementById("apiKeyList");
-  if (!listEl) return;
-  const keys = _apiOnlineState.api_keys || [];
-  if (_selectedApiKeyId && !keys.some((item) => item.id === _selectedApiKeyId)) {
-    _selectedApiKeyId = keys[0]?.id || null;
-  }
+function renderApiKnowledgeBases() {
+  renderApiKnowledgeBaseChoices("apiKbCheckboxList");
+}
 
-  const header = `
-    <div class="api-key-table-header" aria-hidden="true">
-      <span>租户名</span>
-      <span>Key</span>
-      <span>创建时间</span>
-      <span>操作</span>
-    </div>
-  `;
-  if (!keys.length) {
-    listEl.innerHTML = `${header}<div class="api-key-empty">尚未创建 API Key</div>`;
+function renderApiDeploymentList() {
+  const listEl = document.getElementById("apiDeploymentList");
+  if (!listEl) return;
+  if (_selectedApiDeploymentId && !_apiDeployments.some(
+    (item) => item.deployment_id === _selectedApiDeploymentId,
+  )) {
+    _selectedApiDeploymentId = _apiDeployments[0]?.deployment_id || null;
+  }
+  if (!_apiDeployments.length) {
+    listEl.innerHTML = '<div class="api-key-empty">尚未上线任何 API Deployment</div>';
     return;
   }
-
-  listEl.innerHTML = header + keys.map((item) => {
-    const selected = item.id === _selectedApiKeyId;
+  listEl.innerHTML = _apiDeployments.map((item) => {
+    const selected = item.deployment_id === _selectedApiDeploymentId;
+    const kbNames = (item.knowledge_bases || []).map((kb) => kb.kb_name || kb.kb_id);
+    const isActive = item.status === "active";
+    const isHealthy = item.health === "healthy";
     return `
-      <div
-        class="api-key-row ${selected ? "is-selected" : ""}"
-        data-api-key-id="${escapeHtml(item.id)}"
-        role="button"
-        tabindex="0"
-        aria-label="选择 ${escapeHtml(item.tenant_name)} 的 API Key"
-      >
-        <span class="api-key-tenant">
-          <span class="api-key-selected-dot" aria-hidden="true"></span>
-          <span>${escapeHtml(item.tenant_name)}</span>
-        </span>
-        <span class="api-key-mask">${escapeHtml(maskApiKey(item.key))}</span>
-        <span>${escapeHtml(item.created_at)}</span>
-        <button
-          type="button"
-          class="api-key-delete"
-          data-delete-api-key="${escapeHtml(item.id)}"
-          aria-label="删除 ${escapeHtml(item.tenant_name)} 的 API Key"
-        >
-          删除
-        </button>
-      </div>
+      <article class="api-deployment-card ${selected ? "is-selected" : ""}" data-api-select="${escapeHtml(item.deployment_id)}">
+        <div class="api-deployment-card-main">
+          <div class="api-deployment-title-row">
+            <h4>${escapeHtml(item.name)}</h4>
+            <span class="api-status-badge ${isActive ? "active" : "disabled"}">${isActive ? "Active" : "Disabled"}</span>
+            <span class="api-health-badge ${isHealthy ? "healthy" : "degraded"}">${isHealthy ? "Healthy" : "Degraded"}</span>
+          </div>
+          <p>${escapeHtml(item.description || "暂无描述")}</p>
+          <div class="api-deployment-meta">
+            <span><strong>KB</strong> ${escapeHtml(kbNames.join("、") || "无")}</span>
+            <span><strong>Key</strong> ${escapeHtml(item.api_key_prefix || "—")}</span>
+            <span><strong>创建</strong> ${escapeHtml(formatApiDate(item.created_at))}</span>
+            <span><strong>最近调用</strong> ${escapeHtml(formatApiDate(item.last_used_at))}</span>
+          </div>
+          <code>${escapeHtml(item.endpoint)}</code>
+        </div>
+        <div class="api-deployment-actions">
+          <button type="button" class="btn btn-sm btn-outline" data-api-action="copy" data-deployment-id="${escapeHtml(item.deployment_id)}">复制 Endpoint</button>
+          <button type="button" class="btn btn-sm btn-outline" data-api-action="edit" data-deployment-id="${escapeHtml(item.deployment_id)}">编辑 KB</button>
+          <button type="button" class="btn btn-sm btn-outline" data-api-action="rotate" data-deployment-id="${escapeHtml(item.deployment_id)}">重新生成密钥</button>
+          <button type="button" class="btn btn-sm btn-outline" data-api-action="toggle" data-deployment-id="${escapeHtml(item.deployment_id)}">${isActive ? "停用" : "启用"}</button>
+          <button type="button" class="btn btn-sm btn-danger" data-api-action="delete" data-deployment-id="${escapeHtml(item.deployment_id)}">删除</button>
+        </div>
+      </article>
     `;
   }).join("");
 }
 
-function getSelectedApiKey() {
-  return _apiOnlineState.api_keys.find((item) => item.id === _selectedApiKeyId)
-    || _apiOnlineState.api_keys[0]
-    || null;
-}
-
 function buildApiDemoCode(language = _apiDemoLanguage) {
-  ensureApiOnlineState();
-  const config = _apiOnlineState.api_config;
-  const selectedKey = getSelectedApiKey();
-  const apiKey = selectedKey?.key || "sk-your-api-key";
-  const baseUrl = (config.base_url || getDefaultApiBaseUrl()).replace(/\/$/, "");
-  const url = `${baseUrl}/rag/search`;
-  const selectedKbs = config.allowed_kbs || [];
+  const deployment = getSelectedApiDeployment();
+  if (!deployment) return "请先创建并选择一个 Deployment。";
+  const apiKey = _revealedApiCredential?.deployment_id === deployment.deployment_id
+    ? _revealedApiCredential.api_key
+    : "rg_live_YOUR_SECRET";
+  const url = getDeploymentEndpoint(deployment);
 
   if (language === "python") {
-    return `import requests
+    return `import json
+import requests
 
 url = "${url}"
 headers = {
     "Authorization": "Bearer ${apiKey}",
     "Content-Type": "application/json",
 }
-payload = {
-    "query": "CT 头颅脑出血",
-    "selected_kbs": ${JSON.stringify(selectedKbs, null, 4).replace(/\n/g, "\n    ")},
-}
 
-response = requests.post(url, headers=headers, json=payload, timeout=120)
-response.raise_for_status()
-print(response.json())`;
+def chat(message, conversation_id=None):
+    payload = {"message": message}
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    current_id = conversation_id
+    with requests.post(url, headers=headers, json=payload, stream=True, timeout=600) as response:
+        response.raise_for_status()
+        for line in response.iter_lines(decode_unicode=True):
+            if not line.startswith("data: "):
+                continue
+            raw = line[6:]
+            if raw == "[DONE]":
+                break
+            event = json.loads(raw)
+            print(event)
+            if event["type"] == "conversation":
+                current_id = event["conversation_id"]
+    return current_id
+
+conversation_id = chat("CT头颅，考虑脑出血")
+chat("把右侧病灶描述得详细一点", conversation_id)`;
   }
 
-  const payload = JSON.stringify({
-    query: "CT 头颅脑出血",
-    selected_kbs: selectedKbs,
-  });
-  return `curl --request POST "${url}" \\
-  --header "Authorization: Bearer ${apiKey}" \\
-  --header "Content-Type: application/json" \\
-  --data '${payload}'`;
+  return `# 第一次请求：从 conversation 事件保存 conversation_id
+curl -N -X POST "${url}" \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"message":"CT头颅，考虑脑出血"}'
+
+# 第二次请求：复用服务端返回的 conversation_id
+curl -N -X POST "${url}" \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"message":"把右侧病灶描述得详细一点","conversation_id":"conv_xxx"}'`;
 }
 
 function renderApiDemoCode() {
@@ -3701,152 +3716,223 @@ function renderApiDemoCode() {
   });
 }
 
-function renderApiConfig() {
-  ensureApiOnlineState();
-  renderApiServiceStatus();
-  renderApiKnowledgeBases();
-  renderApiKeyList();
+function renderApiSecret(deployment) {
+  const section = document.getElementById("apiSecretReveal");
+  if (!section || !deployment?.api_key) return;
+  _revealedApiCredential = {
+    deployment_id: deployment.deployment_id,
+    api_key: deployment.api_key,
+  };
+  document.getElementById("apiRevealedEndpoint").value = getDeploymentEndpoint(deployment);
+  document.getElementById("apiRevealedKey").value = deployment.api_key;
+  section.hidden = false;
   renderApiDemoCode();
 }
 
-function createMockApiKey() {
-  const bytes = new Uint8Array(12);
-  if (window.crypto?.getRandomValues) {
-    window.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = Math.floor(Math.random() * 256);
+async function renderApiConfig() {
+  const listEl = document.getElementById("apiDeploymentList");
+  if (listEl) listEl.innerHTML = '<div class="api-key-empty">正在加载 Deployment…</div>';
+  try {
+    const [deploymentData, kbData] = await Promise.all([
+      apiManagementRequest("/deployments"),
+      apiManagementRequest("/kbs"),
+    ]);
+    _apiDeployments = deploymentData.deployments || [];
+    _apiDeploymentKnowledgeBases = kbData.knowledge_bases || [];
+    if (!_selectedApiDeploymentId) {
+      _selectedApiDeploymentId = _apiDeployments[0]?.deployment_id || null;
     }
+    renderApiServiceStatus();
+    renderApiKnowledgeBases();
+    renderApiDeploymentList();
+    renderApiDemoCode();
+  } catch (error) {
+    if (listEl) listEl.innerHTML = `<div class="api-key-empty">加载失败：${escapeHtml(error.message)}</div>`;
+    showToast(`Deployment 加载失败：${error.message}`, "error");
   }
-  return `sk-mock-${Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function openApiKeyModal() {
-  const modal = document.getElementById("apiKeyModal");
-  const input = document.getElementById("apiKeyTenantInput");
-  const errorEl = document.getElementById("apiKeyFormError");
-  if (!modal || !input) return;
-  input.value = "";
-  if (errorEl) {
-    errorEl.textContent = "";
-    errorEl.hidden = true;
+async function copyApiText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`${label}已复制`, "success");
+  } catch (error) {
+    showToast(`复制失败：${error.message}`, "error");
   }
-  modal.hidden = false;
-  requestAnimationFrame(() => input.focus());
 }
 
-function closeApiKeyModal() {
-  const modal = document.getElementById("apiKeyModal");
+function closeApiDeploymentModal() {
+  const modal = document.getElementById("apiDeploymentModal");
   if (modal) modal.hidden = true;
 }
 
-function formatApiKeyCreatedAt(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+function openApiDeploymentModal(deployment) {
+  const modal = document.getElementById("apiDeploymentModal");
+  if (!modal || !deployment) return;
+  document.getElementById("apiEditDeploymentId").value = deployment.deployment_id;
+  document.getElementById("apiEditDeploymentName").value = deployment.name || "";
+  document.getElementById("apiEditDeploymentDescription").value = deployment.description || "";
+  const errorEl = document.getElementById("apiDeploymentEditError");
+  errorEl.hidden = true;
+  errorEl.textContent = "";
+  renderApiKnowledgeBaseChoices("apiEditKbCheckboxList", deployment.selected_kbs || []);
+  modal.hidden = false;
+  requestAnimationFrame(() => document.getElementById("apiEditDeploymentName")?.focus());
 }
 
-function addMockApiKey(tenantName) {
-  const key = createMockApiKey();
-  const item = {
-    id: `key-${Date.now().toString(36)}`,
-    tenant_name: tenantName,
-    key,
-    created_at: formatApiKeyCreatedAt(),
-  };
-  _apiOnlineState.api_keys.unshift(item);
-  _selectedApiKeyId = item.id;
-  renderApiKeyList();
-  renderApiDemoCode();
-  showToast(`已为“${tenantName}”生成 Mock Key`, "success");
-}
-
-function deleteMockApiKey(keyId) {
-  const item = _apiOnlineState.api_keys.find((key) => key.id === keyId);
-  _apiOnlineState.api_keys = _apiOnlineState.api_keys.filter((key) => key.id !== keyId);
-  if (_selectedApiKeyId === keyId) {
-    _selectedApiKeyId = _apiOnlineState.api_keys[0]?.id || null;
+async function refreshApiDeployments({ preserveSecret = true } = {}) {
+  if (!preserveSecret) {
+    _revealedApiCredential = null;
+    const secretSection = document.getElementById("apiSecretReveal");
+    if (secretSection) secretSection.hidden = true;
   }
-  renderApiKeyList();
-  renderApiDemoCode();
-  showToast(item ? `已删除“${item.tenant_name}”的 Mock Key` : "Key 已删除", "success");
+  await renderApiConfig();
+}
+
+async function rotateApiDeploymentKey(deployment) {
+  if (!window.confirm(`确定重新生成“${deployment.name}”的密钥吗？旧密钥会立即失效。`)) return;
+  const updated = await apiManagementRequest(
+    `/deployments/${encodeURIComponent(deployment.deployment_id)}/rotate-key`,
+    { method: "POST" },
+  );
+  _selectedApiDeploymentId = updated.deployment_id;
+  renderApiSecret(updated);
+  await refreshApiDeployments();
+  showToast("新密钥已生成，请立即保存", "success");
+}
+
+async function toggleApiDeployment(deployment) {
+  const action = deployment.status === "active" ? "disable" : "enable";
+  const updated = await apiManagementRequest(
+    `/deployments/${encodeURIComponent(deployment.deployment_id)}/${action}`,
+    { method: "POST" },
+  );
+  _selectedApiDeploymentId = updated.deployment_id;
+  await refreshApiDeployments();
+  showToast(action === "enable" ? "Deployment 已启用" : "Deployment 已停用", "success");
+}
+
+async function deleteApiDeployment(deployment) {
+  if (!window.confirm(`确定删除“${deployment.name}”吗？入口会立即关闭，历史会话仍会保留。`)) return;
+  await apiManagementRequest(
+    `/deployments/${encodeURIComponent(deployment.deployment_id)}`,
+    { method: "DELETE" },
+  );
+  if (_selectedApiDeploymentId === deployment.deployment_id) {
+    _selectedApiDeploymentId = null;
+  }
+  await refreshApiDeployments({ preserveSecret: false });
+  showToast("Deployment 已删除", "success");
 }
 
 function bindApiConfigInteractions() {
-  const enabledInput = document.getElementById("apiEnabled");
-  const baseUrlInput = document.getElementById("apiBaseUrl");
+  const createForm = document.getElementById("apiDeploymentForm");
   const kbList = document.getElementById("apiKbCheckboxList");
-  const keyList = document.getElementById("apiKeyList");
-  const keyForm = document.getElementById("apiKeyForm");
-  const tenantInput = document.getElementById("apiKeyTenantInput");
-  const keyFormError = document.getElementById("apiKeyFormError");
+  const deploymentList = document.getElementById("apiDeploymentList");
+  const editForm = document.getElementById("apiDeploymentEditForm");
 
-  document.getElementById("btnAddApiKey")?.addEventListener("click", openApiKeyModal);
-  document.querySelectorAll("[data-api-key-modal-close]").forEach((element) => {
-    element.addEventListener("click", closeApiKeyModal);
-  });
+  const bindKbChoiceStyle = (container) => {
+    container?.addEventListener("change", (event) => {
+      const input = event.target.closest('input[type="checkbox"]');
+      if (!input) return;
+      input.closest(".api-kb-checkbox-item")?.classList.toggle("is-selected", input.checked);
+    });
+  };
+  bindKbChoiceStyle(kbList);
+  bindKbChoiceStyle(document.getElementById("apiEditKbCheckboxList"));
 
-  enabledInput?.addEventListener("change", () => {
-    ensureApiOnlineState();
-    _apiOnlineState.api_config.enabled = enabledInput.checked;
-    renderApiServiceStatus();
-  });
-
-  baseUrlInput?.addEventListener("input", () => {
-    ensureApiOnlineState();
-    _apiOnlineState.api_config.base_url = baseUrlInput.value.trim();
-    renderApiDemoCode();
-  });
-
-  kbList?.addEventListener("change", (event) => {
-    const input = event.target.closest('input[type="checkbox"]');
-    if (!input) return;
-    ensureApiOnlineState();
-    _apiOnlineState.api_config.allowed_kbs = Array.from(
-      kbList.querySelectorAll('input[type="checkbox"]:checked'),
+  createForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = document.getElementById("btnCreateApiDeployment");
+    const errorEl = document.getElementById("apiDeploymentFormError");
+    const selectedKbs = Array.from(
+      kbList?.querySelectorAll('input[type="checkbox"]:checked') || [],
       (checkbox) => checkbox.value,
     );
-    input.closest(".api-kb-checkbox-item")?.classList.toggle("is-selected", input.checked);
-    renderApiDemoCode();
-  });
-
-  const selectKeyRow = (row) => {
-    if (!row) return;
-    _selectedApiKeyId = row.dataset.apiKeyId;
-    renderApiKeyList();
-    renderApiDemoCode();
-  };
-
-  keyList?.addEventListener("click", (event) => {
-    const deleteButton = event.target.closest("[data-delete-api-key]");
-    if (deleteButton) {
-      event.stopPropagation();
-      deleteMockApiKey(deleteButton.dataset.deleteApiKey);
-      return;
+    errorEl.hidden = true;
+    button.disabled = true;
+    button.textContent = "上线中…";
+    try {
+      const deployment = await apiManagementRequest("/deployments", {
+        method: "POST",
+        body: JSON.stringify({
+          name: document.getElementById("apiDeploymentName").value.trim(),
+          description: document.getElementById("apiDeploymentDescription").value.trim(),
+          selected_kbs: selectedKbs,
+        }),
+      });
+      _selectedApiDeploymentId = deployment.deployment_id;
+      renderApiSecret(deployment);
+      createForm.reset();
+      await refreshApiDeployments();
+      showToast("API 已上线，请立即保存密钥", "success");
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.textContent = "上线 API";
     }
-    selectKeyRow(event.target.closest(".api-key-row"));
   });
 
-  keyList?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    const row = event.target.closest(".api-key-row");
-    if (!row) return;
-    event.preventDefault();
-    selectKeyRow(row);
-  });
-
-  keyForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const tenantName = tenantInput?.value.trim() || "";
-    if (!tenantName) {
-      if (keyFormError) {
-        keyFormError.textContent = "请输入租户名称";
-        keyFormError.hidden = false;
-      }
-      tenantInput?.focus();
-      return;
+  deploymentList?.addEventListener("click", async (event) => {
+    const actionButton = event.target.closest("[data-api-action]");
+    const card = event.target.closest("[data-api-select]");
+    const deploymentId = actionButton?.dataset.deploymentId || card?.dataset.apiSelect;
+    const deployment = _apiDeployments.find((item) => item.deployment_id === deploymentId);
+    if (!deployment) return;
+    _selectedApiDeploymentId = deployment.deployment_id;
+    renderApiDeploymentList();
+    renderApiDemoCode();
+    if (!actionButton) return;
+    actionButton.disabled = true;
+    try {
+      const action = actionButton.dataset.apiAction;
+      if (action === "copy") await copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
+      if (action === "edit") openApiDeploymentModal(deployment);
+      if (action === "rotate") await rotateApiDeploymentKey(deployment);
+      if (action === "toggle") await toggleApiDeployment(deployment);
+      if (action === "delete") await deleteApiDeployment(deployment);
+    } catch (error) {
+      showToast(`操作失败：${error.message}`, "error");
+    } finally {
+      actionButton.disabled = false;
     }
-    addMockApiKey(tenantName);
-    closeApiKeyModal();
+  });
+
+  document.querySelectorAll("[data-api-deployment-modal-close]").forEach((element) => {
+    element.addEventListener("click", closeApiDeploymentModal);
+  });
+
+  editForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const deploymentId = document.getElementById("apiEditDeploymentId").value;
+    const errorEl = document.getElementById("apiDeploymentEditError");
+    const button = document.getElementById("btnSaveApiDeployment");
+    const selectedKbs = Array.from(
+      document.querySelectorAll('#apiEditKbCheckboxList input[type="checkbox"]:checked'),
+      (checkbox) => checkbox.value,
+    );
+    errorEl.hidden = true;
+    button.disabled = true;
+    try {
+      await apiManagementRequest(`/deployments/${encodeURIComponent(deploymentId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: document.getElementById("apiEditDeploymentName").value.trim(),
+          description: document.getElementById("apiEditDeploymentDescription").value.trim(),
+          selected_kbs: selectedKbs,
+        }),
+      });
+      closeApiDeploymentModal();
+      await refreshApiDeployments();
+      showToast("Deployment 已更新", "success");
+    } catch (error) {
+      errorEl.textContent = error.message;
+      errorEl.hidden = false;
+    } finally {
+      button.disabled = false;
+    }
   });
 
   document.querySelectorAll(".api-demo-tab").forEach((tab) => {
@@ -3856,24 +3942,18 @@ function bindApiConfigInteractions() {
     });
   });
 
-  document.getElementById("btnSaveApiConfig")?.addEventListener("click", async (event) => {
-    ensureApiOnlineState();
-    const button = event.currentTarget;
-    const hint = document.getElementById("apiConfigHint");
-    button.disabled = true;
-    button.textContent = "保存中...";
-    await new Promise((resolve) => window.setTimeout(resolve, 350));
-    if (hint) {
-      const selectedCount = _apiOnlineState.api_config.allowed_kbs.length;
-      hint.textContent = `Mock 配置已保存：开放 ${selectedCount} 个知识库，${_apiOnlineState.api_keys.length} 个 Key。`;
-    }
-    button.disabled = false;
-    button.textContent = "保存配置";
-    showToast("API 上线配置已保存（Mock）", "success");
+  document.getElementById("btnRefreshApiDeployments")?.addEventListener("click", () => {
+    refreshApiDeployments().catch((error) => showToast(error.message, "error"));
+  });
+  document.getElementById("btnCopyApiEndpoint")?.addEventListener("click", () => {
+    copyApiText(document.getElementById("apiRevealedEndpoint").value, "Endpoint");
+  });
+  document.getElementById("btnCopyApiKey")?.addEventListener("click", () => {
+    copyApiText(document.getElementById("apiRevealedKey").value, "API Key");
   });
 
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeApiKeyModal();
+    if (event.key === "Escape") closeApiDeploymentModal();
   });
 }
 

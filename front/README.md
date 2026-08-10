@@ -12,7 +12,7 @@
 - 系统配置：配置 LLM、Embedding、Rerank、检索与系统参数并测试模型连接；
 - 会话监控：查看会话、记忆状态和删除后端会话。
 
-“API 上线配置”子页面当前是 UI 先行的 Mock：展示的知识库、API Key、启停状态和保存操作都只存在于浏览器内存，不会调用后端或形成真实鉴权配置。真实公共 API 和 Bearer Token 由 `app/gateway.py` 管理。
+“API 上线”子页面管理真实 Deployment：选择固定的 Active 知识库、创建/编辑/启停/软删除 Deployment、轮换独立 API Key、查看健康状态，并生成可复制的 cURL/Python 多轮 SSE 示例。明文 Key 只在创建或轮换成功后显示一次，不写入 LocalStorage。
 
 ## Technology Stack
 
@@ -59,8 +59,8 @@ front/
 Worker 在 `app/chat/server.py` 中把该目录挂载为 `/static`，并让 `/` 返回 `index.html`。当前页面引用：
 
 ```html
-<link rel="stylesheet" href="/static/style.css?v=34" />
-<script src="/static/app.js?v=49"></script>
+<link rel="stylesheet" href="/static/style.css?v=35" />
+<script src="/static/app.js?v=50"></script>
 ```
 
 版本查询参数只是浏览器缓存失效标记，不代表前端发布版本。修改 `app.js` 或 `style.css` 后应同步递增对应参数，否则浏览器可能继续使用旧资源。
@@ -128,7 +128,9 @@ app.js
 
 配置页通过 `GET /api/config` 加载配置，通过 `POST /api/config` 保存完整配置对象，通过 `POST /api/test-model` 测试 LLM、Embedding 或 Rerank 连接。后端会掩码返回的密钥；前端不应把真实服务密钥写进 HTML、JavaScript、LocalStorage 或 README。
 
-配置中的 API 子页面使用 `MOCK_API_ONLINE_DATA`。刷新页面会重置，创建/删除 Key 和“保存”都不代表 Gateway 已变更。
+配置中的 API 子页面调用 `/api/deployments` 管理真实 Deployment。创建和编辑时只能选择 Active KB；列表显示启用状态、运行健康度、固定 KB、Key 前缀和最后使用时间。创建/轮换返回的明文 Key 仅保存在当前页面内存并显示在一次性提示区，刷新后无法找回，只能再次轮换。
+
+页面生成的外部地址是 `/api/v1/deployments/{deployment_id}/chat`。示例请求只包含 `message`、`conversation_id` 和可选 `selected_diagnosis`，不允许调用方传 `selected_kbs`。这套公开 Chat 使用独立的稳定 SSE 契约，不应直接复用 Agent 页的内部事件展示逻辑。
 
 ### Session Monitor
 
@@ -142,7 +144,7 @@ app.js
 - `isProcessing`、流 reader 与 AbortController；
 - `knowledgeBases`、`selectedKnowledgeBaseIds` 和知识库轮询 timer；
 - 评测运行、取消、轮询和筛选状态；
-- `_configData` 与 API Mock 状态。
+- `_configData`、Deployment 列表/知识库选择，以及仅存在于当前页面内存的一次性明文 Key。
 
 ### LocalStorage keys
 
@@ -171,6 +173,7 @@ const API_BASE = "/api";
 | 对话 | `POST /api/chat`、`POST /api/clear`、`GET /api/memory` |
 | 知识库 | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{id}/build`、`DELETE /api/kb/{id}`、切片和筛选接口 |
 | 配置 | `GET /api/config`、`POST /api/config`、`POST /api/test-model` |
+| API 上线 | `GET/POST /api/deployments`、Deployment 更新/软删除、启停和 Key 轮换 |
 | 评测 | `/api/eval/dataset`、`/api/eval/auto_generate`、`/api/eval/run`、`/api/eval/cancel`、`/api/eval/status` |
 | 会话监控 | `GET /api/sessions`、`GET /api/memory`、`DELETE /api/session` |
 
@@ -239,7 +242,7 @@ const API_BASE = "/api";
 - 聊天和评测使用两套 SSE 解析实现。
 - 没有自动化前端回归测试。
 - 本地聊天快照包含渲染 HTML，DOM 结构迁移需要兼容旧数据。
-- API 上线配置/API Key 管理目前仅为 Mock UI。
+- Deployment 管理没有单独的前端自动化或浏览器 E2E 测试；修改后应检查创建、编辑、轮换、启停、健康状态和一次性 Key 提示。
 
 这些约束是当前代码状态，不是路线图。若实际重构消除了某项限制，应在同一次变更中更新本文。
 
@@ -254,6 +257,7 @@ const API_BASE = "/api";
 | 知识库操作 | KB 函数与 modal | Worker KB 路由、轮询终止条件 |
 | 评测流程 | Eval 函数与 `consumeSSEStream()` | Worker Eval 事件、状态恢复 |
 | 配置字段 | 配置表单和序列化 | `/api/config`、`app/config.py`、真实消费者 |
+| API 上线/Deployment | Config 页 Deployment 函数与弹窗 | Worker 管理路由、Gateway 公开路由、Key 一次性显示、SSE 示例 |
 | 样式或 class | `style.css` | HTML 和 JS 的选择器/动态 class |
 | 静态资源 | `app.js`/`style.css` | `index.html` 中对应 `?v=` |
 

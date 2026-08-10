@@ -6,8 +6,8 @@
 
 后端由两个 FastAPI 应用组成：
 
-- `app/gateway.py` 是外部边界，校验 Bearer Token，并把公开的无状态 API 流式代理到 Worker。
-- `app/chat/server.py` 是 Worker，提供静态前端、会话式 Agent API、知识库管理、配置、会话记录和评测接口。
+- `app/gateway.py` 是外部边界，校验全局 Bearer Token 或转发 Deployment Bearer Key，并把公开 API 流式代理到 Worker。
+- `app/chat/server.py` 是 Worker，提供静态前端、会话式 Agent API、Deployment 管理与对话、知识库管理、配置、会话记录和评测接口。
 
 本地开发时，`python_start.py` 同时启动 Worker（`127.0.0.1:8001`）和 Gateway（`0.0.0.0:8000`）。Docker 中两者是独立容器，Gateway 通过 `WORKER_BASE_URL` 访问 Worker。
 
@@ -19,7 +19,7 @@ Browser ── /api/* ───────────────► Worker :8
    │                                  └─ SessionStore ─► SQLite
    │
 External client ── /api/v1/* ──► Gateway :8000 ── /internal/* ──► Worker
-                    Bearer Token
+                  global/deployment Bearer Token
 ```
 
 浏览器管理接口不是稳定的公共集成 API。外部系统应使用 Gateway 的 `/api/v1/*`；Worker 的 `/internal/*` 只供 Gateway 调用。
@@ -157,14 +157,17 @@ Prompt 由 `app/prompt/` 下的 Markdown 模板和 Builder 加载。当前主路
 
 ### 对外 Gateway API
 
-所有请求都需要 `Authorization: Bearer <API_SECRET_KEY>`。
+无状态接口需要全局 `Authorization: Bearer <API_SECRET_KEY>`；Deployment Chat 需要创建该 Deployment 时一次性显示的独立 Key。
 
 | 方法与路径 | 用途 | Worker 目标 |
 | --- | --- | --- |
 | `POST /api/v1/rag/search` | 无状态检索，返回 `query`、可展示的 `content` 与结构化 `results` | `/internal/rag/search` |
 | `POST /api/v1/report/generate` | 无状态检索并生成报告 | `/internal/report/generate` |
+| `POST /api/v1/deployments/{deployment_id}/chat` | 绑定固定 KB 的有状态多轮 SSE Chat | `/internal/deployments/{deployment_id}/chat` |
 
-两者都接受 `query`、可选 `top_k`、`rerank_top_k` 和 `selected_kbs`。报告生成额外接受 `modality`、`body_part`、`clinical_history`、`diagnosis`、`selected_diagnosis`。这些请求不会创建或修改聊天会话。
+前两个无状态接口都接受 `query`、可选 `top_k`、`rerank_top_k` 和 `selected_kbs`。报告生成额外接受 `modality`、`body_part`、`clinical_history`、`diagnosis`、`selected_diagnosis`，且不会创建或修改聊天会话。
+
+Deployment Chat 只接受 `message`、可选 `conversation_id` 和可选 `selected_diagnosis`；请求模型明确拒绝 `selected_kbs`。KB 范围由 Deployment 管理配置固定，首次请求创建并返回 `conv_*`，后续复用后可恢复原有 Session 状态。公开 SSE 只映射 `conversation/status/message/report/ambiguous/error/done`，内部规划和检索事件不属于公共契约。
 
 ### Worker API 分组
 
@@ -175,7 +178,10 @@ Prompt 由 `app/prompt/` 下的 Markdown 模板和 Builder 加载。当前主路
 | 知识库 | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{kb_id}/build`、`DELETE /api/kb/{kb_id}`、切片/筛选接口 |
 | 评测 | 数据集增删查、`POST /api/eval/auto_generate`、`POST /api/eval/run`、状态与取消接口 |
 | 配置 | `GET/POST /api/config`、`POST /api/test-model` |
-| 内部 | `POST /internal/rag/search`、`POST /internal/report/generate` |
+| Deployment 管理 | `GET/POST /api/deployments`、详情/更新/软删除、启用/停用、轮换 Key |
+| 内部 | `POST /internal/rag/search`、`POST /internal/report/generate`、`POST /internal/deployments/{id}/chat` |
+
+Deployment 创建/更新只允许绑定 Active KB，并对重复 ID 去重。运行时还会再次检查状态和 KB 健康度；任一绑定 KB 不可用时 Deployment 显示 `degraded` 并拒绝公开对话。创建和轮换响应中的明文 API Key 只出现一次，持久化层仅保存摘要和前缀。删除是软删除：Deployment 不再列出或调用，但历史 Session 不被级联删除。
 
 `POST /api/chat` 的 JSON 字段为：
 
@@ -292,6 +298,7 @@ python -m app.test.test_memory
 | 要修改的行为 | 首选入口 | 同时检查 |
 | --- | --- | --- |
 | Worker 路由或 SSE | `chat/server.py` | `chat/schemas.py`、`front/app.js`、Gateway 是否代理 |
+| Deployment/API 上线 | `chat/deployments.py`、`chat/server.py` | `memory/session_store.py`、`gateway.py`、Config UI、部署测试 |
 | Agent 决策与调用次数 | `chat/pipeline.py` | Prompt Builder、工具 registry、memory |
 | 新增/修改工具 | `tools/` | `tools/registry.py`、orchestrator prompt、工具测试 |
 | 检索策略或过滤条件 | `rag/` | 配置、Milvus 字段、评测数据与指标 |

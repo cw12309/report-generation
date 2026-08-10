@@ -17,7 +17,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.background import BackgroundTask
 
 
@@ -39,6 +39,7 @@ _HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+_DEPLOYMENT_KEY_HEADER = "X-Deployment-API-Key"
 
 
 @asynccontextmanager
@@ -73,8 +74,7 @@ class RAGSearchPayload(BaseModel):
     rerank_top_k: Optional[int] = Field(default=None, ge=1, le=100)
     selected_kbs: List[str] = Field(default_factory=list)
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ReportGeneratePayload(RAGSearchPayload):
@@ -83,6 +83,16 @@ class ReportGeneratePayload(RAGSearchPayload):
     clinical_history: str = Field(default="", max_length=4000)
     diagnosis: List[str] = Field(default_factory=list)
     selected_diagnosis: Optional[str] = Field(default=None, max_length=500)
+
+
+class DeploymentChatPayload(BaseModel):
+    """Stable public contract for a stateful Deployment Agent."""
+
+    message: str = Field(..., min_length=1, max_length=4000)
+    conversation_id: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    selected_diagnosis: Optional[str] = Field(default=None, max_length=500)
+
+    model_config = ConfigDict(extra="forbid")
 
 
 async def verify_api_key(
@@ -112,12 +122,38 @@ async def verify_api_key(
         )
 
 
+async def extract_deployment_api_key(
+    authorization: Annotated[Optional[str], Header()] = None,
+) -> str:
+    """Require a Bearer token without coupling Gateway to business storage."""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少 Bearer Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="无效的 Bearer Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token
+
+
 def _forward_request_headers(request: Request) -> dict[str, str]:
     return {
         name: value
         for name, value in request.headers.items()
         if name.lower() not in _HOP_BY_HOP_HEADERS
-        and name.lower() not in {"host", "content-length", "authorization"}
+        and name.lower() not in {
+            "host",
+            "content-length",
+            "authorization",
+            _DEPLOYMENT_KEY_HEADER.lower(),
+        }
     }
 
 
@@ -129,13 +165,21 @@ def _forward_response_headers(response: httpx.Response) -> dict[str, str]:
     }
 
 
-async def _proxy(request: Request, worker_path: str) -> StreamingResponse:
+async def _proxy(
+    request: Request,
+    worker_path: str,
+    *,
+    internal_headers: Optional[dict[str, str]] = None,
+) -> StreamingResponse:
     client: httpx.AsyncClient = request.app.state.worker_client
+    headers = _forward_request_headers(request)
+    if internal_headers:
+        headers.update(internal_headers)
     upstream_request = client.build_request(
         method=request.method,
         url=worker_path,
         params=request.query_params.multi_items(),
-        headers=_forward_request_headers(request),
+        headers=headers,
         content=request.stream(),
     )
     try:
@@ -171,6 +215,24 @@ async def rag_search(request: Request, payload: RAGSearchPayload):
 async def report_generate(request: Request, payload: ReportGeneratePayload):
     del payload  # Validation/OpenAPI only; the original bytes are forwarded.
     return await _proxy(request, "/internal/report/generate")
+
+
+@app.post(
+    "/api/v1/deployments/{deployment_id}/chat",
+    summary="Stateful Deployment Agent Chat",
+)
+async def deployment_chat(
+    deployment_id: str,
+    request: Request,
+    payload: DeploymentChatPayload,
+    deployment_api_key: str = Depends(extract_deployment_api_key),
+):
+    del payload  # Validation/OpenAPI only; the original bytes are forwarded.
+    return await _proxy(
+        request,
+        f"/internal/deployments/{deployment_id}/chat",
+        internal_headers={_DEPLOYMENT_KEY_HEADER: deployment_api_key},
+    )
 
 
 def _verify_legacy_source(request: Request) -> None:

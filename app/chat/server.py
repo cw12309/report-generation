@@ -22,7 +22,7 @@ if str(APP_ROOT) not in sys.path:
 import yaml
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File, Query
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pymilvus import MilvusClient
@@ -57,6 +57,19 @@ from .schemas import (
     ChatRequest, ConfigSaveRequest, TestModelRequest,
     KBBuildRequest, ClearSessionRequest, KBUploadResponse, KBBuildResponse,
     EvalCaseRequest, EvalAutoGenerateRequest,
+    DeploymentChatRequest, DeploymentCreateRequest, DeploymentUpdateRequest,
+)
+from .deployments import (
+    DEPLOYMENT_KEY_HEADER,
+    ConversationLockRegistry,
+    generate_api_key,
+    generate_conversation_id,
+    generate_deployment_id,
+    generate_internal_session_id,
+    map_public_event,
+    mask_api_key_prefix,
+    normalize_selected_kbs,
+    verify_api_key as verify_deployment_api_key,
 )
 from .llm_client import chat_stream
 from .pipeline import run_pipeline, search_reports
@@ -98,7 +111,7 @@ def _new_milvus_client():
     return MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
 
 
-def create_app() -> FastAPI:
+def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     # 确保日志配置正确
     logging.basicConfig(
         level=logging.INFO,
@@ -108,9 +121,16 @@ def create_app() -> FastAPI:
     )
 
     app = FastAPI(title="影像报告生成 Agent Worker")
-    store = SessionStore(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "sessions.db"))
+    store = session_store or SessionStore(
+        os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "data",
+            "sessions.db",
+        )
+    )
     evaluation_lock = asyncio.Lock()
     auto_generation_lock = asyncio.Lock()
+    conversation_locks = ConversationLockRegistry()
     evaluation_tasks: set[asyncio.Task] = set()
 
     async def _persist_evaluation_event(event: dict) -> None:
@@ -543,8 +563,11 @@ def create_app() -> FastAPI:
             # 恢复 last_report
             last_report = [session_data["state"]["last_report"]]
 
-            # 恢复歧义缓存（跨请求存活）
-            cached = _ambiguity_cache.get(session_id)
+            # 优先进程缓存，重启后可从 SQLite state 恢复。
+            cached = _ambiguity_cache.get(
+                session_id,
+                session_data["state"].get("last_ambiguity") or None,
+            )
             last_ambiguity = [cached] if cached else [None]
 
             return {
@@ -574,6 +597,346 @@ def create_app() -> FastAPI:
                 "selected_kbs": [],
             }
 
+    def _validate_deployment_kbs(selected_kbs: List[str]) -> tuple[list[str], list[dict]]:
+        active = {
+            kb["kb_id"]: kb
+            for kb in store.list_knowledge_bases(status="active")
+        }
+        try:
+            return normalize_selected_kbs(selected_kbs, active)
+        except ValueError as exc:
+            message = str(exc)
+            raise HTTPException(
+                status_code=422 if message.startswith("至少") else 400,
+                detail=message,
+            ) from exc
+
+    def _deployment_response(deployment: dict, *, api_key: Optional[str] = None) -> dict:
+        response = {
+            key: value
+            for key, value in deployment.items()
+            if key not in {"api_key_hash", "deleted_at"}
+        }
+        response["api_key_prefix"] = mask_api_key_prefix(
+            str(deployment.get("api_key_prefix") or "")
+        )
+        response["endpoint"] = (
+            f"/api/v1/deployments/{deployment['deployment_id']}/chat"
+        )
+        if api_key is not None:
+            response["api_key"] = api_key
+        return response
+
+    async def _stateful_chat_events(
+        *,
+        query: str,
+        session_id: str,
+        selected_diagnosis: Optional[str],
+        selected_kbs: list[str],
+        active_kbs: list[dict],
+        execution_guard=None,
+    ):
+        """Run the existing stateful pipeline and yield internal event dictionaries."""
+        event_queue: asyncio.Queue = asyncio.Queue()
+        stream_finished = object()
+
+        def queue_event(event_type: str, data: dict) -> None:
+            event_queue.put_nowait({"type": event_type, **data})
+
+        async def execute() -> None:
+            from langsmith.run_helpers import get_current_run_tree
+
+            session = None
+            thinking_events: list[dict] = []
+            start_time = time.time()
+
+            def _emit_sync(event_type, data):
+                try:
+                    event_data = dict(data or {})
+                    if event_type == "report" and session is not None:
+                        try:
+                            structured = json.loads(session["last_report"][0] or "{}")
+                        except (json.JSONDecodeError, TypeError):
+                            structured = None
+                        if isinstance(structured, dict):
+                            event_data["data"] = structured
+                    payload = {"type": event_type, **event_data}
+                    logger.info(
+                        "── _emit_sse: type=%s, len=%s",
+                        event_type,
+                        len(json.dumps(payload, ensure_ascii=False)),
+                    )
+                    event_queue.put_nowait(payload)
+                    thinking_events.append({"type": event_type, "data": event_data})
+                except Exception:
+                    logger.warning("SSE事件入队失败", exc_info=True)
+
+            try:
+                session = _get_or_create_session(session_id)
+                stm = session["stm"]
+                entity_tracker = session["entity_tracker"]
+                last_report = session["last_report"]
+                last_ambiguity = session["last_ambiguity"]
+
+                run_tree = get_current_run_tree()
+                if run_tree is not None:
+                    metadata = {
+                        "session_id": session_id,
+                        "modality": entity_tracker.slots.get("modality", ""),
+                        "body_part": entity_tracker.slots.get("body_part", ""),
+                    }
+                    run_tree.add_metadata(metadata)
+
+                info_before = stm.session_info(session_id)
+                turn_index = info_before.get("total_turns", 0)
+                result = await run_pipeline(
+                    query,
+                    session_id,
+                    stm,
+                    entity_tracker,
+                    session["client"],
+                    last_report,
+                    _emit_sync,
+                    selected_diagnosis=selected_diagnosis,
+                    last_ambiguity=last_ambiguity,
+                    selected_kbs=selected_kbs,
+                    knowledge_bases=active_kbs,
+                )
+
+                if last_ambiguity[0] is not None:
+                    _ambiguity_cache[session_id] = last_ambiguity[0]
+
+                store.save_turn(session_id, turn_index, query, result or "")
+                store.save_state(
+                    session_id,
+                    entity_tracker.slots,
+                    last_report[0],
+                    last_ambiguity=last_ambiguity[0],
+                    selected_kbs=selected_kbs,
+                )
+                if thinking_events:
+                    store.save_thinking(session_id, turn_index, thinking_events)
+                if turn_index == 0:
+                    store.update_title(session_id, query[:20])
+            except Exception as exc:
+                logger.error("run_pipeline 执行异常", exc_info=True)
+                queue_event("error", {"code": "AGENT_ERROR", "message": str(exc)})
+            finally:
+                if session is not None:
+                    try:
+                        session["client"].close()
+                    except Exception:
+                        logger.warning("关闭 Milvus Client 失败", exc_info=True)
+                queue_event("done", {"total_time": round(time.time() - start_time, 1)})
+                event_queue.put_nowait(stream_finished)
+
+        async def run() -> None:
+            if execution_guard is None:
+                await execute()
+                return
+            async with execution_guard():
+                await execute()
+
+        asyncio.create_task(run())
+        while True:
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=120)
+            except asyncio.TimeoutError:
+                yield {
+                    "type": "error",
+                    "code": "CHAT_TIMEOUT",
+                    "message": "等待 Agent 响应超时",
+                }
+                yield {"type": "done", "total_time": 120.0}
+                break
+            if event is stream_finished:
+                break
+            yield event
+
+    def _sse_response(event_stream) -> StreamingResponse:
+        return StreamingResponse(
+            event_stream,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/deployments", summary="列出 API Deployments")
+    async def list_deployments():
+        return {
+            "deployments": [
+                _deployment_response(item)
+                for item in store.list_api_deployments()
+            ]
+        }
+
+    @app.post("/api/deployments", summary="创建 API Deployment")
+    async def create_deployment(request: DeploymentCreateRequest):
+        name = request.name.strip()
+        if not name:
+            raise HTTPException(status_code=422, detail="name 不能为空")
+        selected_kbs, _ = _validate_deployment_kbs(request.selected_kbs)
+        api_key, api_key_hash, api_key_prefix = generate_api_key()
+        deployment = store.create_api_deployment(
+            deployment_id=generate_deployment_id(),
+            name=name,
+            description=request.description.strip(),
+            selected_kbs=selected_kbs,
+            api_key_hash=api_key_hash,
+            api_key_prefix=api_key_prefix,
+        )
+        return _deployment_response(deployment, api_key=api_key)
+
+    @app.get("/api/deployments/{deployment_id}", summary="获取 API Deployment")
+    async def get_deployment(deployment_id: str):
+        deployment = store.get_api_deployment(deployment_id)
+        if deployment is None:
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return _deployment_response(deployment)
+
+    @app.patch("/api/deployments/{deployment_id}", summary="更新 API Deployment")
+    async def update_deployment(deployment_id: str, request: DeploymentUpdateRequest):
+        if request.name is not None and not request.name.strip():
+            raise HTTPException(status_code=422, detail="name 不能为空")
+        selected_kbs = None
+        if request.selected_kbs is not None:
+            selected_kbs, _ = _validate_deployment_kbs(request.selected_kbs)
+        deployment = store.update_api_deployment(
+            deployment_id,
+            name=request.name.strip() if request.name is not None else None,
+            description=(
+                request.description.strip() if request.description is not None else None
+            ),
+            selected_kbs=selected_kbs,
+        )
+        if deployment is None:
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return _deployment_response(deployment)
+
+    @app.post("/api/deployments/{deployment_id}/rotate-key", summary="轮换 Deployment Key")
+    async def rotate_deployment_key(deployment_id: str):
+        api_key, api_key_hash, api_key_prefix = generate_api_key()
+        deployment = store.rotate_api_deployment_key(
+            deployment_id,
+            api_key_hash=api_key_hash,
+            api_key_prefix=api_key_prefix,
+        )
+        if deployment is None:
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return _deployment_response(deployment, api_key=api_key)
+
+    @app.post("/api/deployments/{deployment_id}/enable", summary="启用 API Deployment")
+    async def enable_deployment(deployment_id: str):
+        deployment = store.set_api_deployment_status(deployment_id, "active")
+        if deployment is None:
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return _deployment_response(deployment)
+
+    @app.post("/api/deployments/{deployment_id}/disable", summary="停用 API Deployment")
+    async def disable_deployment(deployment_id: str):
+        deployment = store.set_api_deployment_status(deployment_id, "disabled")
+        if deployment is None:
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return _deployment_response(deployment)
+
+    @app.delete("/api/deployments/{deployment_id}", summary="删除 API Deployment")
+    async def delete_deployment(deployment_id: str):
+        if not store.soft_delete_api_deployment(deployment_id):
+            raise HTTPException(status_code=404, detail="Deployment 不存在")
+        return {"status": "ok", "message": "Deployment 已删除，历史会话已保留"}
+
+    @app.post(
+        "/internal/deployments/{deployment_id}/chat",
+        tags=["internal"],
+        summary="Deployment Stateful Agent Chat",
+    )
+    async def internal_deployment_chat(
+        deployment_id: str,
+        request: DeploymentChatRequest,
+        deployment_api_key: Optional[str] = Header(
+            default=None,
+            alias=DEPLOYMENT_KEY_HEADER,
+        ),
+    ):
+        if not request.message.strip():
+            raise HTTPException(status_code=422, detail="message 不能为空")
+        deployment = store.get_api_deployment(deployment_id)
+        if deployment is None or not verify_deployment_api_key(
+            deployment_api_key or "",
+            str(deployment.get("api_key_hash") or ""),
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "INVALID_DEPLOYMENT_KEY", "message": "无效的 Deployment API Key"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if deployment["status"] != "active":
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "DEPLOYMENT_DISABLED", "message": "Deployment 已停用"},
+            )
+        if deployment["health"] != "healthy":
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DEPLOYMENT_KB_UNAVAILABLE",
+                    "message": "Deployment 绑定的知识库不存在或不可用",
+                    "knowledge_bases": deployment["unavailable_kbs"],
+                },
+            )
+
+        selected_kbs = deployment["selected_kbs"]
+        _, active_kbs = _validate_deployment_kbs(selected_kbs)
+        conversation_id = request.conversation_id
+        if conversation_id:
+            conversation = store.get_api_conversation(deployment_id, conversation_id)
+            if conversation is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "CONVERSATION_NOT_FOUND", "message": "Conversation 不存在"},
+                )
+        else:
+            conversation_id = generate_conversation_id()
+            conversation = store.create_api_conversation(
+                deployment_id=deployment_id,
+                conversation_id=conversation_id,
+                internal_session_id=generate_internal_session_id(),
+            )
+
+        store.touch_api_deployment(deployment_id)
+        store.touch_api_conversation(deployment_id, conversation_id)
+
+        async def public_event_stream():
+            conversation_event = {
+                "type": "conversation",
+                "conversation_id": conversation_id,
+            }
+            yield f"data: {json.dumps(conversation_event, ensure_ascii=False)}\n\n"
+            async for event in _stateful_chat_events(
+                query=request.message.strip(),
+                session_id=conversation["internal_session_id"],
+                selected_diagnosis=request.selected_diagnosis,
+                selected_kbs=selected_kbs,
+                active_kbs=active_kbs,
+                execution_guard=lambda: conversation_locks.hold(
+                    deployment_id,
+                    conversation_id,
+                ),
+            ):
+                public_event = map_public_event(
+                    str(event.get("type") or ""),
+                    event,
+                    conversation_id=conversation_id,
+                )
+                if public_event is not None:
+                    yield f"data: {json.dumps(public_event, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return _sse_response(public_event_stream())
+
     @app.post("/api/chat", summary="对话", description="发送用户输入并获取流式回复")
     async def chat(request: ChatRequest):
         query = request.query.strip()
@@ -596,118 +959,19 @@ def create_app() -> FastAPI:
                 detail=f"知识库不存在或不可用: {', '.join(invalid_kbs)}",
             )
 
-        logger.info(f"收到查询: session={session_id}, query={query[:50]}..., selected_diagnosis={selected_diagnosis}")
-        session = _get_or_create_session(session_id)
-        stm = session["stm"]
-        entity_tracker = session["entity_tracker"]
-        last_report = session["last_report"]
-        last_ambiguity = session["last_ambiguity"]
-
         async def event_stream():
-            from langsmith.run_helpers import get_current_run_tree
-            thinking_events = []  # 持久化保存思考过程
-            start_time = time.time()  # 记录请求开始时间
-            event_queue = asyncio.Queue()
+            async for event in _stateful_chat_events(
+                query=query,
+                session_id=session_id,
+                selected_diagnosis=selected_diagnosis,
+                selected_kbs=selected_kbs,
+                active_kbs=list(active_kbs.values()),
+            ):
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
 
-            def _emit_sync(event_type, data):
-                try:
-                    payload = json.dumps({"type": event_type, **data}, ensure_ascii=False)
-                    logger.info(f"── _emit_sse: type={event_type}, len={len(payload)}")
-                    event_queue.put_nowait(payload)
-                    # 记录思考过程事件
-                    thinking_events.append({"type": event_type, "data": data})
-                except Exception:
-                    logger.warning("SSE事件入队失败", exc_info=True)
-
-            async def run():
-                try:
-                    # ── LangSmith Metadata 注入 ──
-                    run_tree = get_current_run_tree()
-                    if run_tree is not None:
-                        metadata = {
-                            "session_id": session_id,
-                            "modality": entity_tracker.slots.get("modality", ""),
-                            "body_part": entity_tracker.slots.get("body_part", ""),
-                        }
-                        run_tree.add_metadata(metadata)
-                        logger.info(f"LangSmith metadata 已注入: {metadata}")
-
-                    # 记录本轮对话前的轮次索引
-                    info_before = stm.session_info(session_id)
-                    turn_index = info_before.get("total_turns", 0)
-
-                    result = await run_pipeline(
-                        query, session_id,
-                        stm, entity_tracker, session["client"],
-                        last_report,
-                        _emit_sync,
-                        selected_diagnosis=selected_diagnosis,
-                        last_ambiguity=last_ambiguity,
-                        selected_kbs=selected_kbs,
-                        knowledge_bases=list(active_kbs.values()),
-                    )
-
-                    if result:
-                        logger.info(f"run_pipeline 完成: result长度={len(result)}")
-
-                    # ── 同步歧义缓存到全局 dict（跨请求存活）──
-                    if last_ambiguity[0] is not None:
-                        _ambiguity_cache[session_id] = last_ambiguity[0]
-                        logger.info(f"歧义缓存已同步到全局: session={session_id}")
-
-                    # ── 持久化：保存对话记录、会话状态和思考过程 ──
-                    try:
-                        store.save_turn(session_id, turn_index, query, result or "")
-                        store.save_state(
-                            session_id, entity_tracker.slots, last_report[0],
-                            selected_kbs=selected_kbs,
-                        )
-                        # 保存思考过程
-                        if thinking_events:
-                            store.save_thinking(session_id, turn_index, thinking_events)
-                        # 如果第一轮对话，自动更新标题
-                        if turn_index == 0:
-                            title = query[:20] if len(query) > 20 else query
-                            store.update_title(session_id, title)
-                            logger.info(f"会话标题已更新: {session_id} → {title}")
-                        
-                    except Exception as e:
-                        logger.warning("保存会话失败: %s", e)
-                        
-                except Exception as e:
-                    logger.error("run_pipeline 执行异常", exc_info=True)
-                    error_payload = json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)
-                    event_queue.put_nowait(error_payload)
-                finally:
-                    # 计算总耗时并发送
-                    elapsed = time.time() - start_time
-                    done_payload = json.dumps({"type": "done", "total_time": round(elapsed, 1)}, ensure_ascii=False)
-                    event_queue.put_nowait(done_payload)
-                    event_queue.put_nowait("[DONE]")
-
-            # 启动后台任务
-            asyncio.create_task(run())
-
-            # 流式推送事件
-            while True:
-                try:
-                    event = await asyncio.wait_for(event_queue.get(), timeout=120)
-                    if event == "[DONE]":
-                        logger.info("── event_stream(chat): 发送 [DONE]")
-                        yield "data: [DONE]\n\n"
-                        break
-                    try:
-                        evt = json.loads(event)
-                        evt_type = evt.get("type", "?")
-                        logger.info(f"── event_stream(chat): 发送 type={evt_type}, len={len(event)}")
-                    except Exception:
-                        logger.info(f"── event_stream(chat): 发送 raw, len={len(event)}")
-                    yield f"data: {event}\n\n"
-                except asyncio.TimeoutError:
-                    logger.info("── event_stream(chat): 队列超时，退出")
-                    break
-
-        return StreamingResponse(event_stream(), media_type="text/event-stream")
+        return _sse_response(event_stream())
 
     @app.get("/api/info", summary="会话信息", description="获取当前会话的轮次、实体槽位和报告状态")
     async def info(session_id: str = Query(default="default", description="会话 ID")):

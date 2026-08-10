@@ -13,7 +13,7 @@
 | `__init__.py`                   | 公共导出入口                                                                                 |
 | `short_term.py`                 | `ShortTermMemory`：内存对话历史管理，含智能摘要淘汰                                          |
 | `entity_tracker.py`             | `EntityTracker`：实体槽位提取（LLM JSON + 规则双引擎）、意图检测、上下文消解                 |
-| `session_store.py`              | `SessionStore`：SQLite 会话持久化（sessions/turns/state/thinking/knowledge_bases/kb_chunks） |
+| `session_store.py`              | `SessionStore`：SQLite 会话、KB/Eval、API Deployment 与 conversation 映射持久化             |
 | `retriever.py`                  | `MemoryRetriever`：基于语义相似度的 STM 历史片段检索注入                                     |
 | `chat_test.py`                  | 手动测试终端：验证 STM 和 EntityTracker 行为                                                 |
 | `generate_entity_config.py`     | 从 metadata.json 智能生成实体提取配置                                                        |
@@ -52,6 +52,8 @@
   - `list_knowledge_bases(status)` → list — 列出知识库
   - `list_knowledge_base_chunks(kb_id, page, size)` → dict — 分页查询切片
   - `save_evaluation_result(result)` / `save_evaluation_runtime_state(...)` — 评测持久化
+  - `create/list/get/update/set/rotate/soft_delete_api_deployment(...)` — Deployment 生命周期与健康状态
+  - `create/get/touch_api_conversation(...)` — 外部 conversation 到内部 Session 的隔离映射
 
 ### `retriever.py`
 
@@ -122,6 +124,7 @@ pipeline.py
 - `app/chat/pipeline.py` — 使用 EntityTracker 和 ShortTermMemory
 - `app/chat/main.py` — CLI 模式使用
 - `app/eval/run_retrieval_eval.py` — 使用 SessionStore 读取 evaluations
+- `app/chat/deployments.py` / `app/chat/server.py` — Deployment 管理、鉴权和多轮 Session 映射
 
 ## Change Map
 
@@ -145,12 +148,18 @@ pipeline.py
 
 优先检查: `session_store.py` (SQL 操作), `server.py` (路由)
 
+### 修改 Deployment 持久化或 conversation 映射
+
+优先检查: `session_store.py` 的 `api_deployments`、关系表和 `api_conversations`, `chat/deployments.py`, `chat/server.py` 管理/internal 路由，以及 `test_api_deployments.py`/`test_api_deployment_routes.py`。
+
 ## Testing
 
 关联测试：
 
 - `app/test/test_memory.py` — 记忆系统测试
 - `app/test/test_knowledge_base_chunks.py` — 知识库切片测试
+- `app/test/test_api_deployments.py` — Deployment/KB/conversation 存储测试
+- `app/test/test_api_deployment_routes.py` — 路由级多轮恢复与软删除测试
 - `app/memory/chat_test.py` — 手动测试终端
 
 ## Local Rules
@@ -158,6 +167,8 @@ pipeline.py
 - `ShortTermMemory` 是纯内存存储，重启丢失；持久化依赖 `SessionStore`
 - `EntityTracker` 每个会话持有独立实例，无需加锁
 - `SessionStore` 是 SQLite 的唯一访问层，其他模块不直接操作 SQLite
+- Deployment API Key 只保存 SHA-256 摘要与显示前缀；明文不得进入任何 SQLite 字段
+- Deployment 软删除不删除既有 Session；外部 conversation ID 必须与 `deployment_id` 组成隔离键
 - `generate_entity_config.py` 和 `generate_metadata_keywords.py` 是辅助脚本，不是运行时依赖
 
 ## Common Pitfalls

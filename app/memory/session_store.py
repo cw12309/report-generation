@@ -114,6 +114,51 @@ class SessionStore:
                 CREATE INDEX IF NOT EXISTS idx_knowledge_bases_status
                     ON knowledge_bases(status, created_at);
 
+                CREATE TABLE IF NOT EXISTS api_deployments (
+                    deployment_id TEXT PRIMARY KEY,
+                    name          TEXT NOT NULL,
+                    description   TEXT NOT NULL DEFAULT '',
+                    status        TEXT NOT NULL DEFAULT 'active'
+                                  CHECK(status IN ('active', 'disabled')),
+                    api_key_hash  TEXT NOT NULL,
+                    api_key_prefix TEXT NOT NULL,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_used_at  DATETIME,
+                    deleted_at    DATETIME
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_deployments_status
+                    ON api_deployments(status, created_at);
+
+                CREATE TABLE IF NOT EXISTS api_deployment_knowledge_bases (
+                    deployment_id TEXT NOT NULL,
+                    kb_id         TEXT NOT NULL,
+                    position      INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (deployment_id, kb_id),
+                    FOREIGN KEY (deployment_id) REFERENCES api_deployments(deployment_id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_deployment_kbs_kb
+                    ON api_deployment_knowledge_bases(kb_id, deployment_id);
+
+                CREATE TABLE IF NOT EXISTS api_conversations (
+                    deployment_id     TEXT NOT NULL,
+                    conversation_id   TEXT NOT NULL,
+                    internal_session_id TEXT NOT NULL UNIQUE,
+                    created_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (deployment_id, conversation_id),
+                    FOREIGN KEY (deployment_id) REFERENCES api_deployments(deployment_id)
+                        ON DELETE RESTRICT,
+                    FOREIGN KEY (internal_session_id) REFERENCES sessions(id)
+                        ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_conversations_updated
+                    ON api_conversations(deployment_id, updated_at);
+
                 CREATE TABLE IF NOT EXISTS knowledge_base_chunks (
                     chunk_id          TEXT PRIMARY KEY,
                     kb_id             VARCHAR(64) NOT NULL,
@@ -569,6 +614,270 @@ class SessionStore:
         with self._get_conn() as conn:
             cursor = conn.execute("DELETE FROM knowledge_bases WHERE kb_id = ?", (kb_id,))
         return cursor.rowcount > 0
+
+    # ── API Deployments ─────────────────────────────────────
+
+    @staticmethod
+    def _api_deployment_row(row: sqlite3.Row) -> dict:
+        return {
+            "deployment_id": row["deployment_id"],
+            "name": row["name"],
+            "description": row["description"] or "",
+            "status": row["status"],
+            "api_key_hash": row["api_key_hash"],
+            "api_key_prefix": row["api_key_prefix"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "last_used_at": row["last_used_at"],
+            "deleted_at": row["deleted_at"],
+        }
+
+    def create_api_deployment(
+        self,
+        *,
+        deployment_id: str,
+        name: str,
+        description: str,
+        selected_kbs: list[str],
+        api_key_hash: str,
+        api_key_prefix: str,
+    ) -> dict:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO api_deployments (
+                    deployment_id, name, description, status,
+                    api_key_hash, api_key_prefix
+                ) VALUES (?, ?, ?, 'active', ?, ?)
+                """,
+                (deployment_id, name, description, api_key_hash, api_key_prefix),
+            )
+            conn.executemany(
+                """
+                INSERT INTO api_deployment_knowledge_bases (
+                    deployment_id, kb_id, position
+                ) VALUES (?, ?, ?)
+                """,
+                [(deployment_id, kb_id, index) for index, kb_id in enumerate(selected_kbs)],
+            )
+        return self.get_api_deployment(deployment_id)
+
+    def _load_api_deployment_kbs(self, conn: sqlite3.Connection, deployment_id: str) -> list[dict]:
+        rows = conn.execute(
+            """
+            SELECT dkb.kb_id, dkb.position, kb.kb_name, kb.status
+            FROM api_deployment_knowledge_bases dkb
+            LEFT JOIN knowledge_bases kb ON kb.kb_id = dkb.kb_id
+            WHERE dkb.deployment_id = ?
+            ORDER BY dkb.position ASC, dkb.kb_id ASC
+            """,
+            (deployment_id,),
+        ).fetchall()
+        return [
+            {
+                "kb_id": row["kb_id"],
+                "kb_name": row["kb_name"] or row["kb_id"],
+                "status": row["status"] or "missing",
+            }
+            for row in rows
+        ]
+
+    def get_api_deployment(
+        self,
+        deployment_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[dict]:
+        with self._get_conn() as conn:
+            sql = "SELECT * FROM api_deployments WHERE deployment_id = ?"
+            if not include_deleted:
+                sql += " AND deleted_at IS NULL"
+            row = conn.execute(sql, (deployment_id,)).fetchone()
+            if row is None:
+                return None
+            result = self._api_deployment_row(row)
+            knowledge_bases = self._load_api_deployment_kbs(conn, deployment_id)
+        result["knowledge_bases"] = knowledge_bases
+        result["selected_kbs"] = [item["kb_id"] for item in knowledge_bases]
+        unavailable = [item for item in knowledge_bases if item["status"] != "active"]
+        result["health"] = "healthy" if knowledge_bases and not unavailable else "degraded"
+        result["unavailable_kbs"] = unavailable
+        return result
+
+    def list_api_deployments(self) -> list[dict]:
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT deployment_id
+                FROM api_deployments
+                WHERE deleted_at IS NULL
+                ORDER BY created_at DESC, deployment_id DESC
+                """
+            ).fetchall()
+        return [
+            deployment
+            for row in rows
+            if (deployment := self.get_api_deployment(row["deployment_id"])) is not None
+        ]
+
+    def update_api_deployment(
+        self,
+        deployment_id: str,
+        *,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        selected_kbs: Optional[list[str]] = None,
+    ) -> Optional[dict]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM api_deployments WHERE deployment_id = ? AND deleted_at IS NULL",
+                (deployment_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            assignments: list[str] = []
+            values: list[Any] = []
+            if name is not None:
+                assignments.append("name = ?")
+                values.append(name)
+            if description is not None:
+                assignments.append("description = ?")
+                values.append(description)
+            if assignments:
+                assignments.append("updated_at = CURRENT_TIMESTAMP")
+                values.append(deployment_id)
+                conn.execute(
+                    f"UPDATE api_deployments SET {', '.join(assignments)} WHERE deployment_id = ?",
+                    values,
+                )
+            if selected_kbs is not None:
+                conn.execute(
+                    "DELETE FROM api_deployment_knowledge_bases WHERE deployment_id = ?",
+                    (deployment_id,),
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO api_deployment_knowledge_bases (
+                        deployment_id, kb_id, position
+                    ) VALUES (?, ?, ?)
+                    """,
+                    [(deployment_id, kb_id, index) for index, kb_id in enumerate(selected_kbs)],
+                )
+                conn.execute(
+                    "UPDATE api_deployments SET updated_at = CURRENT_TIMESTAMP WHERE deployment_id = ?",
+                    (deployment_id,),
+                )
+        return self.get_api_deployment(deployment_id)
+
+    def set_api_deployment_status(self, deployment_id: str, status: str) -> Optional[dict]:
+        if status not in {"active", "disabled"}:
+            raise ValueError(f"不支持的 Deployment 状态: {status}")
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE api_deployments
+                SET status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE deployment_id = ? AND deleted_at IS NULL
+                """,
+                (status, deployment_id),
+            )
+        return self.get_api_deployment(deployment_id) if cursor.rowcount else None
+
+    def rotate_api_deployment_key(
+        self,
+        deployment_id: str,
+        *,
+        api_key_hash: str,
+        api_key_prefix: str,
+    ) -> Optional[dict]:
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE api_deployments
+                SET api_key_hash = ?, api_key_prefix = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE deployment_id = ? AND deleted_at IS NULL
+                """,
+                (api_key_hash, api_key_prefix, deployment_id),
+            )
+        return self.get_api_deployment(deployment_id) if cursor.rowcount else None
+
+    def soft_delete_api_deployment(self, deployment_id: str) -> bool:
+        """Disable and hide a deployment while retaining conversation/session history."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE api_deployments
+                SET status = 'disabled', deleted_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE deployment_id = ? AND deleted_at IS NULL
+                """,
+                (deployment_id,),
+            )
+        return cursor.rowcount > 0
+
+    def touch_api_deployment(self, deployment_id: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE api_deployments
+                SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE deployment_id = ? AND deleted_at IS NULL
+                """,
+                (deployment_id,),
+            )
+
+    # ── API Deployment conversations ───────────────────────
+
+    def create_api_conversation(
+        self,
+        *,
+        deployment_id: str,
+        conversation_id: str,
+        internal_session_id: str,
+    ) -> dict:
+        """Create the existing Session and namespaced public mapping atomically."""
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO sessions (id, title) VALUES (?, '')",
+                (internal_session_id,),
+            )
+            conn.execute(
+                "INSERT INTO session_state (session_id, entity_slots, last_report) VALUES (?, '{}', '')",
+                (internal_session_id,),
+            )
+            conn.execute(
+                """
+                INSERT INTO api_conversations (
+                    deployment_id, conversation_id, internal_session_id
+                ) VALUES (?, ?, ?)
+                """,
+                (deployment_id, conversation_id, internal_session_id),
+            )
+        return self.get_api_conversation(deployment_id, conversation_id)
+
+    def get_api_conversation(self, deployment_id: str, conversation_id: str) -> Optional[dict]:
+        with self._get_conn() as conn:
+            row = conn.execute(
+                """
+                SELECT deployment_id, conversation_id, internal_session_id,
+                       created_at, updated_at
+                FROM api_conversations
+                WHERE deployment_id = ? AND conversation_id = ?
+                """,
+                (deployment_id, conversation_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def touch_api_conversation(self, deployment_id: str, conversation_id: str) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                UPDATE api_conversations
+                SET updated_at = CURRENT_TIMESTAMP
+                WHERE deployment_id = ? AND conversation_id = ?
+                """,
+                (deployment_id, conversation_id),
+            )
 
     # ── 知识库切片 ──────────────────────────────────────────
 

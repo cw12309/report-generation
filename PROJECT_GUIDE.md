@@ -173,15 +173,15 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 重要差异：Stateful Pipeline 在 Tool 决策前执行 Query 标准化和可选 Rewrite；Stateless `_stateless_search()` 直接把去空白的原 Query 交给 `search_reports()`，只做 Query Planning，不经过 `standardize_query()/rewrite_query()`。
 
-| 维度 | Browser Stateful | Deployment Stateful | Stateless Retrieval | Stateless Generation |
-| --- | --- | --- | --- | --- |
-| 入口 | `/api/chat` | `/api/v1/deployments/{id}/chat` | `/api/v1/rag/search` | `/api/v1/report/generate` |
-| 鉴权 | Legacy 来源限制 | Deployment Bearer | 全局 Gateway Bearer | 全局 Gateway Bearer |
-| Session/Memory | 有，调用方给 session ID | 有，conversation 映射 | 无 | 无 |
-| KB 范围 | 每轮请求选择 | Deployment 固定 | 请求选择或全部 Active | 请求选择或全部 Active |
-| Query Rewrite | 有条件执行 | 有条件执行 | 不执行 | 不执行 |
-| Report LLM | Tool 选择后可执行 | Tool 选择后可执行 | 无 | 有，复用 RAG Tool handler |
-| 响应 | 内部细节 SSE | 稳定白名单 SSE | JSON | JSON |
+| 维度           | Browser Stateful        | Deployment Stateful             | Stateless Retrieval   | Stateless Generation      |
+| -------------- | ----------------------- | ------------------------------- | --------------------- | ------------------------- |
+| 入口           | `/api/chat`             | `/api/v1/deployments/{id}/chat` | `/api/v1/rag/search`  | `/api/v1/report/generate` |
+| 鉴权           | Legacy 来源限制         | Deployment Bearer               | 全局 Gateway Bearer   | 全局 Gateway Bearer       |
+| Session/Memory | 有，调用方给 session ID | 有，conversation 映射           | 无                    | 无                        |
+| KB 范围        | 每轮请求选择            | Deployment 固定                 | 请求选择或全部 Active | 请求选择或全部 Active     |
+| Query Rewrite  | 有条件执行              | 有条件执行                      | 不执行                | 不执行                    |
+| Report LLM     | Tool 选择后可执行       | Tool 选择后可执行               | 无                    | 有，复用 RAG Tool handler |
+| 响应           | 内部细节 SSE            | 稳定白名单 SSE                  | JSON                  | JSON                      |
 
 ## 6. Frontend：用户看到的系统
 
@@ -193,14 +193,14 @@ Worker 把 `front/` 挂载到 `/static`，`/` 返回 `index.html`。静态资源
 
 ### 6.2 页面结构
 
-| 页面 | DOM 容器 | 真实职责 |
-| --- | --- | --- |
-| Agent | `pageAgent` | KB 选择、聊天、思考步骤、参考切片、Memory 面板和本地历史 |
-| Knowledge Base | `pageKB` | 上传、构建、轮询进度、切片详情、删除 |
-| API 上线 | `pageDeployments` | Deployment 创建/详情/编辑/启停/删除、Key 轮换、健康度与外部接入示例 |
-| Eval | `pageEval` | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测 |
-| Monitor | `pageMonitor` | 后端会话列表、Memory 查看和 Session 删除 |
-| Config | `pageConfig` | 模型/检索/系统配置和模型连通性测试 |
+| 页面           | DOM 容器          | 真实职责                                                            |
+| -------------- | ----------------- | ------------------------------------------------------------------- |
+| Agent          | `pageAgent`       | KB 选择、聊天、思考步骤、参考切片、Memory 面板和本地历史            |
+| Knowledge Base | `pageKB`          | 上传、构建、轮询进度、切片详情、删除                                |
+| API 上线       | `pageDeployments` | Deployment 创建/详情/编辑/启停/删除、Key 轮换、健康度与外部接入示例 |
+| Eval           | `pageEval`        | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测                 |
+| Monitor        | `pageMonitor`     | 后端会话列表、Memory 查看和 Session 删除                            |
+| Config         | `pageConfig`      | 模型/检索/系统配置和模型连通性测试                                  |
 
 页面切换依赖 `data-page` 与 DOM class，不改变 URL，没有前进/后退路由语义。
 
@@ -427,8 +427,8 @@ Stateless Retrieval/Generation 不调用 Rewrite。它们直接进入 §16 的 Q
     "level_3": "颅脑平扫"
   },
   "slots": {
-    "modality": {"value": "CT", "confidence": 1.0, "source": "current_query"},
-    "level_1": {"value": "头颅", "confidence": 1.0, "source": "current_query"}
+    "modality": { "value": "CT", "confidence": 1.0, "source": "current_query" },
+    "level_1": { "value": "头颅", "confidence": 1.0, "source": "current_query" }
   }
 }
 ```
@@ -485,11 +485,11 @@ Milvus 在 `sparse_vector` 上使用 Sparse Inverted Index + Inner Product。它
 
 当前不是 Sequential Fallback，而是一次 Milvus `hybrid_search()` 中的并行请求：
 
-| Channel | Scalar filter | 解决的问题 |
-| --- | --- | --- |
-| `strict` | `kb_id + modality + level_1..4` 中已有字段 | 精确遵守规划路径 |
-| `modality` | `kb_id + modality` | Planner 层级过严时保住同检查类型召回 |
-| `kb_only` | 只限制 `kb_id` | 在所选知识库内提供语义兜底 |
+| Channel    | Scalar filter                              | 解决的问题                           |
+| ---------- | ------------------------------------------ | ------------------------------------ |
+| `strict`   | `kb_id + modality + level_1..4` 中已有字段 | 精确遵守规划路径                     |
+| `modality` | `kb_id + modality`                         | Planner 层级过严时保住同检查类型召回 |
+| `kb_only`  | 只限制 `kb_id`                             | 在所选知识库内提供语义兜底           |
 
 每个有效 Channel 同时创建 Dense 和 Sparse 两个 `AnnSearchRequest`，最多六个请求。过滤条件相同的 Channel 会按 signature 去重：例如没有任何 metadata filter 时，三个定义最终只剩一个 `kb_only` Channel。
 
@@ -549,15 +549,15 @@ Retrieval Candidate 包含 `source`（优先稳定 `chunk_id`）、`kb_id`、层
 
 Prompt 不是一份大模板，而是不同任务的约束层：
 
-| Prompt | 谁使用 | 作用 |
-| --- | --- | --- |
-| `tool_orchestrator.md` | Main Agent | 决定直接回复或选择 Tool |
-| `structure.md` | `rag_search` Report LLM | 从参考生成当前 `results` 报告 Schema |
-| `entity_extraction.md` | EntityTracker | 约束实体 JSON；当前异步调用不匹配导致实际降级 |
-| `rewrite.md` | Query Rewrite | 用 metadata 扩展缺诊断 Query |
-| `edit.md` | `edit_report` | Canonical `results[]` 最小编辑，只改 instruction 指定内容 |
-| `refine.md` | `refine_report` | Canonical `results[]` 风格润色，医学事实不可变 |
-| `summarize.md` | STM | 摘要约束；当前运行时未注入 summarize_fn |
+| Prompt                 | 谁使用                  | 作用                                                      |
+| ---------------------- | ----------------------- | --------------------------------------------------------- |
+| `tool_orchestrator.md` | Main Agent              | 决定直接回复或选择 Tool                                   |
+| `structure.md`         | `rag_search` Report LLM | 从参考生成当前 `results` 报告 Schema                      |
+| `entity_extraction.md` | EntityTracker           | 约束实体 JSON；当前异步调用不匹配导致实际降级             |
+| `rewrite.md`           | Query Rewrite           | 用 metadata 扩展缺诊断 Query                              |
+| `edit.md`              | `edit_report`           | Canonical `results[]` 最小编辑，只改 instruction 指定内容 |
+| `refine.md`            | `refine_report`         | Canonical `results[]` 风格润色，医学事实不可变            |
+| `summarize.md`         | STM                     | 摘要约束；当前运行时未注入 summarize_fn                   |
 
 `report_generation.md`、`multi_disease.md`、`react_*` 和 `chat.md` 文件存在，但源码搜索没有发现它们进入当前主运行路径。文件存在不代表启用。
 
@@ -605,13 +605,13 @@ RAG    = 所有用户共享、由 selected_kbs 限定的医学模板知识
 
 核心 Slots：
 
-| Slot | 意义 | 更新方式 |
-| --- | --- | --- |
-| `modality` | CT/MR/DR 等当前检查方式 | 新值覆盖 |
-| `body_part` | 当前一个或多个解剖部位 | 去重追加 |
-| `clinical_history` | 症状/既往史 | 新值覆盖 |
-| `diagnosis` | 已明确疾病/诊断 | 去重追加 |
-| `intent` | `new_session/append/switch` | switch 时明确写入；其他检测结果未持续回写 |
+| Slot               | 意义                        | 更新方式                                  |
+| ------------------ | --------------------------- | ----------------------------------------- |
+| `modality`         | CT/MR/DR 等当前检查方式     | 新值覆盖                                  |
+| `body_part`        | 当前一个或多个解剖部位      | 去重追加                                  |
+| `clinical_history` | 症状/既往史                 | 新值覆盖                                  |
+| `diagnosis`        | 已明确疾病/诊断             | 去重追加                                  |
+| `intent`           | `new_session/append/switch` | switch 时明确写入；其他检测结果未持续回写 |
 
 意图语义：`append` 是包含“继续/这个”等指代且已有 modality；`switch` 是命中切换词，清理旧 STM、Last Report 和 Slots 后重新抽取；其他返回 `new_session`。这里的 `new_session` 是业务意图，不会生成新 `session_id`。
 
@@ -646,18 +646,18 @@ Deployment 还有第三种 ID：外部只看 `conv_*`，`api_conversations` 把�
 
 `SessionStore` 不只是 Session Repository，而是共享关系型基础设施：
 
-| 表 | 保存内容 | 主要消费者 |
-| --- | --- | --- |
-| `sessions` | ID、标题、创建时间 | Chat/Monitor |
-| `turns` | 用户/助手轮次 | Session Restore、Memory UI |
-| `session_state` | Slots、Last Report、Ambiguity 字段、Selected KBs | Pipeline Restore/Persist |
-| `thinking` | 每轮过程事件 | 会话思考记录 API |
-| `knowledge_bases` | KB 名称、状态、进度、源路径、Metadata Tree | Chat KB validation、Navigator、KB UI |
-| `knowledge_base_chunks` | 稳定 Chunk ID、来源、层级、报告原文 | KB UI、Eval 用例选择 |
-| `evaluation_state` | 运行进度、最后结果、时间 | Eval 状态恢复 |
-| `api_deployments` | 名称、状态、Key 摘要/前缀、最后使用与软删除时间 | API 上线 UI、Deployment Chat 鉴权 |
-| `api_deployment_knowledge_bases` | Deployment 固定 KB 范围 | 管理 API、运行时健康检查 |
-| `api_conversations` | 外部 conversation 与内部 Session 映射 | Deployment 多轮恢复 |
+| 表                               | 保存内容                                         | 主要消费者                           |
+| -------------------------------- | ------------------------------------------------ | ------------------------------------ |
+| `sessions`                       | ID、标题、创建时间                               | Chat/Monitor                         |
+| `turns`                          | 用户/助手轮次                                    | Session Restore、Memory UI           |
+| `session_state`                  | Slots、Last Report、Ambiguity 字段、Selected KBs | Pipeline Restore/Persist             |
+| `thinking`                       | 每轮过程事件                                     | 会话思考记录 API                     |
+| `knowledge_bases`                | KB 名称、状态、进度、源路径、Metadata Tree       | Chat KB validation、Navigator、KB UI |
+| `knowledge_base_chunks`          | 稳定 Chunk ID、来源、层级、报告原文              | KB UI、Eval 用例选择                 |
+| `evaluation_state`               | 运行进度、最后结果、时间                         | Eval 状态恢复                        |
+| `api_deployments`                | 名称、状态、Key 摘要/前缀、最后使用与软删除时间  | API 上线 UI、Deployment Chat 鉴权    |
+| `api_deployment_knowledge_bases` | Deployment 固定 KB 范围                          | 管理 API、运行时健康检查             |
+| `api_conversations`              | 外部 conversation 与内部 Session 映射            | Deployment 多轮恢复                  |
 
 每次操作创建短连接，启用 WAL、foreign keys、30 秒 busy timeout，并显式提交/回滚。SQLite 保存可展示原文和业务状态；Milvus 保存在线向量检索副本。两者通过 `kb_id/chunk_id` 对齐，而不是互相替代。
 
@@ -748,15 +748,15 @@ Dense 使用 HNSW/COSINE；Sparse 使用 SPARSE_INVERTED_INDEX/IP；标量字段
 
 以下契约必须一致：
 
-| 契约 | 建库端 | 在线端 | 不一致后果 |
-| --- | --- | --- | --- |
-| Embedding model | `build_vector_db.py` | `llm_client.get_embedding()` | 向量空间不可比较 |
-| Embedding dimension | Collection schema | Query vector | 请求失败或错误结果 |
-| Sparse algorithm/dimension | `sparse_vector.py` | 同一文件 | 词项落入不同坐标 |
-| Metadata fields | Front Matter/schema | Planner/filter/output fields | 过滤失效或字段缺失 |
-| Collection name/schema | build/config | retrieval/server | 查错库或启动失败 |
-| Chunk ID | parser/build | dedup/Eval/SQLite | 来源和黄金标签断裂 |
-| `combined_text` | index input | Rerank/context | 搜索目标与展示不一致 |
+| 契约                       | 建库端               | 在线端                       | 不一致后果           |
+| -------------------------- | -------------------- | ---------------------------- | -------------------- |
+| Embedding model            | `build_vector_db.py` | `llm_client.get_embedding()` | 向量空间不可比较     |
+| Embedding dimension        | Collection schema    | Query vector                 | 请求失败或错误结果   |
+| Sparse algorithm/dimension | `sparse_vector.py`   | 同一文件                     | 词项落入不同坐标     |
+| Metadata fields            | Front Matter/schema  | Planner/filter/output fields | 过滤失效或字段缺失   |
+| Collection name/schema     | build/config         | retrieval/server             | 查错库或启动失败     |
+| Chunk ID                   | parser/build         | dedup/Eval/SQLite            | 来源和黄金标签断裂   |
+| `combined_text`            | index input          | Rerank/context               | 搜索目标与展示不一致 |
 
 因此换 Embedding、改 Sparse 或改 schema 通常不是在线热配置，而是数据迁移。先检查 schema、备份/源 Excel，再使用 `migrate_milvus_schema.py` 或 `rebuild_all_knowledge_bases.py` 的确认保护流程；详细命令见 [Data Pipeline README](app/data_pipeline/README.md)。
 
@@ -815,13 +815,13 @@ Backend Chat Event 按职责分组：
 
 Frontend 实际处理 §6.5 列出的分支；差异是：
 
-| Event | Backend | Frontend |
-| --- | --- | --- |
-| `query_plan` | `search_reports()` 发送 | 未处理 |
-| `cache_hit` | 歧义选择/匹配时发送 | 未处理 |
-| `search_result` | 主路径未发送 | 保留兼容 handler |
-| `token` | `chat_stream` 支持 | 支持追加文本 |
-| `done` | Worker finally 发送 | 完成 UI 并显示耗时 |
+| Event           | Backend                 | Frontend           |
+| --------------- | ----------------------- | ------------------ |
+| `query_plan`    | `search_reports()` 发送 | 未处理             |
+| `cache_hit`     | 歧义选择/匹配时发送     | 未处理             |
+| `search_result` | 主路径未发送            | 保留兼容 handler   |
+| `token`         | `chat_stream` 支持      | 支持追加文本       |
+| `done`          | Worker finally 发送     | 完成 UI 并显示耗时 |
 
 `reasoning` 来自 Report JSON 的可选字段，会单独显示在 Thinking；正式 `report` 内容不会包含 reasoning。Eval/自动生成使用独立的 `start/progress/warning/done/cancelled/error` 集合。
 
@@ -837,22 +837,22 @@ SSE Streaming 是 HTTP 响应可以逐事件发送；LLM Token Streaming 是模�
 
 ## 44. 核心数据结构
 
-| 结构 | 核心含义 | 谁创建 → 谁使用 |
-| --- | --- | --- |
-| `ChatRequest` | Query、Session、诊断选择、KB 范围 | Frontend → Worker |
-| `DeploymentChatRequest` | message、可选 conversation/诊断；拒绝 KB 字段 | External Client → Gateway/Worker |
-| Deployment | 固定 KB、状态、Key 摘要/前缀、健康状态 | API 上线 UI/SessionStore → Worker auth |
-| API Conversation | `(deployment_id, conversation_id) → internal_session_id` | Worker → Stateful executor |
-| Entity Slots | modality/body part/history/diagnosis/intent | EntityTracker/SQLite → Prompt/Planner/Tools |
-| `QueryPlan` | semantic/keyword/diagnosis Query、filters、slot confidence | Planner → Retrieval/SSE |
-| Tool Call | ID、name、arguments | Main LLM → Registry/Pipeline |
-| `ToolResult` | content + `is_final` | Registry → Pipeline 终态决策 |
-| Retrieval Candidate | IDs、metadata、text、recall/rerank fields | Milvus/Retrieval → Rerank/Tool/Frontend refs |
-| Structured Report | 当前主格式 `results[{影像学表现,诊断意见}]`，可含 reasoning | Report/Edit/Refine LLM → Last Report/Display/API |
-| KB Chunk | 来源、层级、findings/opinion、combined text、stable ID | Excel Pipeline → Markdown/SQLite/Milvus |
-| Session State | Slots、Last Report、Selected KBs、Ambiguity 字段 | Worker/Pipeline ↔ SQLite |
-| Eval Case | Query + expected IDs + metadata | JSON Dataset/UI → Eval runner |
-| Eval Result | Hit rates、details、bad cases、运行 config | Eval runner → SQLite/SSE/UI |
+| 结构                    | 核心含义                                                    | 谁创建 → 谁使用                                  |
+| ----------------------- | ----------------------------------------------------------- | ------------------------------------------------ |
+| `ChatRequest`           | Query、Session、诊断选择、KB 范围                           | Frontend → Worker                                |
+| `DeploymentChatRequest` | message、可选 conversation/诊断；拒绝 KB 字段               | External Client → Gateway/Worker                 |
+| Deployment              | 固定 KB、状态、Key 摘要/前缀、健康状态                      | API 上线 UI/SessionStore → Worker auth           |
+| API Conversation        | `(deployment_id, conversation_id) → internal_session_id`    | Worker → Stateful executor                       |
+| Entity Slots            | modality/body part/history/diagnosis/intent                 | EntityTracker/SQLite → Prompt/Planner/Tools      |
+| `QueryPlan`             | semantic/keyword/diagnosis Query、filters、slot confidence  | Planner → Retrieval/SSE                          |
+| Tool Call               | ID、name、arguments                                         | Main LLM → Registry/Pipeline                     |
+| `ToolResult`            | content + `is_final`                                        | Registry → Pipeline 终态决策                     |
+| Retrieval Candidate     | IDs、metadata、text、recall/rerank fields                   | Milvus/Retrieval → Rerank/Tool/Frontend refs     |
+| Structured Report       | 当前主格式 `results[{影像学表现,诊断意见}]`，可含 reasoning | Report/Edit/Refine LLM → Last Report/Display/API |
+| KB Chunk                | 来源、层级、findings/opinion、combined text、stable ID      | Excel Pipeline → Markdown/SQLite/Milvus          |
+| Session State           | Slots、Last Report、Selected KBs、Ambiguity 字段            | Worker/Pipeline ↔ SQLite                         |
+| Eval Case               | Query + expected IDs + metadata                             | JSON Dataset/UI → Eval runner                    |
+| Eval Result             | Hit rates、details、bad cases、运行 config                  | Eval runner → SQLite/SSE/UI                      |
 
 Schema 不是集中定义：Gateway Pydantic、Worker Pydantic、Tool JSON Schema、Prompt JSON 格式、SQLite DDL、Milvus schema 和 Frontend payload 各自在不同文件，修改时必须按消费者检查。
 
@@ -1014,88 +1014,88 @@ external services ◄─ llm_client + query_rewrite + query_planner + rerank + b
 
 ## 50. 核心文件地图
 
-| 文件 | 为什么重要 | 什么时候打开 |
-| --- | --- | --- |
-| `README.md` | 运行与集成入口 | 启动、部署、API 示例 |
-| `AGENTS.md` | 全局代码导航规则 | 任何代码任务开始时 |
-| `python_start.py` | 本地 Worker/Gateway 启动拓扑 | 本地启动问题 |
-| `compose.yaml` | Docker 网络、端口和 volume | 部署与数据持久化 |
-| `config.yml` | Active 模型、检索和 Milvus 默认值 | 行为/环境配置 |
-| `front/index.html` | 六个页面和所有固定 DOM ID | 页面结构/表单 |
-| `front/app.js` | Frontend 状态、API、SSE、LocalStorage | 所有前端行为 |
-| `front/style.css` | 全部视觉和状态 class | 样式/响应式 |
-| `app/gateway.py` | Public auth 与 stream proxy | 外部 API、安全边界 |
-| `app/config.py` | 配置解析、getter、client factory | 新配置或热重载 |
-| `app/chat/server.py` | Worker 路由、共享 Stateful 执行、Deployment、Session、SSE、KB、Eval | 后端入口/跨模块问题 |
-| `app/chat/deployments.py` | Key 摘要、KB scope、公开 SSE 与 conversation lock | API 上线安全/契约 |
-| `app/chat/pipeline.py` | 一轮 Agent 主编排 | Tool 决策和请求生命周期 |
-| `app/chat/llm_client.py` | Chat/Embedding/Rerank 上层调用 | 模型调用、streaming |
-| `app/chat/schemas.py` | Worker Pydantic contract | Stateful/管理 API 字段 |
-| `app/chat/report_schema.py` | Canonical Report、旧格式归一化、校验/repair、事实保护与 Public 脱敏 | 任何正式报告结构/边界变更 |
-| `app/chat/utils.py` | Canonical 报告到 Markdown 展示 | 报告渲染格式 |
-| `app/tools/registry.py` | Tool 注册、执行、Final 语义 | 新 Tool/执行机制 |
-| `app/tools/rag_tool.py` | 新报告、歧义、Report LLM | 报告生成主业务 |
-| `app/tools/edit_tool.py` | Last Report 编辑、Judge 编排与单次 Repair | 编辑行为、Judge、Repair |
-| `app/tools/refine_tool.py` | 风格重写 Last Report | 润色行为/Schema |
-| `app/rag/query_rewrite.py` | 标准化与有条件改写 | Stateful Query 预处理 |
-| `app/rag/query_planner.py` | 自然语言到合法 QueryPlan | Filter/Query 拆分 |
-| `app/rag/metadata_navigator.py` | 合并/验证 Metadata Tree | 目录候选与约束 |
-| `app/rag/retrieval.py` | Channels、Dense/Sparse、RRF、Dedup | 第一阶段检索 |
-| `app/rag/sparse_vector.py` | 离线/在线共享词面向量 | Sparse 算法变更 |
-| `app/rag/rerank.py` | Cross-Encoder API | 第二阶段排序 |
-| `app/prompt/builder.py` | Entity/Template/Report 拼装 | Prompt 上下文顺序 |
-| `app/prompt/tool_orchestrator.md` | Main Agent 决策规则 | Tool 选择错误 |
-| `app/prompt/structure.md` | 当前报告 Schema 和生成规则 | 报告结构/内容 |
-| `app/prompt/edit.md` / `refine.md` | 编辑与润色约束 | Last Report 变换 |
-| `app/memory/short_term.py` | STM window 与摘要 | 多轮历史问题 |
-| `app/memory/entity_tracker.py` | Slots、Intent、Context Resolution | 实体和指代问题 |
-| `app/memory/retriever.py` | STM semantic selection | 历史相关性/Embedding |
-| `app/memory/session_store.py` | SQLite 所有共享表 | Session/KB/Eval/Deployment 持久化 |
-| `app/data_pipeline/process_reports.py` | Excel → Chunk/Markdown | Excel schema/切片 |
-| `app/data_pipeline/build_vector_db.py` | Milvus schema 与写入 | Embedding/schema/rebuild |
-| `app/data_pipeline/extract_metadata.py` | Markdown → Metadata Tree | Planner 候选来源 |
-| `app/data_pipeline/chunk_id.py` | 全生命周期稳定 ID | 任何 identity 变更 |
-| `app/eval/run_retrieval_eval.py` | Dataset、Runner、SSE、结果 | Retrieval 评测 |
-| `app/eval/metrics.py` | Hit@K 定义 | 新指标/聚合 |
-| `app/test/test_rag_planning.py` | Planner/Channels 的纯测试 | RAG 逻辑回归 |
-| `app/test/test_knowledge_base_chunks.py` | SQLite Chunk/Excel parser 测试 | 建库数据变更 |
-| `app/test/test_api_deployments.py` | Deployment 纯逻辑、存储、安全和锁 | API 上线底层变更 |
-| `app/test/test_api_deployment_routes.py` | 管理 API、公开 SSE、多轮和原接口回归 | API 上线端到端契约 |
+| 文件                                     | 为什么重要                                                          | 什么时候打开                      |
+| ---------------------------------------- | ------------------------------------------------------------------- | --------------------------------- |
+| `README.md`                              | 运行与集成入口                                                      | 启动、部署、API 示例              |
+| `AGENTS.md`                              | 全局代码导航规则                                                    | 任何代码任务开始时                |
+| `python_start.py`                        | 本地 Worker/Gateway 启动拓扑                                        | 本地启动问题                      |
+| `compose.yaml`                           | Docker 网络、端口和 volume                                          | 部署与数据持久化                  |
+| `config.yml`                             | Active 模型、检索和 Milvus 默认值                                   | 行为/环境配置                     |
+| `front/index.html`                       | 六个页面和所有固定 DOM ID                                           | 页面结构/表单                     |
+| `front/app.js`                           | Frontend 状态、API、SSE、LocalStorage                               | 所有前端行为                      |
+| `front/style.css`                        | 全部视觉和状态 class                                                | 样式/响应式                       |
+| `app/gateway.py`                         | Public auth 与 stream proxy                                         | 外部 API、安全边界                |
+| `app/config.py`                          | 配置解析、getter、client factory                                    | 新配置或热重载                    |
+| `app/chat/server.py`                     | Worker 路由、共享 Stateful 执行、Deployment、Session、SSE、KB、Eval | 后端入口/跨模块问题               |
+| `app/chat/deployments.py`                | Key 摘要、KB scope、公开 SSE 与 conversation lock                   | API 上线安全/契约                 |
+| `app/chat/pipeline.py`                   | 一轮 Agent 主编排                                                   | Tool 决策和请求生命周期           |
+| `app/chat/llm_client.py`                 | Chat/Embedding/Rerank 上层调用                                      | 模型调用、streaming               |
+| `app/chat/schemas.py`                    | Worker Pydantic contract                                            | Stateful/管理 API 字段            |
+| `app/chat/report_schema.py`              | Canonical Report、旧格式归一化、校验/repair、事实保护与 Public 脱敏 | 任何正式报告结构/边界变更         |
+| `app/chat/utils.py`                      | Canonical 报告到 Markdown 展示                                      | 报告渲染格式                      |
+| `app/tools/registry.py`                  | Tool 注册、执行、Final 语义                                         | 新 Tool/执行机制                  |
+| `app/tools/rag_tool.py`                  | 新报告、歧义、Report LLM                                            | 报告生成主业务                    |
+| `app/tools/edit_tool.py`                 | Last Report 编辑、Judge 编排与单次 Repair                           | 编辑行为、Judge、Repair           |
+| `app/tools/refine_tool.py`               | 风格重写 Last Report                                                | 润色行为/Schema                   |
+| `app/rag/query_rewrite.py`               | 标准化与有条件改写                                                  | Stateful Query 预处理             |
+| `app/rag/query_planner.py`               | 自然语言到合法 QueryPlan                                            | Filter/Query 拆分                 |
+| `app/rag/metadata_navigator.py`          | 合并/验证 Metadata Tree                                             | 目录候选与约束                    |
+| `app/rag/retrieval.py`                   | Channels、Dense/Sparse、RRF、Dedup                                  | 第一阶段检索                      |
+| `app/rag/sparse_vector.py`               | 离线/在线共享词面向量                                               | Sparse 算法变更                   |
+| `app/rag/rerank.py`                      | Cross-Encoder API                                                   | 第二阶段排序                      |
+| `app/prompt/builder.py`                  | Entity/Template/Report 拼装                                         | Prompt 上下文顺序                 |
+| `app/prompt/tool_orchestrator.md`        | Main Agent 决策规则                                                 | Tool 选择错误                     |
+| `app/prompt/structure.md`                | 当前报告 Schema 和生成规则                                          | 报告结构/内容                     |
+| `app/prompt/edit.md` / `refine.md`       | 编辑与润色约束                                                      | Last Report 变换                  |
+| `app/memory/short_term.py`               | STM window 与摘要                                                   | 多轮历史问题                      |
+| `app/memory/entity_tracker.py`           | Slots、Intent、Context Resolution                                   | 实体和指代问题                    |
+| `app/memory/retriever.py`                | STM semantic selection                                              | 历史相关性/Embedding              |
+| `app/memory/session_store.py`            | SQLite 所有共享表                                                   | Session/KB/Eval/Deployment 持久化 |
+| `app/data_pipeline/process_reports.py`   | Excel → Chunk/Markdown                                              | Excel schema/切片                 |
+| `app/data_pipeline/build_vector_db.py`   | Milvus schema 与写入                                                | Embedding/schema/rebuild          |
+| `app/data_pipeline/extract_metadata.py`  | Markdown → Metadata Tree                                            | Planner 候选来源                  |
+| `app/data_pipeline/chunk_id.py`          | 全生命周期稳定 ID                                                   | 任何 identity 变更                |
+| `app/eval/run_retrieval_eval.py`         | Dataset、Runner、SSE、结果                                          | Retrieval 评测                    |
+| `app/eval/metrics.py`                    | Hit@K 定义                                                          | 新指标/聚合                       |
+| `app/test/test_rag_planning.py`          | Planner/Channels 的纯测试                                           | RAG 逻辑回归                      |
+| `app/test/test_knowledge_base_chunks.py` | SQLite Chunk/Excel parser 测试                                      | 建库数据变更                      |
+| `app/test/test_api_deployments.py`       | Deployment 纯逻辑、存储、安全和锁                                   | API 上线底层变更                  |
+| `app/test/test_api_deployment_routes.py` | 管理 API、公开 SSE、多轮和原接口回归                                | API 上线端到端契约                |
 
 ## 51. 修改入口：我想改 X 应该去哪
 
-| 目标 | 先看这些文件（由近到远） |
-| --- | --- |
-| Agent 决策/调用次数 | `chat/pipeline.py`、`prompt/tool_orchestrator.md`、`tools/registry.py` |
-| Tool 选择规则 | `prompt/tool_orchestrator.md`、三个 Tool Schema、`pipeline.py` |
-| 新增 Tool | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt |
-| 报告结构 | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE |
-| 报告生成 Prompt | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py` |
-| 报告编辑 | `tools/edit_tool.py`、`chat/report_schema.py`、`prompt/edit.md`、`test/test_report_pipeline.py`、Last Report 保存逻辑 |
-| 报告润色 | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context |
-| Query Rewrite | `rag/query_rewrite.py`、`prompt/rewrite.md`、rewrite config |
-| Query Planning | `rag/query_planner.py`、`metadata_navigator.py`、planning tests |
-| Metadata Filter | `metadata_navigator.py`、`query_planner.py`、`retrieval.build_filter_expression()` |
-| Dense Retrieval | `chat/llm_client.py`、`rag/retrieval.py`、`data_pipeline/build_vector_db.py`、config |
-| Sparse Retrieval | `rag/sparse_vector.py`、`rag/retrieval.py`、`build_vector_db.py`；然后全量重建 |
-| Recall Channel | `rag/retrieval.py`、`pipeline.search_reports()` SSE、planning tests |
-| RRF | `rag/retrieval.py` 中两处 `RRFRanker()` 和候选限制 |
-| Rerank | `rag/rerank.py`、`llm_client.rerank_with_retry()`、`pipeline.search_reports()`、Eval |
-| Memory/STM | `memory/short_term.py`、`memory/retriever.py`、`pipeline.py` |
-| Entity/Intent | `memory/entity_tracker.py`、`prompt/entity_extraction.md`、Pipeline gates |
-| Session | `memory/session_store.py`、`server._get_or_create_session()`、Chat persist block |
-| SSE | Backend emit site、`server.event_stream()`、`front/app.js::handleStreamEvent()` |
-| Gateway API | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes |
-| Stateful API | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage` |
-| Stateless API | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers |
+| 目标                | 先看这些文件（由近到远）                                                                                                                          |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent 决策/调用次数 | `chat/pipeline.py`、`prompt/tool_orchestrator.md`、`tools/registry.py`                                                                            |
+| Tool 选择规则       | `prompt/tool_orchestrator.md`、三个 Tool Schema、`pipeline.py`                                                                                    |
+| 新增 Tool           | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt                                                      |
+| 报告结构            | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE            |
+| 报告生成 Prompt     | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py`                                                                                   |
+| 报告编辑            | `tools/edit_tool.py`、`chat/report_schema.py`、`prompt/edit.md`、`test/test_report_pipeline.py`、Last Report 保存逻辑                             |
+| 报告润色            | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context                                                                                        |
+| Query Rewrite       | `rag/query_rewrite.py`、`prompt/rewrite.md`、rewrite config                                                                                       |
+| Query Planning      | `rag/query_planner.py`、`metadata_navigator.py`、planning tests                                                                                   |
+| Metadata Filter     | `metadata_navigator.py`、`query_planner.py`、`retrieval.build_filter_expression()`                                                                |
+| Dense Retrieval     | `chat/llm_client.py`、`rag/retrieval.py`、`data_pipeline/build_vector_db.py`、config                                                              |
+| Sparse Retrieval    | `rag/sparse_vector.py`、`rag/retrieval.py`、`build_vector_db.py`；然后全量重建                                                                    |
+| Recall Channel      | `rag/retrieval.py`、`pipeline.search_reports()` SSE、planning tests                                                                               |
+| RRF                 | `rag/retrieval.py` 中两处 `RRFRanker()` 和候选限制                                                                                                |
+| Rerank              | `rag/rerank.py`、`llm_client.rerank_with_retry()`、`pipeline.search_reports()`、Eval                                                              |
+| Memory/STM          | `memory/short_term.py`、`memory/retriever.py`、`pipeline.py`                                                                                      |
+| Entity/Intent       | `memory/entity_tracker.py`、`prompt/entity_extraction.md`、Pipeline gates                                                                         |
+| Session             | `memory/session_store.py`、`server._get_or_create_session()`、Chat persist block                                                                  |
+| SSE                 | Backend emit site、`server.event_stream()`、`front/app.js::handleStreamEvent()`                                                                   |
+| Gateway API         | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes                                                                               |
+| Stateful API        | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage`                                                                    |
+| Stateless API       | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers                                                                       |
 | Deployment/API 上线 | `front/index.html`、`front/app.js`、`front/style.css`、`chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、部署测试 |
-| Excel Schema | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README |
-| Chunk 组成/ID | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval |
-| Milvus Schema | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config |
-| Eval Dataset/流程 | `eval/run_retrieval_eval.py`、`generate_test_cases.py`、`metrics.py`、Eval UI |
-| Frontend Chat | `front/index.html` Agent DOM、`front/app.js` send/parser/render、`front/style.css` |
-| KB UI | `front/app.js` KB functions、`index.html` KB page、Worker KB routes |
-| Eval UI | `front/app.js` Eval functions/SSE、`index.html` Eval page、Worker Eval routes |
+| Excel Schema        | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README                                                             |
+| Chunk 组成/ID       | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval                                                                                    |
+| Milvus Schema       | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config                                                                       |
+| Eval Dataset/流程   | `eval/run_retrieval_eval.py`、`generate_test_cases.py`、`metrics.py`、Eval UI                                                                     |
+| Frontend Chat       | `front/index.html` Agent DOM、`front/app.js` send/parser/render、`front/style.css`                                                                |
+| KB UI               | `front/app.js` KB functions、`index.html` KB page、Worker KB routes                                                                               |
+| Eval UI             | `front/app.js` Eval functions/SSE、`index.html` Eval page、Worker Eval routes                                                                     |
 
 完成代码修改后，再按最近的 `AGENTS.md` 检查依赖、Public API、Testing 和导航是否失效。
 
@@ -1207,16 +1207,16 @@ Browser Stateful 允许用户每轮选择 KB，不适合作为稳定外部产品
 
 ## 54. 测试体系
 
-| 层 | 当前验证 | 明显缺口 |
-| --- | --- | --- |
-| Agent | `test_memory.py` 测 Prompt/Intent；`test_report_pipeline.py` 以替身覆盖 Report Tool Final/error 分支 | 无真实 Main LLM Tool 选择和 multi-tool 端到端测试 |
-| RAG | `test_rag_planning.py` 测 Planner、channels、dedup、rewrite fallback | 无真实多通道贡献、RRF 参数、Rerank fallback 单测 |
-| Memory | `test_memory.py` 自定义/pytest-compatible 测规则实体、switch、resolve、retriever | 无在线 async Entity LLM、SQLite restore 并发测试 |
-| Tools | `test_report_pipeline.py` 覆盖 Canonical 解析/repair、真实 Last Report 注入、edit 事实检查/Judge/单次 Repair、二次编辑和 Final 语义 | 真实模型下的 Judge 质量、RAG 歧义与更多 edit/refine 医学语义缺系统评测 |
-| Data Pipeline | `test_knowledge_base_chunks.py` 测 Excel parser 和 SQLite chunks | 无完整 Markdown→Embedding→Milvus 事务/失败恢复测试 |
-| API | Deployment 有纯逻辑/存储测试和 FastAPI TestClient 集成测试；`tests_api/` 多为外部模型连通性脚本 | 其他 Gateway/Worker 路由仍缺系统化 contract 测试 |
-| Eval | Eval runner 自身及 CLI validate | metrics 有简单纯函数但无专门 test；不测 Planner/Agent |
-| Frontend | 人工浏览器检查 | 无 unit、E2E、lint、类型检查 |
+| 层            | 当前验证                                                                                                                            | 明显缺口                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Agent         | `test_memory.py` 测 Prompt/Intent；`test_report_pipeline.py` 以替身覆盖 Report Tool Final/error 分支                                | 无真实 Main LLM Tool 选择和 multi-tool 端到端测试                      |
+| RAG           | `test_rag_planning.py` 测 Planner、channels、dedup、rewrite fallback                                                                | 无真实多通道贡献、RRF 参数、Rerank fallback 单测                       |
+| Memory        | `test_memory.py` 自定义/pytest-compatible 测规则实体、switch、resolve、retriever                                                    | 无在线 async Entity LLM、SQLite restore 并发测试                       |
+| Tools         | `test_report_pipeline.py` 覆盖 Canonical 解析/repair、真实 Last Report 注入、edit 事实检查/Judge/单次 Repair、二次编辑和 Final 语义 | 真实模型下的 Judge 质量、RAG 歧义与更多 edit/refine 医学语义缺系统评测 |
+| Data Pipeline | `test_knowledge_base_chunks.py` 测 Excel parser 和 SQLite chunks                                                                    | 无完整 Markdown→Embedding→Milvus 事务/失败恢复测试                     |
+| API           | Deployment 有纯逻辑/存储测试和 FastAPI TestClient 集成测试；`tests_api/` 多为外部模型连通性脚本                                     | 其他 Gateway/Worker 路由仍缺系统化 contract 测试                       |
+| Eval          | Eval runner 自身及 CLI validate                                                                                                     | metrics 有简单纯函数但无专门 test；不测 Planner/Agent                  |
+| Frontend      | 人工浏览器检查                                                                                                                      | 无 unit、E2E、lint、类型检查                                           |
 
 纯逻辑优先运行：
 
@@ -1337,28 +1337,28 @@ python -m app.test.test_memory
 
 ## 59. Glossary
 
-| 术语 | 本项目中的意义 |
-| --- | --- |
-| Gateway | 公开 FastAPI 边界，Bearer/来源检查并代理 Worker |
-| Worker | 承载前端、业务 API、Agent、KB、Eval 的 FastAPI 进程 |
-| Deployment | 固定一组 Active KB、独立 Key 和启停状态的外部 Stateful Chat 发布单元 |
-| API Conversation | 对外 `conv_*` 与内部 SQLite Session 的 Deployment 隔离映射 |
-| Pipeline | `run_pipeline()` 的一轮 Agent 编排，不是无限循环 |
-| Tool | 主 LLM 可选择的业务动作，具有 JSON Schema 和 handler |
-| RAG | 从共享医学模板 KB 检索参考并辅助生成报告的链路 |
-| QueryPlan | Query 的语义文本、词面文本、合法 filters 和 slot provenance |
-| Metadata Navigator | 合并真实 KB 层级并限制 Planner 候选的验证器 |
-| Recall Channel | strict/modality/kb-only 的一个标量过滤范围 |
-| RRF | 用排名位置融合 Dense/Sparse/Channels 的第一阶段 ranker |
-| Rerank | 对 Query 和候选全文做第二阶段 Cross-Encoder 排序 |
-| STM | 当前 Session 最近 `max_rounds` 轮的运行时历史 |
-| Entity | modality/body part/history/diagnosis/intent 结构化槽位 |
-| Session | 由 `session_id` 标识、可从 SQLite 恢复的多轮状态 |
-| Last Report | 最近一次 Final 报告原始 JSON，供编辑/润色/合并 |
-| Chunk | 一个接受的 Excel Row 派生的主要可检索报告单元 |
-| Stable Chunk ID | KB、文件名和 combined text 的确定性 32 位 MD5 |
-| Knowledge Base | 一个上传 Excel 对应的逻辑数据域，以 `kb_id` 隔离 |
-| Retrieval Eval | 用 expected chunk IDs 和 Hit@K 衡量检索排名的评测 |
+| 术语               | 本项目中的意义                                                       |
+| ------------------ | -------------------------------------------------------------------- |
+| Gateway            | 公开 FastAPI 边界，Bearer/来源检查并代理 Worker                      |
+| Worker             | 承载前端、业务 API、Agent、KB、Eval 的 FastAPI 进程                  |
+| Deployment         | 固定一组 Active KB、独立 Key 和启停状态的外部 Stateful Chat 发布单元 |
+| API Conversation   | 对外 `conv_*` 与内部 SQLite Session 的 Deployment 隔离映射           |
+| Pipeline           | `run_pipeline()` 的一轮 Agent 编排，不是无限循环                     |
+| Tool               | 主 LLM 可选择的业务动作，具有 JSON Schema 和 handler                 |
+| RAG                | 从共享医学模板 KB 检索参考并辅助生成报告的链路                       |
+| QueryPlan          | Query 的语义文本、词面文本、合法 filters 和 slot provenance          |
+| Metadata Navigator | 合并真实 KB 层级并限制 Planner 候选的验证器                          |
+| Recall Channel     | strict/modality/kb-only 的一个标量过滤范围                           |
+| RRF                | 用排名位置融合 Dense/Sparse/Channels 的第一阶段 ranker               |
+| Rerank             | 对 Query 和候选全文做第二阶段 Cross-Encoder 排序                     |
+| STM                | 当前 Session 最近 `max_rounds` 轮的运行时历史                        |
+| Entity             | modality/body part/history/diagnosis/intent 结构化槽位               |
+| Session            | 由 `session_id` 标识、可从 SQLite 恢复的多轮状态                     |
+| Last Report        | 最近一次 Final 报告原始 JSON，供编辑/润色/合并                       |
+| Chunk              | 一个接受的 Excel Row 派生的主要可检索报告单元                        |
+| Stable Chunk ID    | KB、文件名和 combined text 的确定性 32 位 MD5                        |
+| Knowledge Base     | 一个上传 Excel 对应的逻辑数据域，以 `kb_id` 隔离                     |
+| Retrieval Eval     | 用 expected chunk IDs 和 Hit@K 衡量检索排名的评测                    |
 
 ## 60. Important Unknowns
 

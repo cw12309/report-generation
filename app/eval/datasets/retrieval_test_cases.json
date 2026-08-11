@@ -298,5 +298,705 @@
       "type": "auto_generated",
       "kb_id": "b982a5acca51447aa1596f0d4832f24f"
     }
+  },
+  {
+    "query": "右侧气胸伴右第6、7后肋骨折DR影像表现",
+    "expected_chunk_ids": [
+      "34d2c9c316d3ed909a0b0304d6ccf014"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "头颅MRI显示脑萎缩、白质病变及腔隙性脑梗死",
+    "expected_chunk_ids": [
+      "2dbaf5c589b649d048b8a0a42e0e5f45"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左膝前交叉韧带重建术后复查MRI报告解读",
+    "expected_chunk_ids": [
+      "00d02bf5648652df12ca7ad3f62d4f9c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "双膝关节色素沉着绒毛结节性滑膜炎 MRI 表现",
+    "expected_chunk_ids": [
+      "807b5aa8712ff4fe4a1640764f5dedef"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "宫颈癌IVa期侵犯髂外静脉血栓形成MRI表现",
+    "expected_chunk_ids": [
+      "30b193c4ba759f34200700cf96e878a7"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "前列腺癌PI-RADS 5类伴精囊腺受累及淋巴结转移的MR影像表现",
+    "expected_chunk_ids": [
+      "3e4a7d5ac6fe625dbad98ac8b58638e1"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "冠状动脉CTA显示多发斑块及管腔狭窄75%",
+    "expected_chunk_ids": [
+      "8990e6a04923fd771648379a5cf5dc9a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝内胆管细胞癌CT表现",
+    "expected_chunk_ids": [
+      "26273f0a83650d4a95ca99515f8cce7a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "胃窦占位考虑胃癌T2期伴第1组淋巴结增大",
+    "expected_chunk_ids": [
+      "951cf448a3fb2c25f8bd9ca7e3e3ca8c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肱二头肌长头腱肌腱病MRI表现",
+    "expected_chunk_ids": [
+      "a325fcadd44b2c35e499526167ed73f9"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "中耳胆脂瘤CT影像表现",
+    "expected_chunk_ids": [
+      "c96886516ab73ad00fdfe9b860d4af36"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "e9f000532bad48598a307676369ea8dd"
+    }
+  },
+  {
+    "query": "直肠癌MRI影像报告模板",
+    "expected_chunk_ids": [
+      "97a7e16c0fb4b98a764fc8b726055d52"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "左肩关节脱位伴肱骨头骨折",
+    "expected_chunk_ids": [
+      "15b5e289f6e909b67d635aef8417594d"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "扩张型心肌病心脏MR表现",
+    "expected_chunk_ids": [
+      "67a65e1d89f32c70717e2155fbcace09"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "巨块型肝癌CT影像表现",
+    "expected_chunk_ids": [
+      "2c10e70ae1500e57ee3e9f3f5064db7c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "中耳胆脂瘤CT表现",
+    "expected_chunk_ids": [
+      "bc0508af1189c496517462fc0186ce4b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "坐骨-股骨撞击综合征 MRI 表现",
+    "expected_chunk_ids": [
+      "878699ae0cee6181123463cd89fb92dc"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "乳腺假体植入术后包膜挛缩伴良性结节 MRI 表现",
+    "expected_chunk_ids": [
+      "9c73767c082979dcf6dab8141ac4546a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "左膝前交叉韧带重建术后复查 MRI 报告解读",
+    "expected_chunk_ids": [
+      "856271119545dc4a618ba8fc90868458"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "右侧输尿管下段结石伴肾积水右肾多发结石CT表现",
+    "expected_chunk_ids": [
+      "8acb91b66098b25db7b736c2138b4394"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝硬化中晚期CT上腹部平扫增强表现",
+    "expected_chunk_ids": [
+      "69d2cb9b6f76e82fb2d000ccfb85a951"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右膝关节内侧半月板后角撕裂 MRI 影像表现",
+    "expected_chunk_ids": [
+      "c188ed01229376db620bf9b2ee0d462f"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "前列腺癌PI-RADS 5分伴精囊腺侵犯及淋巴结转移的MR表现",
+    "expected_chunk_ids": [
+      "640624e3252b9b9768d4953fbb836aaf"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "心尖肥厚型心肌病冠状动脉CTA表现",
+    "expected_chunk_ids": [
+      "743a33797f8e442a0eb0bb556e860ed9"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "胰腺癌术后CT显示小肠梗阻及肝大网膜转移",
+    "expected_chunk_ids": [
+      "2fc9c799c7c0ceca55d86ce19dcc9651"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左侧踝关节MR平扫报告解读",
+    "expected_chunk_ids": [
+      "b162184674bd5357d17633a66dc7359b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "乳腺假体植入术后伴恶性肿瘤的MRI表现",
+    "expected_chunk_ids": [
+      "c3864006058c4a93541656385ee56fb0"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "aecca53b3d0b4eb58b47771142b63a8d"
+    }
+  },
+  {
+    "query": "肝S5肝细胞肝癌伴肝硬化手术方案及体积分析",
+    "expected_chunk_ids": [
+      "1fd0226889dc1616869422863a8ba316"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "限制型心肌病心脏MRI影像学表现",
+    "expected_chunk_ids": [
+      "14fa4169fb636924b68ebc17eeeca9c1"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "aecca53b3d0b4eb58b47771142b63a8d"
+    }
+  },
+  {
+    "query": "肝内胆管细胞癌CT影像表现",
+    "expected_chunk_ids": [
+      "efafb30502cf03228cd6f3d8fed0de03"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "胃癌术后复查CT报告解读",
+    "expected_chunk_ids": [
+      "af0facac63b5fb3112ca81861b782f62"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肱二头肌长头腱肌腱病MR表现",
+    "expected_chunk_ids": [
+      "30d7178080d9f89bc2d7c1fe6f2ab456"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "扩张型心肌病心脏MRI表现",
+    "expected_chunk_ids": [
+      "e6bbadf8942def583155ac71d262fe73"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "aecca53b3d0b4eb58b47771142b63a8d"
+    }
+  },
+  {
+    "query": "胆囊癌伴腹膜转移CT表现",
+    "expected_chunk_ids": [
+      "4ae6849665125c91ae3744fb99bcc159"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右侧输尿管下段结石伴右肾积水右肾多发结石CT表现",
+    "expected_chunk_ids": [
+      "b4c5761c3da23c822a4abcb170ed3787"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "乳腺假体植入术后左侧移位包膜挛缩伴良性结节MRI表现",
+    "expected_chunk_ids": [
+      "57b1b9efd860e7ca13eaf722384df293"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "aecca53b3d0b4eb58b47771142b63a8d"
+    }
+  },
+  {
+    "query": "冠状动脉搭桥术后CTA报告解读",
+    "expected_chunk_ids": [
+      "732dc00255e0a6b78c633d163329fc3e"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "aecca53b3d0b4eb58b47771142b63a8d"
+    }
+  },
+  {
+    "query": "股骨-髋臼撞击综合征影像学表现",
+    "expected_chunk_ids": [
+      "4805a7b4758cd85ee76ad0df6630cd01"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "直肠癌MR影像报告模板",
+    "expected_chunk_ids": [
+      "6f4bea9e8cba1a396aaba9db26250e37"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "限制型心肌病心脏MRI表现",
+    "expected_chunk_ids": [
+      "cdbef799181065a2e99729e4ff00b05c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "肛瘘MRI影像表现及诊断",
+    "expected_chunk_ids": [
+      "54961d4d9eb21cd63b58bc90b86a06cb"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "乳腺BI-RADS分类标准及处理建议",
+    "expected_chunk_ids": [
+      "e3c973c27c7bff8e48e14274576ebbcc"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "双膝关节色素沉着绒毛结节性滑膜炎MRI表现",
+    "expected_chunk_ids": [
+      "6acb5508f0c39d0936f2cad7ad959b8b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "右侧气胸伴第6、7后肋骨折DR表现",
+    "expected_chunk_ids": [
+      "163c4552b9272acf7d08814d32316438"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右侧颞叶左侧顶叶挫裂伤蛛网膜下腔出血基底动脉末端小动脉瘤",
+    "expected_chunk_ids": [
+      "48f41dc64dcbde676f0e5a0c7a85bf94"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "冠状动脉搭桥术后CTA检查报告解读",
+    "expected_chunk_ids": [
+      "e4ed367c2d4e654c1f5f7cf5505d70ab"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "右膝关节内侧半月板后角撕裂（Ⅲ级）",
+    "expected_chunk_ids": [
+      "eaf679c46ecb5a0a3e65b31bf9ab1d2c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "肛瘘MRI影像表现",
+    "expected_chunk_ids": [
+      "b8e1deb3dbc24ec4e5760395d531648f"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "乳腺假体植入术后伴恶性肿瘤的MRI影像学表现",
+    "expected_chunk_ids": [
+      "28bd3ea05e882e17d660659fe6d3a8f9"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "左侧基底节区脑梗塞 CT表现",
+    "expected_chunk_ids": [
+      "bc190c6f0218718d7e83d8483adfa454"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左膝关节MRI平扫未见异常",
+    "expected_chunk_ids": [
+      "29a9cf4ae1c088b20a66a45d7354ed2a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝脓肿CT影像表现",
+    "expected_chunk_ids": [
+      "79d6d216c0593f4f9920b4ae6fb089c8"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "胰腺体尾部假性囊肿MR表现",
+    "expected_chunk_ids": [
+      "2c33eb5ccca0d02d17697fd622ff2728"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "左胫骨结节骨软骨炎DR表现",
+    "expected_chunk_ids": [
+      "49c06398d8e2cbd753f109a7e4fffcee"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "78d2f27e9d384344b3e8fcb032b80012"
+    }
+  },
+  {
+    "query": "胸部正侧位DR未见异常",
+    "expected_chunk_ids": [
+      "fb08b3bfb3bdb5dd54cad1912a54cb41"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝转移瘤 MRI 影像学表现",
+    "expected_chunk_ids": [
+      "ec896eb4fe1da5bd6f8569665e037a9c"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "妊娠晚期羊水偏少MR表现",
+    "expected_chunk_ids": [
+      "bb703da95a45d206255a4e84ed8c74e2"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "腭部良性肿瘤CT表现",
+    "expected_chunk_ids": [
+      "f154148546704359a987f37d1c5597b1"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "膀胱多发结石DR影像表现",
+    "expected_chunk_ids": [
+      "8c91b48c261b4f5f5d3dfe7445d177a4"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "69590101e80e4517943669bae956a5e6"
+    }
+  },
+  {
+    "query": "腰椎间盘突出术后CT腰椎平扫报告解读",
+    "expected_chunk_ids": [
+      "9ad382bcd6f3b33daa9bb3c426c7d3be"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右肺门肿块伴阻塞性肺炎及纵隔淋巴结转移CT表现",
+    "expected_chunk_ids": [
+      "80c87d4b7ecfa13cb6bf45b38f193097"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "颈部囊性肿物MRI表现",
+    "expected_chunk_ids": [
+      "d99f1f95f2e175299e5a2a58ec0c702b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "双侧基底节区多发腔梗脑白质脱髓鞘脑萎缩",
+    "expected_chunk_ids": [
+      "f99781a8e24d5b0934754e7284f6e25b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "右肾造瘘术后肾周感染CT表现",
+    "expected_chunk_ids": [
+      "3adcc13e3e7a9e0dff81791b807d66a3"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "肝FNH CT表现",
+    "expected_chunk_ids": [
+      "71d6d937f80be05940cd6b373f19aa5b"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "db6ae40e0b3f4ca6a9fb56d387a42b26"
+    }
+  },
+  {
+    "query": "膀胱后壁占位考虑膀胱癌CT表现",
+    "expected_chunk_ids": [
+      "de030456713be473ef7c7ae65bf2372e"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左胫骨下段骨折DR影像表现",
+    "expected_chunk_ids": [
+      "a30dda6e5731225028758a1775d1285d"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "颈椎生理曲度变直是什么意思",
+    "expected_chunk_ids": [
+      "da1f9b7ad3d35b079cb0a648e9e5ea7a"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "左侧股骨头缺血性坏死伴髋关节半脱位CT表现",
+    "expected_chunk_ids": [
+      "8f5953f9664ab9d6727a8e7f14089561"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
+  },
+  {
+    "query": "头颅DWI正常影像学表现",
+    "expected_chunk_ids": [
+      "605d0cce4d7789f52049baa27608c7fb"
+    ],
+    "metadata": {
+      "type": "auto_generated",
+      "kb_id": "b982a5acca51447aa1596f0d4832f24f"
+    }
   }
 ]

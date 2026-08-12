@@ -930,7 +930,16 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 "type": "knowledge_bases",
                 "knowledge_bases": active_kbs,
             }
-            yield f"data: {json.dumps(map_public_event("knowledge_bases", kb_event, conversation_id=conversation_id, knowledge_bases=active_kbs), ensure_ascii=False)}\n\n"
+            kb_event_data = json.dumps(
+                map_public_event(
+                    "knowledge_bases",
+                    kb_event,
+                    conversation_id=conversation_id,
+                    knowledge_bases=active_kbs,
+                ),
+                ensure_ascii=False,
+            )
+            yield f"data: {kb_event_data}\n\n"
 
             async for event in _stateful_chat_events(
                 query=request.message.strip(),

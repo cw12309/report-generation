@@ -7,7 +7,6 @@ the private Worker service.
 
 from __future__ import annotations
 
-import ipaddress
 import os
 from contextlib import asynccontextmanager
 from typing import Annotated, AsyncIterator, Optional
@@ -25,7 +24,7 @@ load_dotenv()
 
 WORKER_BASE_URL = os.getenv(
     "WORKER_BASE_URL",
-    "http://127.0.0.1:8001",
+    "http://127.0.0.1:8000",
 ).rstrip("/")
 WORKER_REQUEST_TIMEOUT = float(os.getenv("WORKER_REQUEST_TIMEOUT", "600"))
 
@@ -149,31 +148,3 @@ async def deployment_chat(
         f"/internal/deployments/{deployment_id}/chat",
         internal_headers={_DEPLOYMENT_KEY_HEADER: credentials.credentials},
     )
-
-
-def _verify_legacy_source(request: Request) -> None:
-    """Keep the existing browser UI working without making legacy APIs public.
-
-    Forwarded IP headers are intentionally ignored: trusting them without a
-    configured reverse-proxy trust boundary would allow trivial spoofing.
-    """
-    if os.getenv("ALLOW_LEGACY_PUBLIC_PROXY", "false").lower() == "true":
-        return
-    if request.client is None:
-        raise HTTPException(status_code=403, detail="无法验证旧版前端来源")
-    try:
-        address = ipaddress.ip_address(request.client.host)
-    except ValueError as exc:
-        raise HTTPException(status_code=403, detail="旧版前端来源无效") from exc
-    if not (address.is_loopback or address.is_private or address.is_link_local):
-        raise HTTPException(status_code=403, detail="旧版接口仅允许内网前端访问")
-
-
-@app.api_route(
-    "/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    include_in_schema=False,
-)
-async def legacy_frontend_proxy(path: str, request: Request):
-    _verify_legacy_source(request)
-    return await _proxy(request, f"/{path}")

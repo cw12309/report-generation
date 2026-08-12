@@ -27,9 +27,11 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "8001"
+      - "8000"
     expose:
-      - "8001"
+      - "8000"
+    ports:
+      - "7860:8000"
     volumes:
       # 向量数据库（Milvus Lite）
       - ./app/data_pipeline/milvus_lite.db:/app/app/data_pipeline/milvus_lite.db
@@ -42,7 +44,7 @@ services:
       # 长期记忆
       - ./app/memory/data:/app/app/memory/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       start_period: 60s
@@ -57,17 +59,17 @@ services:
       - --host
       - 0.0.0.0
       - --port
-      - "8000"
+      - "8001"
     ports:
-      - "7860:8000"
+      - "7861:8001"
     environment:
       PYTHONUNBUFFERED: "1"
-      WORKER_BASE_URL: http://worker:8001
+      WORKER_BASE_URL: http://worker:8000
     depends_on:
       worker:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       start_period: 10s

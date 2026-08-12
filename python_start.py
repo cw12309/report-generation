@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-WORKER_HEALTH_URL = "http://127.0.0.1:8001/health"
+WORKER_HEALTH_URL = "http://127.0.0.1:8000/health"
 
 
 def _start_worker() -> subprocess.Popen:
@@ -28,7 +28,7 @@ def _start_worker() -> subprocess.Popen:
         "--host",
         "127.0.0.1",
         "--port",
-        "8001",
+        "8000",
     ]
     return subprocess.Popen(command, cwd=str(PROJECT_ROOT), env=os.environ.copy())
 
@@ -69,7 +69,7 @@ def main() -> None:
         uvicorn.run(
             "app.gateway:app",
             host="0.0.0.0",
-            port=8000,
+            port=8001,
             log_level="info",
         )
     finally:

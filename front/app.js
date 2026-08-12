@@ -9,7 +9,13 @@ function generateSessionId() {
     return "web_" + crypto.randomUUID();
   }
   // 降级方案：使用 Math.random 生成 UUID
-  return "web_" + Date.now().toString(36) + "_" + Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9);
+  return (
+    "web_" +
+    Date.now().toString(36) +
+    "_" +
+    Math.random().toString(36).substr(2, 9) +
+    Math.random().toString(36).substr(2, 9)
+  );
 }
 
 // DOM 元素
@@ -66,12 +72,36 @@ const inputChunkSearch = document.getElementById("input-chunk-search");
 const selectedChunkIdInput = document.getElementById("selected-chunk-id");
 const chunkSearchResults = document.getElementById("chunk-search-results");
 const chunkFilterControls = [
-  { param: "kb_name", optionsKey: "kb_names", element: document.getElementById("filterKbName") },
-  { param: "exam_type", optionsKey: "exam_types", element: document.getElementById("filterExamType") },
-  { param: "level1", optionsKey: "level1", element: document.getElementById("filterLevel1") },
-  { param: "level2", optionsKey: "level2", element: document.getElementById("filterLevel2") },
-  { param: "level3", optionsKey: "level3", element: document.getElementById("filterLevel3") },
-  { param: "level4", optionsKey: "level4", element: document.getElementById("filterLevel4") },
+  {
+    param: "kb_name",
+    optionsKey: "kb_names",
+    element: document.getElementById("filterKbName"),
+  },
+  {
+    param: "exam_type",
+    optionsKey: "exam_types",
+    element: document.getElementById("filterExamType"),
+  },
+  {
+    param: "level1",
+    optionsKey: "level1",
+    element: document.getElementById("filterLevel1"),
+  },
+  {
+    param: "level2",
+    optionsKey: "level2",
+    element: document.getElementById("filterLevel2"),
+  },
+  {
+    param: "level3",
+    optionsKey: "level3",
+    element: document.getElementById("filterLevel3"),
+  },
+  {
+    param: "level4",
+    optionsKey: "level4",
+    element: document.getElementById("filterLevel4"),
+  },
 ];
 const evalCaseError = document.getElementById("evalCaseError");
 const btnCloseEvalCase = document.getElementById("btnCloseEvalCase");
@@ -81,16 +111,28 @@ const btnAutoGenerateCases = document.getElementById("btnAutoGenerateCases");
 const evalAutoGenerateModal = document.getElementById("evalAutoGenerateModal");
 const evalAutoGenerateForm = document.getElementById("evalAutoGenerateForm");
 const evalAutoGenerateCount = document.getElementById("evalAutoGenerateCount");
-const evalAutoGenerateMinLength = document.getElementById("evalAutoGenerateMinLength");
+const evalAutoGenerateMinLength = document.getElementById(
+  "evalAutoGenerateMinLength",
+);
 const evalAutoProgressText = document.getElementById("evalAutoProgressText");
-const evalAutoProgressPercent = document.getElementById("evalAutoProgressPercent");
+const evalAutoProgressPercent = document.getElementById(
+  "evalAutoProgressPercent",
+);
 const evalAutoProgressBar = document.getElementById("evalAutoProgressBar");
-const evalAutoProgressTrack = evalAutoGenerateModal?.querySelector(".eval-auto-progress-track");
+const evalAutoProgressTrack = evalAutoGenerateModal?.querySelector(
+  ".eval-auto-progress-track",
+);
 const evalAutoGenerateLog = document.getElementById("evalAutoGenerateLog");
 const evalAutoGenerateError = document.getElementById("evalAutoGenerateError");
-const btnCloseEvalAutoGenerate = document.getElementById("btnCloseEvalAutoGenerate");
-const btnCancelEvalAutoGenerate = document.getElementById("btnCancelEvalAutoGenerate");
-const btnStartEvalAutoGenerate = document.getElementById("btnStartEvalAutoGenerate");
+const btnCloseEvalAutoGenerate = document.getElementById(
+  "btnCloseEvalAutoGenerate",
+);
+const btnCancelEvalAutoGenerate = document.getElementById(
+  "btnCancelEvalAutoGenerate",
+);
+const btnStartEvalAutoGenerate = document.getElementById(
+  "btnStartEvalAutoGenerate",
+);
 const appToast = document.getElementById("appToast");
 
 // 状态
@@ -102,8 +144,14 @@ const SELECTED_KBS_STORAGE_KEY = "selectedKnowledgeBaseIds";
 
 function loadSelectedKnowledgeBaseIds() {
   try {
-    const stored = JSON.parse(localStorage.getItem(SELECTED_KBS_STORAGE_KEY) || "[]");
-    return new Set(Array.isArray(stored) ? stored.filter((id) => typeof id === "string" && id) : []);
+    const stored = JSON.parse(
+      localStorage.getItem(SELECTED_KBS_STORAGE_KEY) || "[]",
+    );
+    return new Set(
+      Array.isArray(stored)
+        ? stored.filter((id) => typeof id === "string" && id)
+        : [],
+    );
   } catch (error) {
     console.warn("[KB] 恢复知识库选择失败，将使用空选择", error);
     return new Set();
@@ -273,7 +321,8 @@ function renderMemoryPanel(data) {
   }
 
   if (Object.keys(entities).length > 0) {
-    html += '<div class="memory-section"><h4>实体追踪</h4><div class="memory-entities">';
+    html +=
+      '<div class="memory-section"><h4>实体追踪</h4><div class="memory-entities">';
     for (const [key, val] of Object.entries(entities)) {
       const displayVal = Array.isArray(val) ? val.join(", ") : val;
       html += `<div class="memory-entity"><span class="memory-entity-key">${escapeHtml(key)}:</span> ${escapeHtml(String(displayVal))}</div>`;
@@ -297,7 +346,7 @@ function renderMemoryPanel(data) {
 const sidebarBtns = document.querySelectorAll(".sidebar-btn");
 const pages = document.querySelectorAll(".page");
 
-sidebarBtns.forEach(btn => {
+sidebarBtns.forEach((btn) => {
   btn.addEventListener("click", () => {
     // 关闭弹窗
     const panel = document.getElementById("llmConfigPanel");
@@ -311,9 +360,9 @@ sidebarBtns.forEach(btn => {
       closeDeploymentSecret();
       closeApiDeploymentGuide();
     }
-    sidebarBtns.forEach(b => b.classList.remove("active"));
+    sidebarBtns.forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    pages.forEach(p => p.classList.remove("active"));
+    pages.forEach((p) => p.classList.remove("active"));
     const pageMap = {
       agent: "pageAgent",
       kb: "pageKB",
@@ -406,7 +455,10 @@ function resetChunkFilters() {
   });
 }
 
-function appendSelectedChunkFilters(params, maxIndex = chunkFilterControls.length - 1) {
+function appendSelectedChunkFilters(
+  params,
+  maxIndex = chunkFilterControls.length - 1,
+) {
   chunkFilterControls.forEach(({ param, element }, index) => {
     if (index > maxIndex) return;
     const value = element?.value.trim() || "";
@@ -423,7 +475,9 @@ function updateChunkFilterSelect(control, values) {
     : [];
   const fragment = document.createDocumentFragment();
   fragment.appendChild(new Option("全部", ""));
-  normalizedValues.forEach((value) => fragment.appendChild(new Option(value, value)));
+  normalizedValues.forEach((value) =>
+    fragment.appendChild(new Option(value, value)),
+  );
   select.replaceChildren(fragment);
   select.value = normalizedValues.includes(previousValue) ? previousValue : "";
   return Boolean(previousValue && !select.value);
@@ -443,12 +497,15 @@ async function loadChunkFilterOptions(
   document.querySelector(".kb-filters-row")?.classList.add("is-loading");
 
   try {
-    const response = await fetch(`${API_BASE}/kb/filter-options?${params.toString()}`, {
-      method: "GET",
-      headers: { "Accept": "application/json" },
-      cache: "no-store",
-      signal: controller.signal,
-    });
+    const response = await fetch(
+      `${API_BASE}/kb/filter-options?${params.toString()}`,
+      {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      },
+    );
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(payload.detail || `HTTP ${response.status}`);
@@ -456,10 +513,9 @@ async function loadChunkFilterOptions(
     if (requestId !== chunkFilterRequestId) return false;
     let selectionWasReset = false;
     chunkFilterControls.forEach((control) => {
-      selectionWasReset = updateChunkFilterSelect(
-        control,
-        payload[control.optionsKey],
-      ) || selectionWasReset;
+      selectionWasReset =
+        updateChunkFilterSelect(control, payload[control.optionsKey]) ||
+        selectionWasReset;
     });
     if (selectionWasReset && retryAfterReset) {
       // A stale child value was removed. Fetch once more with the normalized
@@ -468,7 +524,8 @@ async function loadChunkFilterOptions(
     }
     return true;
   } catch (error) {
-    if (error.name === "AbortError" || requestId !== chunkFilterRequestId) return false;
+    if (error.name === "AbortError" || requestId !== chunkFilterRequestId)
+      return false;
     console.error("[Eval] 加载切片级联筛选失败", error);
     setEvalCaseError(`筛选条件加载失败：${error.message}`);
     return false;
@@ -495,7 +552,9 @@ function scheduleChunkSearch({ openResults = false } = {}) {
 }
 
 function selectEvalChunk(chunk) {
-  const chunkId = String(chunk.chunk_id || "").trim().toLowerCase();
+  const chunkId = String(chunk.chunk_id || "")
+    .trim()
+    .toLowerCase();
   if (!chunkId || !inputChunkSearch || !selectedChunkIdInput) return;
   selectedChunkIdInput.value = chunkId;
   inputChunkSearch.value = String(chunk.content_preview || "（无内容预览）");
@@ -560,7 +619,7 @@ async function searchEvalChunks(searchTerm = "") {
   try {
     const response = await fetch(`${API_BASE}/kb/chunks?${params.toString()}`, {
       method: "GET",
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       cache: "no-store",
       signal: controller.signal,
     });
@@ -569,9 +628,12 @@ async function searchEvalChunks(searchTerm = "") {
       throw new Error(payload.detail || `HTTP ${response.status}`);
     }
     if (requestId !== chunkSearchRequestId) return;
-    renderChunkSearchResults(Array.isArray(payload) ? payload.slice(0, 20) : []);
+    renderChunkSearchResults(
+      Array.isArray(payload) ? payload.slice(0, 20) : [],
+    );
   } catch (error) {
-    if (error.name === "AbortError" || requestId !== chunkSearchRequestId) return;
+    if (error.name === "AbortError" || requestId !== chunkSearchRequestId)
+      return;
     console.error("[Eval] 搜索知识库切片失败", error);
     renderChunkSearchMessage(`搜索失败：${error.message}`, "error");
   } finally {
@@ -633,7 +695,8 @@ async function saveEvalCase(event) {
   if (isSavingEvalCase) return;
 
   const query = evalCaseQuery?.value.trim() || "";
-  const selectedChunkId = selectedChunkIdInput?.value.trim().toLowerCase() || "";
+  const selectedChunkId =
+    selectedChunkIdInput?.value.trim().toLowerCase() || "";
   if (!query) {
     setEvalCaseError("请输入测试 Query。");
     evalCaseQuery?.focus();
@@ -656,7 +719,7 @@ async function saveEvalCase(event) {
     const response = await fetch(`${API_BASE}/eval/add_case`, {
       method: "POST",
       headers: {
-        "Accept": "application/json",
+        Accept: "application/json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -689,7 +752,8 @@ async function saveEvalCase(event) {
 btnAddEvalCase?.addEventListener("click", openEvalCaseModal);
 btnCloseEvalCase?.addEventListener("click", closeEvalCaseModal);
 btnCancelEvalCase?.addEventListener("click", closeEvalCaseModal);
-evalCaseModal?.querySelector("[data-eval-modal-close]")
+evalCaseModal
+  ?.querySelector("[data-eval-modal-close]")
   ?.addEventListener("click", closeEvalCaseModal);
 evalCaseForm?.addEventListener("submit", saveEvalCase);
 inputChunkSearch?.addEventListener("input", () => {
@@ -745,7 +809,8 @@ function setEvalAutoGenerateError(message = "") {
 function setEvalAutoProgress(percent, text) {
   const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
   if (evalAutoProgressBar) evalAutoProgressBar.style.width = `${safePercent}%`;
-  if (evalAutoProgressPercent) evalAutoProgressPercent.textContent = `${safePercent}%`;
+  if (evalAutoProgressPercent)
+    evalAutoProgressPercent.textContent = `${safePercent}%`;
   if (evalAutoProgressText && text) evalAutoProgressText.textContent = text;
   evalAutoProgressTrack?.setAttribute("aria-valuenow", String(safePercent));
 }
@@ -764,7 +829,11 @@ function resetEvalAutoGenerateUI() {
   if (evalAutoGenerateLog) {
     evalAutoGenerateLog.textContent = "设置参数后点击“开始生成”。";
   }
-  evalAutoProgressTrack?.classList.remove("is-running", "is-error", "is-complete");
+  evalAutoProgressTrack?.classList.remove(
+    "is-running",
+    "is-error",
+    "is-complete",
+  );
 }
 
 function openEvalAutoGenerateModal() {
@@ -887,7 +956,7 @@ async function startEvalAutoGenerate(event) {
     const response = await fetch(`${API_BASE}/eval/auto_generate`, {
       method: "POST",
       headers: {
-        "Accept": "text/event-stream",
+        Accept: "text/event-stream",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ count, min_length: minLength }),
@@ -946,12 +1015,20 @@ function cancelOrCloseEvalAutoGenerate() {
 
 btnAutoGenerateCases?.addEventListener("click", openEvalAutoGenerateModal);
 btnCloseEvalAutoGenerate?.addEventListener("click", closeEvalAutoGenerateModal);
-btnCancelEvalAutoGenerate?.addEventListener("click", cancelOrCloseEvalAutoGenerate);
-evalAutoGenerateModal?.querySelector("[data-eval-auto-close]")
+btnCancelEvalAutoGenerate?.addEventListener(
+  "click",
+  cancelOrCloseEvalAutoGenerate,
+);
+evalAutoGenerateModal
+  ?.querySelector("[data-eval-auto-close]")
   ?.addEventListener("click", closeEvalAutoGenerateModal);
 evalAutoGenerateForm?.addEventListener("submit", startEvalAutoGenerate);
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && evalAutoGenerateModal && !evalAutoGenerateModal.hidden) {
+  if (
+    event.key === "Escape" &&
+    evalAutoGenerateModal &&
+    !evalAutoGenerateModal.hidden
+  ) {
     closeEvalAutoGenerateModal();
   }
 });
@@ -1006,7 +1083,11 @@ function hideEvalRunProgress() {
   window.clearTimeout(evalProgressHideTimer);
   if (evalProgressTrack) {
     evalProgressTrack.hidden = true;
-    evalProgressTrack.classList.remove("is-running", "is-complete", "is-cancelled");
+    evalProgressTrack.classList.remove(
+      "is-running",
+      "is-complete",
+      "is-cancelled",
+    );
   }
   if (evalProgressPercent) evalProgressPercent.hidden = true;
   if (btnCancelEval) {
@@ -1016,7 +1097,8 @@ function hideEvalRunProgress() {
 }
 
 function showEvalCancelledState() {
-  const currentPercent = Number(evalProgressTrack?.getAttribute("aria-valuenow")) || 0;
+  const currentPercent =
+    Number(evalProgressTrack?.getAttribute("aria-valuenow")) || 0;
   if (evalProgressTrack) {
     evalProgressTrack.hidden = false;
     evalProgressTrack.classList.remove("is-running", "is-complete");
@@ -1051,7 +1133,7 @@ async function cancelRetrievalEvaluation() {
   try {
     const response = await fetch(`${API_BASE}/eval/cancel`, {
       method: "POST",
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       cache: "no-store",
     });
     const payload = await response.json().catch(() => ({}));
@@ -1100,16 +1182,17 @@ function renderEvalDatasetCases(cases) {
     return;
   }
 
-  evalDetailsBody.innerHTML = items.map((item, index) => {
-    const expectedIds = Array.isArray(item.expected_chunk_ids)
-      ? item.expected_chunk_ids
-      : [];
-    const primaryChunkId = expectedIds[0] || "";
-    const expectedHtml = expectedIds
-      .map((id) => `<code>${escapeHtml(String(id))}</code>`)
-      .join("<br>");
-    const metadata = JSON.stringify(item.metadata || {});
-    return `
+  evalDetailsBody.innerHTML = items
+    .map((item, index) => {
+      const expectedIds = Array.isArray(item.expected_chunk_ids)
+        ? item.expected_chunk_ids
+        : [];
+      const primaryChunkId = expectedIds[0] || "";
+      const expectedHtml = expectedIds
+        .map((id) => `<code>${escapeHtml(String(id))}</code>`)
+        .join("<br>");
+      const metadata = JSON.stringify(item.metadata || {});
+      return `
       <tr data-eval-case-chunk="${escapeHtml(primaryChunkId)}">
         <td class="eval-index-cell">${index + 1}</td>
         <td class="eval-query-cell">${escapeHtml(String(item.query || ""))}<span class="eval-query-meta">${escapeHtml(metadata)}</span></td>
@@ -1123,7 +1206,8 @@ function renderEvalDatasetCases(cases) {
         <td class="eval-action-cell">${evalDeleteButton(primaryChunkId)}</td>
       </tr>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 async function loadEvalDataset() {
@@ -1131,7 +1215,7 @@ async function loadEvalDataset() {
   try {
     const response = await fetch(`${API_BASE}/eval/dataset?_t=${Date.now()}`, {
       method: "GET",
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       cache: "no-store",
     });
     const payload = await response.json().catch(() => ({}));
@@ -1154,7 +1238,7 @@ async function clearEvalDataset() {
   try {
     const response = await fetch(`${API_BASE}/eval/dataset`, {
       method: "DELETE",
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -1181,7 +1265,7 @@ async function deleteEvalCase(chunkId, button) {
       `${API_BASE}/eval/dataset/${encodeURIComponent(chunkId)}`,
       {
         method: "DELETE",
-        headers: { "Accept": "application/json" },
+        headers: { Accept: "application/json" },
       },
     );
     const payload = await response.json().catch(() => ({}));
@@ -1236,21 +1320,26 @@ function renderEvalResults(result) {
     return;
   }
 
-  evalDetailsBody.innerHTML = details.map((detail, index) => {
-    const expectedIds = Array.isArray(detail.expected_chunk_ids)
-      ? detail.expected_chunk_ids
-      : [];
-    const expectedHtml = expectedIds.length
-      ? expectedIds.map((id) => `<code>${escapeHtml(String(id))}</code>`).join("<br>")
-      : "-";
-    const rank = detail.hit_rank == null
-      ? '<span class="eval-rank-miss">MISS</span>'
-      : `<span class="eval-rank-hit">#${Number(detail.hit_rank)}</span>`;
-    const score = detail.rerank_score == null
-      ? "-"
-      : Number(detail.rerank_score).toFixed(6);
-    const metadata = JSON.stringify(detail.metadata || {});
-    return `
+  evalDetailsBody.innerHTML = details
+    .map((detail, index) => {
+      const expectedIds = Array.isArray(detail.expected_chunk_ids)
+        ? detail.expected_chunk_ids
+        : [];
+      const expectedHtml = expectedIds.length
+        ? expectedIds
+            .map((id) => `<code>${escapeHtml(String(id))}</code>`)
+            .join("<br>")
+        : "-";
+      const rank =
+        detail.hit_rank == null
+          ? '<span class="eval-rank-miss">MISS</span>'
+          : `<span class="eval-rank-hit">#${Number(detail.hit_rank)}</span>`;
+      const score =
+        detail.rerank_score == null
+          ? "-"
+          : Number(detail.rerank_score).toFixed(6);
+      const metadata = JSON.stringify(detail.metadata || {});
+      return `
       <tr>
         <td class="eval-index-cell">${index + 1}</td>
         <td class="eval-query-cell">${escapeHtml(String(detail.query || ""))}<span class="eval-query-meta">${escapeHtml(metadata)}</span></td>
@@ -1264,7 +1353,8 @@ function renderEvalResults(result) {
         <td class="eval-action-cell">${evalDeleteButton(expectedIds[0] || "")}</td>
       </tr>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function stopEvalStatusPolling() {
@@ -1285,7 +1375,7 @@ async function restoreEvaluationState({ polling = false } = {}) {
   try {
     const response = await fetch(`${API_BASE}/eval/status?_t=${Date.now()}`, {
       method: "GET",
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       cache: "no-store",
     });
     const payload = await response.json().catch(() => ({}));
@@ -1327,7 +1417,10 @@ async function restoreEvaluationState({ polling = false } = {}) {
       const completedAt = payload.completed_at
         ? `，保存于 ${payload.completed_at}`
         : "";
-      setEvalStatusMessage(`已恢复最后一次评测：共 ${total} 条用例${completedAt}。`, "success");
+      setEvalStatusMessage(
+        `已恢复最后一次评测：共 ${total} 条用例${completedAt}。`,
+        "success",
+      );
       return;
     }
 
@@ -1369,7 +1462,7 @@ async function runRetrievalEvaluation() {
   try {
     const response = await fetch(`${API_BASE}/eval/run`, {
       method: "POST",
-      headers: { "Accept": "text/event-stream" },
+      headers: { Accept: "text/event-stream" },
       cache: "no-store",
       signal: evalRunAbortController.signal,
     });
@@ -1391,7 +1484,10 @@ async function runRetrievalEvaluation() {
         );
       } else if (event.type === "done") {
         streamState.done = event;
-        setEvalRunProgress(100, `评测计算完成 (${event.total}/${event.total})，正在渲染结果...`);
+        setEvalRunProgress(
+          100,
+          `评测计算完成 (${event.total}/${event.total})，正在渲染结果...`,
+        );
       } else if (event.type === "cancelled") {
         streamState.cancelled = event;
         showEvalCancelledState();
@@ -1450,7 +1546,9 @@ async function refreshKBStatus() {
 
 async function refreshKnowledgeBases() {
   try {
-    const resp = await fetch(`${API_BASE}/kbs?_t=${Date.now()}`, { cache: "no-store" });
+    const resp = await fetch(`${API_BASE}/kbs?_t=${Date.now()}`, {
+      cache: "no-store",
+    });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const previousSelectedKb = knowledgeBases.find(
@@ -1463,39 +1561,51 @@ async function refreshKnowledgeBases() {
     const currentSelectedKb = knowledgeBases.find(
       (kb) => kb.kb_id === selectedManageKbId,
     );
-    const chunksBecameAvailable = currentSelectedKb
-      && currentSelectedKb.status === "processing"
-      && Number(previousSelectedKb?.progress || 0) < 15
-      && Number(currentSelectedKb.progress || 0) >= 15;
-    const buildFinished = previousSelectedKb?.status === "processing"
-      && currentSelectedKb
-      && currentSelectedKb.status !== "processing";
+    const chunksBecameAvailable =
+      currentSelectedKb &&
+      currentSelectedKb.status === "processing" &&
+      Number(previousSelectedKb?.progress || 0) < 15 &&
+      Number(currentSelectedKb.progress || 0) >= 15;
+    const buildFinished =
+      previousSelectedKb?.status === "processing" &&
+      currentSelectedKb &&
+      currentSelectedKb.status !== "processing";
     if (chunksBecameAvailable || buildFinished) {
       loadKnowledgeBaseChunks(selectedManageKbId);
     }
   } catch (error) {
     console.error("[KB] 获取知识库列表失败:", error);
     if (manageKbList) {
-      manageKbList.innerHTML = '<div class="kb-manage-empty">知识库加载失败</div>';
+      manageKbList.innerHTML =
+        '<div class="kb-manage-empty">知识库加载失败</div>';
       delete manageKbList.dataset.renderKey;
     }
-    if (agentKbSelectorList) agentKbSelectorList.innerHTML = '<span class="kb-chip-empty">知识库加载失败</span>';
+    if (agentKbSelectorList)
+      agentKbSelectorList.innerHTML =
+        '<span class="kb-chip-empty">知识库加载失败</span>';
     updateKbSelectedCount();
   }
 }
 
 function kbStatusLabel(status) {
-  return {
-    uploaded: "待构建",
-    processing: "构建中...",
-    active: "已激活",
-    failed: "构建失败",
-  }[status] || status || "未知";
+  return (
+    {
+      uploaded: "待构建",
+      processing: "构建中...",
+      active: "已激活",
+      failed: "构建失败",
+    }[status] ||
+    status ||
+    "未知"
+  );
 }
 
 function formatKbCreatedAt(value) {
   if (!value) return "—";
-  return String(value).replace("T", " ").replace(/\.\d+Z?$/, "").slice(0, 19);
+  return String(value)
+    .replace("T", " ")
+    .replace(/\.\d+Z?$/, "")
+    .slice(0, 19);
 }
 
 function renderKbDetail(kb) {
@@ -1505,7 +1615,8 @@ function renderKbDetail(kb) {
     detailKbName.textContent = "请在左侧选择知识库";
     detailKbCount.textContent = "";
     delete kbChunkList.dataset.kbId;
-    kbChunkList.innerHTML = '<div class="kb-empty-tip">点击左侧列表查看具体的切片内容...</div>';
+    kbChunkList.innerHTML =
+      '<div class="kb-empty-tip">点击左侧列表查看具体的切片内容...</div>';
     return;
   }
 
@@ -1528,11 +1639,15 @@ function renderChunkCard(item) {
   const opinion = item.imaging_opinion
     ? `<div class="chunk-field chunk-opinion"><span>影像学意见</span><p>${escapeHtml(item.imaging_opinion)}</p></div>`
     : "";
-  const fallbackText = !findings && !opinion && item.combined_text
-    ? `<div class="chunk-field"><span>切片原文</span><p>${escapeHtml(item.combined_text)}</p></div>`
-    : "";
-  const sourceParts = [item.source_file, item.sheet_name ? `Sheet: ${item.sheet_name}` : "",
-    item.source_row ? `第 ${item.source_row} 行` : ""].filter(Boolean);
+  const fallbackText =
+    !findings && !opinion && item.combined_text
+      ? `<div class="chunk-field"><span>切片原文</span><p>${escapeHtml(item.combined_text)}</p></div>`
+      : "";
+  const sourceParts = [
+    item.source_file,
+    item.sheet_name ? `Sheet: ${item.sheet_name}` : "",
+    item.source_row ? `第 ${item.source_row} 行` : "",
+  ].filter(Boolean);
 
   return `<article class="chunk-card">
     <div class="chunk-card-header">
@@ -1554,7 +1669,8 @@ async function loadKnowledgeBaseChunks(kbId, page = 1, size = 50) {
   const controller = new AbortController();
   kbChunkAbortController = controller;
   kbChunkList.dataset.kbId = kbId;
-  kbChunkList.innerHTML = '<div class="kb-empty-tip"><span class="spinner-icon"></span> 正在加载切片...</div>';
+  kbChunkList.innerHTML =
+    '<div class="kb-empty-tip"><span class="spinner-icon"></span> 正在加载切片...</div>';
   detailKbCount.textContent = "";
 
   try {
@@ -1587,14 +1703,18 @@ async function loadKnowledgeBaseChunks(kbId, page = 1, size = 50) {
 function renderManageKbList(data = knowledgeBases) {
   if (!manageKbList) return;
 
-  if (selectedManageKbId && !data.some((kb) => kb.kb_id === selectedManageKbId)) {
+  if (
+    selectedManageKbId &&
+    !data.some((kb) => kb.kb_id === selectedManageKbId)
+  ) {
     selectedManageKbId = null;
   }
 
   if (!data.length) {
     selectedManageKbId = null;
     if (manageKbList.dataset.renderKey !== "empty") {
-      manageKbList.innerHTML = '<div class="kb-manage-empty">暂无知识库，请先上传 Excel</div>';
+      manageKbList.innerHTML =
+        '<div class="kb-manage-empty">暂无知识库，请先上传 Excel</div>';
       manageKbList.dataset.renderKey = "empty";
     }
     renderKbDetail(null);
@@ -1603,36 +1723,43 @@ function renderManageKbList(data = knowledgeBases) {
 
   const renderKey = JSON.stringify({
     selectedManageKbId,
-    items: data.map((kb) => [kb.kb_id, kb.kb_name, kb.status, kb.progress, kb.created_at]),
+    items: data.map((kb) => [
+      kb.kb_id,
+      kb.kb_name,
+      kb.status,
+      kb.progress,
+      kb.created_at,
+    ]),
   });
   if (manageKbList.dataset.renderKey === renderKey) {
     renderKbDetail(data.find((kb) => kb.kb_id === selectedManageKbId));
     return;
   }
 
-  const listMarkup = data.map((kb) => {
-    const status = kb.status || "uploaded";
-    const buildLabel = status === "uploaded" ? "构建" : "重新构建";
-    const buildButton = `<button class="kb-card-btn primary kb-build-btn" data-kb-id="${escapeHtml(kb.kb_id)}">${buildLabel}</button>`;
-    const deleteButton = `<button class="kb-card-btn danger kb-delete-btn" data-kb-id="${escapeHtml(kb.kb_id)}">删除</button>`;
-    const parsedProgress = Number.parseFloat(kb.progress);
-    const progressText = Number.isFinite(parsedProgress)
-      ? `构建中... ${Math.min(100, Math.max(0, Math.round(parsedProgress)))}%`
-      : "构建中，请稍候...";
+  const listMarkup = data
+    .map((kb) => {
+      const status = kb.status || "uploaded";
+      const buildLabel = status === "uploaded" ? "构建" : "重新构建";
+      const buildButton = `<button class="kb-card-btn primary kb-build-btn" data-kb-id="${escapeHtml(kb.kb_id)}">${buildLabel}</button>`;
+      const deleteButton = `<button class="kb-card-btn danger kb-delete-btn" data-kb-id="${escapeHtml(kb.kb_id)}">删除</button>`;
+      const parsedProgress = Number.parseFloat(kb.progress);
+      const progressText = Number.isFinite(parsedProgress)
+        ? `构建中... ${Math.min(100, Math.max(0, Math.round(parsedProgress)))}%`
+        : "构建中，请稍候...";
 
-    let actionContent = deleteButton;
-    if (status === "uploaded" || status === "active") {
-      actionContent = `${buildButton}${deleteButton}`;
-    } else if (status === "failed") {
-      actionContent = `<span class="kb-action-failed">构建失败</span>${buildButton}${deleteButton}`;
-    } else if (status === "processing") {
-      actionContent = `<div class="kb-action-processing">
+      let actionContent = deleteButton;
+      if (status === "uploaded" || status === "active") {
+        actionContent = `${buildButton}${deleteButton}`;
+      } else if (status === "failed") {
+        actionContent = `<span class="kb-action-failed">构建失败</span>${buildButton}${deleteButton}`;
+      } else if (status === "processing") {
+        actionContent = `<div class="kb-action-processing">
         <span class="spinner-icon" aria-hidden="true"></span>
         <span>${progressText}</span>
       </div>`;
-    }
+      }
 
-    return `<div class="manage-kb-card ${selectedManageKbId === kb.kb_id ? "is-selected" : ""}"
+      return `<div class="manage-kb-card ${selectedManageKbId === kb.kb_id ? "is-selected" : ""}"
       data-kb-id="${escapeHtml(kb.kb_id)}" role="button" tabindex="0">
       <div class="manage-kb-main">
         <div class="manage-kb-name" title="${escapeHtml(kb.kb_name || kb.kb_id)}">${escapeHtml(kb.kb_name || kb.kb_id)}</div>
@@ -1643,7 +1770,8 @@ function renderManageKbList(data = knowledgeBases) {
       </div>
       <div class="manage-kb-actions">${actionContent}</div>
     </div>`;
-  }).join("");
+    })
+    .join("");
 
   const previousScrollTop = manageKbList.scrollTop;
   manageKbList.innerHTML = listMarkup;
@@ -1658,7 +1786,10 @@ function renderManageKbList(data = knowledgeBases) {
     };
     card.addEventListener("click", selectCard);
     card.addEventListener("keydown", (event) => {
-      if (event.target === card && (event.key === "Enter" || event.key === " ")) {
+      if (
+        event.target === card &&
+        (event.key === "Enter" || event.key === " ")
+      ) {
         event.preventDefault();
         selectCard();
       }
@@ -1688,8 +1819,8 @@ function renderAgentKbSelector(data = knowledgeBases) {
     [...selectedKnowledgeBaseIds].filter((kbId) => activeIds.has(kbId)),
   );
   if (
-    validSelectedIds.size !== selectedKnowledgeBaseIds.size
-    || [...validSelectedIds].some((kbId) => !selectedKnowledgeBaseIds.has(kbId))
+    validSelectedIds.size !== selectedKnowledgeBaseIds.size ||
+    [...validSelectedIds].some((kbId) => !selectedKnowledgeBaseIds.has(kbId))
   ) {
     selectedKnowledgeBaseIds = validSelectedIds;
     persistSelectedKnowledgeBaseIds();
@@ -1697,25 +1828,32 @@ function renderAgentKbSelector(data = knowledgeBases) {
   updateKbSelectedCount();
 
   if (!active.length) {
-    agentKbSelectorList.innerHTML = '<span class="kb-chip-empty">暂无已激活知识库，请先前往知识库页面构建</span>';
+    agentKbSelectorList.innerHTML =
+      '<span class="kb-chip-empty">暂无已激活知识库，请先前往知识库页面构建</span>';
     return;
   }
 
-  agentKbSelectorList.innerHTML = active.map((kb) => `
+  agentKbSelectorList.innerHTML = active
+    .map(
+      (kb) => `
     <label class="kb-chip-item" title="${escapeHtml(kb.kb_id)}">
       <input type="checkbox" value="${escapeHtml(kb.kb_id)}"
         ${selectedKnowledgeBaseIds.has(kb.kb_id) ? "checked" : ""}>
       <span>${escapeHtml(kb.kb_name || kb.kb_id)}</span>
-    </label>`).join("");
+    </label>`,
+    )
+    .join("");
 
-  agentKbSelectorList.querySelectorAll('input[type="checkbox"]').forEach((input) => {
-    input.addEventListener("change", () => {
-      if (input.checked) selectedKnowledgeBaseIds.add(input.value);
-      else selectedKnowledgeBaseIds.delete(input.value);
-      persistSelectedKnowledgeBaseIds();
-      updateKbSelectedCount();
+  agentKbSelectorList
+    .querySelectorAll('input[type="checkbox"]')
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        if (input.checked) selectedKnowledgeBaseIds.add(input.value);
+        else selectedKnowledgeBaseIds.delete(input.value);
+        persistSelectedKnowledgeBaseIds();
+        updateKbSelectedCount();
+      });
     });
-  });
 }
 
 function updateKbSelectedCount() {
@@ -1766,7 +1904,10 @@ function updateKBPolling() {
 
 async function startKnowledgeBaseBuild(kbId) {
   try {
-    const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}/build`, { method: "POST" });
+    const resp = await fetch(
+      `${API_BASE}/kb/${encodeURIComponent(kbId)}/build`,
+      { method: "POST" },
+    );
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
     if (!kbPollTimer) kbPollTimer = setInterval(refreshKnowledgeBases, 4000);
@@ -1780,7 +1921,9 @@ async function startKnowledgeBaseBuild(kbId) {
 async function deleteKnowledgeBase(kbId) {
   if (!confirm("确定删除该知识库及其 Milvus 数据吗？")) return;
   try {
-    const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}`, { method: "DELETE" });
+    const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}`, {
+      method: "DELETE",
+    });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
     selectedKnowledgeBaseIds.delete(kbId);
@@ -1798,10 +1941,12 @@ function setKBBtnsDisabled(disabled) {
   if (btnBuildRebuild) btnBuildRebuild.disabled = disabled;
   if (btnExtractMeta) btnExtractMeta.disabled = disabled;
   if (disabled) {
-    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta].filter(Boolean)
+    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta]
+      .filter(Boolean)
       .forEach((button) => button.classList.add("btn-disabled"));
   } else {
-    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta].filter(Boolean)
+    [btnSidebarUpload, btnBuildIncremental, btnBuildRebuild, btnExtractMeta]
+      .filter(Boolean)
       .forEach((button) => button.classList.remove("btn-disabled"));
   }
 }
@@ -1811,11 +1956,11 @@ async function runKBBuild(rebuild) {
   if (rebuild) {
     const confirmed = confirm(
       "全量重建将执行以下操作：\n\n" +
-      "1. 清空所有已生成的切片文件\n" +
-      "2. 重新对 xlsx 文件进行切片\n" +
-      "3. 删除向量数据库中的所有数据\n" +
-      "4. 重新向量化并入库\n\n" +
-      "此操作不可逆，是否继续？"
+        "1. 清空所有已生成的切片文件\n" +
+        "2. 重新对 xlsx 文件进行切片\n" +
+        "3. 删除向量数据库中的所有数据\n" +
+        "4. 重新向量化并入库\n\n" +
+        "此操作不可逆，是否继续？",
     );
     if (!confirmed) {
       return;
@@ -1950,7 +2095,7 @@ function appendKBLog(msg, level) {
       return;
     }
   }
-  
+
   const div = document.createElement("div");
   div.className = `kb-log-line kb-log-${level}`;
   if (msg.includes("向量化进度")) {
@@ -1961,9 +2106,12 @@ function appendKBLog(msg, level) {
   kbLogContent.scrollTop = kbLogContent.scrollHeight;
 }
 
-if (btnBuildIncremental) btnBuildIncremental.addEventListener("click", () => runKBBuild(false));
-if (btnBuildRebuild) btnBuildRebuild.addEventListener("click", () => runKBBuild(true));
-if (btnExtractMeta) btnExtractMeta.addEventListener("click", () => runExtractMetadata());
+if (btnBuildIncremental)
+  btnBuildIncremental.addEventListener("click", () => runKBBuild(false));
+if (btnBuildRebuild)
+  btnBuildRebuild.addEventListener("click", () => runKBBuild(true));
+if (btnExtractMeta)
+  btnExtractMeta.addEventListener("click", () => runExtractMetadata());
 
 // 上传 xlsx，上传完成后保持待构建状态
 btnSidebarUpload.addEventListener("click", () => xlsxInput.click());
@@ -1978,15 +2126,24 @@ async function runUploadXlsx(files) {
   setKBBtnsDisabled(true);
   kbLog.style.display = "block";
   kbLogContent.innerHTML = "";
-  appendKBLog(`[上传] 已选择 ${files.length} 个 Excel 文件，正在保存...`, "info");
+  appendKBLog(
+    `[上传] 已选择 ${files.length} 个 Excel 文件，正在保存...`,
+    "info",
+  );
   try {
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
-    const resp = await fetch(`${API_BASE}/kb/upload`, { method: "POST", body: formData });
+    const resp = await fetch(`${API_BASE}/kb/upload`, {
+      method: "POST",
+      body: formData,
+    });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
     (data.knowledge_bases || []).forEach((kb) => {
-      appendKBLog(`✅ ${kb.kb_name} 已上传，状态：待构建，kb_id=${kb.kb_id}`, "done");
+      appendKBLog(
+        `✅ ${kb.kb_name} 已上传，状态：待构建，kb_id=${kb.kb_id}`,
+        "done",
+      );
     });
     await refreshKnowledgeBases();
   } catch (error) {
@@ -2118,7 +2275,10 @@ async function sendMessage(selectedDiagnosis) {
           try {
             const event = JSON.parse(data);
             eventCount++;
-            console.log("[DEBUG] 事件 #" + eventCount + " type=" + event.type, event);
+            console.log(
+              "[DEBUG] 事件 #" + eventCount + " type=" + event.type,
+              event,
+            );
             handleStreamEvent(event, thinking, assistantStream);
           } catch (e) {
             console.warn("[DEBUG] JSON 解析失败:", data.substring(0, 100), e);
@@ -2145,7 +2305,9 @@ async function sendMessage(selectedDiagnosis) {
     // 关键修复：仅在流未自然完成时 cancel。
     // 对已 done 的流调用 cancel 会破坏浏览器连接池回收。
     if (currentReader && !streamDone) {
-      console.log("[DEBUG] finally: 取消 reader (streamDone=" + streamDone + ")");
+      console.log(
+        "[DEBUG] finally: 取消 reader (streamDone=" + streamDone + ")",
+      );
       try {
         await currentReader.cancel();
       } catch (e) {
@@ -2267,7 +2429,10 @@ function handleStreamEvent(event, thinking, assistantStream) {
       break;
 
     case "ambiguous":
-      console.log("[DEBUG] ambiguous 事件触发, options数量=", (event.options || []).length);
+      console.log(
+        "[DEBUG] ambiguous 事件触发, options数量=",
+        (event.options || []).length,
+      );
       finishThinking(thinking);
       addAmbiguousOptions(event);
       break;
@@ -2283,7 +2448,8 @@ function handleStreamEvent(event, thinking, assistantStream) {
       if (thinking) {
         const timeInfo = document.createElement("div");
         timeInfo.className = "thinking-time-info";
-        timeInfo.style.cssText = "padding:4px 12px;font-size:12px;color:#666;border-top:1px solid #e8e8e8;text-align:right;";
+        timeInfo.style.cssText =
+          "padding:4px 12px;font-size:12px;color:#666;border-top:1px solid #e8e8e8;text-align:right;";
         timeInfo.textContent = `⏱️ 总耗时：${event.total_time}秒`;
         thinking.appendChild(timeInfo);
       }
@@ -2480,7 +2646,7 @@ function addMemoryRetrievalDetail(container, data) {
   step.className = "thinking-step thinking-memory";
 
   let html = `<span class="thinking-step-icon">🧠</span>
-    <span class="thinking-step-label">记忆检索 <span style="color:#888;font-size:11px">(基于 "${escapeHtml(data.query || '')}")</span></span>
+    <span class="thinking-step-label">记忆检索 <span style="color:#888;font-size:11px">(基于 "${escapeHtml(data.query || "")}")</span></span>
     <div class="thinking-detail-block">`;
 
   if (data.stm && data.stm.length > 0) {
@@ -2548,12 +2714,12 @@ function addToolExecutedDetail(container, data) {
 function updateContextUsage(percent) {
   const usageEl = document.getElementById("contextUsage");
   const percentEl = document.getElementById("contextPercent");
-  
+
   if (!usageEl || !percentEl) return;
-  
+
   usageEl.style.display = "inline-block";
   percentEl.textContent = Math.round(percent);
-  
+
   // 根据使用率切换样式
   usageEl.classList.remove("warning", "danger");
   if (percent >= 80) {
@@ -2574,10 +2740,25 @@ function addAmbiguousOptions(data) {
   var bubble = document.createElement("div");
   bubble.className = "message assistant";
 
-  var optionsHtml = (options || []).map(function (opt, i) {
-    var scoreText = scores[i] ? ' <span style="color:#999;font-size:0.8em;">(' + (scores[i] * 100).toFixed(1) + '%)</span>' : '';
-    return '<button class="ambiguity-option" onclick="selectAmbiguityOption(\'' + escapeHtml(opt) + '\')">' + (i + 1) + '. ' + escapeHtml(opt) + scoreText + '</button>';
-  }).join("");
+  var optionsHtml = (options || [])
+    .map(function (opt, i) {
+      var scoreText = scores[i]
+        ? ' <span style="color:#999;font-size:0.8em;">(' +
+          (scores[i] * 100).toFixed(1) +
+          "%)</span>"
+        : "";
+      return (
+        '<button class="ambiguity-option" onclick="selectAmbiguityOption(\'' +
+        escapeHtml(opt) +
+        "')\">" +
+        (i + 1) +
+        ". " +
+        escapeHtml(opt) +
+        scoreText +
+        "</button>"
+      );
+    })
+    .join("");
 
   bubble.innerHTML = `
     <div class="bubble">
@@ -2753,7 +2934,9 @@ function renderAssistantReferences(state) {
     diagnosis.textContent = reference.diagnosis || `参考切片 ${index + 1}`;
     const source = document.createElement("span");
     source.className = "reference-source";
-    source.textContent = reference.source ? `来源 ${reference.source}` : "来源未标注";
+    source.textContent = reference.source
+      ? `来源 ${reference.source}`
+      : "来源未标注";
     itemSummary.append(number, diagnosis, source);
 
     const text = document.createElement("div");
@@ -2816,7 +2999,9 @@ function saveChatHistory(list) {
 
 function getChatMessages(convId) {
   try {
-    return JSON.parse(localStorage.getItem(CHAT_MESSAGES_PREFIX + convId) || "[]");
+    return JSON.parse(
+      localStorage.getItem(CHAT_MESSAGES_PREFIX + convId) || "[]",
+    );
   } catch (e) {
     return [];
   }
@@ -2835,13 +3020,22 @@ function generateConvId() {
   if (crypto && crypto.randomUUID) {
     return "conv_" + crypto.randomUUID();
   }
-  return "conv_" + Date.now().toString(36) + "_" + Math.random().toString(36).substr(2, 9) + Math.random().toString(36).substr(2, 9);
+  return (
+    "conv_" +
+    Date.now().toString(36) +
+    "_" +
+    Math.random().toString(36).substr(2, 9) +
+    Math.random().toString(36).substr(2, 9)
+  );
 }
 
 function saveCurrentConversation() {
-  console.log("[DEBUG] saveCurrentConversation 被调用, currentConversationId=", currentConversationId);
+  console.log(
+    "[DEBUG] saveCurrentConversation 被调用, currentConversationId=",
+    currentConversationId,
+  );
   const messages = [];
-  chatContainer.querySelectorAll(".message").forEach(msg => {
+  chatContainer.querySelectorAll(".message").forEach((msg) => {
     const isUser = msg.classList.contains("user");
     const isAssistant = msg.classList.contains("assistant");
     const isSystem = msg.classList.contains("system");
@@ -2854,10 +3048,17 @@ function saveCurrentConversation() {
       if (isAssistant) {
         // 思考过程是 assistant 消息的前一个兄弟节点
         const prev = msg.previousElementSibling;
-        console.log("[DEBUG] assistant msg, prev=", prev ? prev.className : "null");
+        console.log(
+          "[DEBUG] assistant msg, prev=",
+          prev ? prev.className : "null",
+        );
         if (prev && prev.classList.contains("thinking-container")) {
           entry.thinking = prev.outerHTML;
-          console.log("[DEBUG] ✅ 保存思考过程:", prev.outerHTML.length, "字符");
+          console.log(
+            "[DEBUG] ✅ 保存思考过程:",
+            prev.outerHTML.length,
+            "字符",
+          );
         } else {
           console.log("[DEBUG] ❌ 未找到思考过程");
         }
@@ -2868,7 +3069,14 @@ function saveCurrentConversation() {
 
   console.log("[DEBUG] 共保存", messages.length, "条消息");
   for (let i = 0; i < messages.length; i++) {
-    console.log("[DEBUG] 消息[" + i + "] role=" + messages[i].role + " thinking=" + (messages[i].thinking ? messages[i].thinking.length + "字符" : "无"));
+    console.log(
+      "[DEBUG] 消息[" +
+        i +
+        "] role=" +
+        messages[i].role +
+        " thinking=" +
+        (messages[i].thinking ? messages[i].thinking.length + "字符" : "无"),
+    );
   }
 
   if (messages.length === 0) return;
@@ -2877,7 +3085,7 @@ function saveCurrentConversation() {
 
   if (currentConversationId) {
     const history = getChatHistory();
-    const idx = history.findIndex(h => h.id === currentConversationId);
+    const idx = history.findIndex((h) => h.id === currentConversationId);
     if (idx !== -1) {
       history[idx].title = title;
       history[idx].updatedAt = new Date().toISOString();
@@ -2888,7 +3096,7 @@ function saveCurrentConversation() {
 }
 
 function getConversationTitle(messages) {
-  const firstUserMsg = messages.find(m => m.role === "user");
+  const firstUserMsg = messages.find((m) => m.role === "user");
   if (firstUserMsg) {
     const text = firstUserMsg.content.replace(/<[^>]*>/g, "").trim();
     return text.length > 30 ? text.slice(0, 30) + "..." : text;
@@ -2927,14 +3135,19 @@ function startNewConversation() {
 }
 
 function loadConversation(convId) {
-  console.log("[DEBUG] loadConversation: convId=", convId, "currentConversationId=", currentConversationId);
+  console.log(
+    "[DEBUG] loadConversation: convId=",
+    convId,
+    "currentConversationId=",
+    currentConversationId,
+  );
   if (convId === currentConversationId) return;
 
   saveCurrentConversation();
 
   currentConversationId = convId;
   const history = getChatHistory();
-  const entry = history.find(h => h.id === convId);
+  const entry = history.find((h) => h.id === convId);
   if (entry && entry.session_id) {
     SESSION_ID = entry.session_id;
   }
@@ -2948,7 +3161,14 @@ function loadConversation(convId) {
     chatContainer.appendChild(createEmptyState());
   } else {
     messages.forEach((msg, idx) => {
-      console.log("[DEBUG] 渲染消息[" + idx + "] role=" + msg.role + " thinking=" + (msg.thinking ? msg.thinking.length + "字符" : "无"));
+      console.log(
+        "[DEBUG] 渲染消息[" +
+          idx +
+          "] role=" +
+          msg.role +
+          " thinking=" +
+          (msg.thinking ? msg.thinking.length + "字符" : "无"),
+      );
       if (msg.role === "assistant" && msg.thinking) {
         // 思考过程作为独立节点插入在 assistant 消息之前
         const thinkingContainer = document.createElement("div");
@@ -2978,7 +3198,7 @@ function deleteConversation(convId, e) {
   e.stopPropagation();
 
   const history = getChatHistory();
-  const filtered = history.filter(h => h.id !== convId);
+  const filtered = history.filter((h) => h.id !== convId);
   saveChatHistory(filtered);
   deleteChatMessages(convId);
 
@@ -3003,11 +3223,12 @@ function renderChatHistoryList() {
     return;
   }
 
-  list.innerHTML = history.map(h => {
-    const isActive = h.id === currentConversationId;
-    const date = new Date(h.updatedAt || h.createdAt);
-    const dateStr = formatDate(date);
-    return `
+  list.innerHTML = history
+    .map((h) => {
+      const isActive = h.id === currentConversationId;
+      const date = new Date(h.updatedAt || h.createdAt);
+      const dateStr = formatDate(date);
+      return `
       <div class="chat-history-item ${isActive ? "active" : ""}"
            onclick="loadConversation('${h.id}')">
         <div class="chat-history-item-title" title="${escapeHtml(h.title)}">${escapeHtml(h.title)}</div>
@@ -3015,7 +3236,8 @@ function renderChatHistoryList() {
         <div class="chat-history-item-delete" onclick="deleteConversation('${h.id}', event)">🗑</div>
       </div>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function formatDate(date) {
@@ -3027,6 +3249,13 @@ function formatDate(date) {
   const month = date.getMonth() + 1;
   const day = date.getDate();
   return month + "/" + day;
+}
+
+function formatSessionTime(value) {
+  if (!value) return "-";
+  const d = new Date(value.replace(" ", "T") + "Z");
+  if (isNaN(d.getTime())) return String(value).slice(0, 19);
+  return d.toLocaleString("zh-CN");
 }
 
 // 初始化：加载历史列表
@@ -3055,7 +3284,9 @@ btnClear.addEventListener("click", () => {
 });
 
 // 新对话按钮
-document.getElementById("btnNewChat").addEventListener("click", startNewConversation);
+document
+  .getElementById("btnNewChat")
+  .addEventListener("click", startNewConversation);
 
 // 页面加载时初始化
 initChatHistory();
@@ -3073,22 +3304,76 @@ const MODEL_DEFS = {
     listId: "modelListLlms",
     btnAddId: "btnAddLlm",
     fields: [
-      { key: "name", label: "名称", type: "text", placeholder: "标识名称", sm: false },
-      { key: "base_url", label: "API 地址", type: "text", placeholder: "http://...", sm: false },
-      { key: "model", label: "模型名", type: "text", placeholder: "qwen36_27b", sm: false },
-      { key: "api_key", label: "API Key", type: "password", placeholder: "可选", sm: false },
+      {
+        key: "name",
+        label: "名称",
+        type: "text",
+        placeholder: "标识名称",
+        sm: false,
+      },
+      {
+        key: "base_url",
+        label: "API 地址",
+        type: "text",
+        placeholder: "http://...",
+        sm: false,
+      },
+      {
+        key: "model",
+        label: "模型名",
+        type: "text",
+        placeholder: "qwen36_27b",
+        sm: false,
+      },
+      {
+        key: "api_key",
+        label: "API Key",
+        type: "password",
+        placeholder: "可选",
+        sm: false,
+      },
       { key: "max_tokens", label: "最大 Token", type: "number", sm: true },
-      { key: "temperature", label: "温度", type: "number", step: "0.1", sm: true },
+      {
+        key: "temperature",
+        label: "温度",
+        type: "number",
+        step: "0.1",
+        sm: true,
+      },
     ],
   },
   embeddings: {
     listId: "modelListEmbeddings",
     btnAddId: "btnAddEmbedding",
     fields: [
-      { key: "name", label: "名称", type: "text", placeholder: "标识名称", sm: false },
-      { key: "base_url", label: "API 地址", type: "text", placeholder: "http://...", sm: false },
-      { key: "model", label: "模型名", type: "text", placeholder: "bge-m3", sm: false },
-      { key: "api_key", label: "API Key", type: "password", placeholder: "可选", sm: false },
+      {
+        key: "name",
+        label: "名称",
+        type: "text",
+        placeholder: "标识名称",
+        sm: false,
+      },
+      {
+        key: "base_url",
+        label: "API 地址",
+        type: "text",
+        placeholder: "http://...",
+        sm: false,
+      },
+      {
+        key: "model",
+        label: "模型名",
+        type: "text",
+        placeholder: "bge-m3",
+        sm: false,
+      },
+      {
+        key: "api_key",
+        label: "API Key",
+        type: "password",
+        placeholder: "可选",
+        sm: false,
+      },
       { key: "dimension", label: "维度", type: "number", sm: true },
     ],
   },
@@ -3096,10 +3381,34 @@ const MODEL_DEFS = {
     listId: "modelListReranks",
     btnAddId: "btnAddRerank",
     fields: [
-      { key: "name", label: "名称", type: "text", placeholder: "标识名称", sm: false },
-      { key: "base_url", label: "API 地址", type: "text", placeholder: "https://...", sm: false },
-      { key: "model", label: "模型名", type: "text", placeholder: "Qwen/Qwen3-VL-Reranker-8B", sm: false },
-      { key: "api_key", label: "API Key", type: "password", placeholder: "可选", sm: false },
+      {
+        key: "name",
+        label: "名称",
+        type: "text",
+        placeholder: "标识名称",
+        sm: false,
+      },
+      {
+        key: "base_url",
+        label: "API 地址",
+        type: "text",
+        placeholder: "https://...",
+        sm: false,
+      },
+      {
+        key: "model",
+        label: "模型名",
+        type: "text",
+        placeholder: "Qwen/Qwen3-VL-Reranker-8B",
+        sm: false,
+      },
+      {
+        key: "api_key",
+        label: "API Key",
+        type: "password",
+        placeholder: "可选",
+        sm: false,
+      },
     ],
   },
 };
@@ -3136,9 +3445,10 @@ function renderModelList(sectionKey) {
         </div>
       </div>
       <div class="model-card-body">
-        ${def.fields.map(f => {
-          const val = item[f.key] !== undefined ? item[f.key] : "";
-          return `
+        ${def.fields
+          .map((f) => {
+            const val = item[f.key] !== undefined ? item[f.key] : "";
+            return `
             <div class="model-field">
               <label class="model-field-label">${f.label}</label>
               <input type="${f.type}" ${f.step ? `step="${f.step}"` : ""}
@@ -3146,7 +3456,8 @@ function renderModelList(sectionKey) {
                 data-field="${f.key}" value="${escapeHtml(String(val))}"
                 placeholder="${f.placeholder || ""}">
             </div>`;
-        }).join("")}
+          })
+          .join("")}
       </div>
       <div class="model-card-error" style="display: none"></div>
     `;
@@ -3154,7 +3465,7 @@ function renderModelList(sectionKey) {
   });
 
   // 绑定状态点击（点击重新测试）
-  container.querySelectorAll(".model-status").forEach(statusEl => {
+  container.querySelectorAll(".model-status").forEach((statusEl) => {
     statusEl.addEventListener("click", async (e) => {
       const card = e.target.closest(".model-card");
       if (!card) return;
@@ -3163,7 +3474,7 @@ function renderModelList(sectionKey) {
   });
 
   // 绑定删除按钮
-  container.querySelectorAll(".model-remove-btn").forEach(btn => {
+  container.querySelectorAll(".model-remove-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       const card = e.target.closest(".model-card");
       if (!card) return;
@@ -3186,7 +3497,9 @@ function reindexModelCards(sectionKey) {
 function addModelItem(sectionKey) {
   const def = MODEL_DEFS[sectionKey];
   const newItem = {};
-  def.fields.forEach(f => { newItem[f.key] = ""; });
+  def.fields.forEach((f) => {
+    newItem[f.key] = "";
+  });
   newItem.name = "new";
   if (!_configData[sectionKey]) _configData[sectionKey] = [];
   _configData[sectionKey].push(newItem);
@@ -3202,7 +3515,7 @@ function collectModelData(sectionKey) {
   const items = [];
   cards.forEach((card, idx) => {
     const item = {};
-    def.fields.forEach(f => {
+    def.fields.forEach((f) => {
       const input = card.querySelector(`[data-field="${f.key}"]`);
       if (!input) return;
       let val = input.value.trim();
@@ -3223,7 +3536,7 @@ function collectModelData(sectionKey) {
 async function testModelConnection(sectionKey, card) {
   const def = MODEL_DEFS[sectionKey];
   const model = {};
-  def.fields.forEach(f => {
+  def.fields.forEach((f) => {
     const input = card.querySelector(`[data-field="${f.key}"]`);
     if (!input) return;
     let val = input.value.trim();
@@ -3253,7 +3566,8 @@ async function testModelConnection(sectionKey, card) {
 
   const statusEl = card.querySelector(".model-status");
   statusEl.textContent = "验证中";
-  statusEl.className = "model-status model-status-clickable model-status-verifying";
+  statusEl.className =
+    "model-status model-status-clickable model-status-verifying";
 
   try {
     const resp = await fetch(`${API_BASE}/test-model`, {
@@ -3264,22 +3578,28 @@ async function testModelConnection(sectionKey, card) {
     const data = await resp.json();
     if (data.success) {
       statusEl.textContent = "✅可用";
-      statusEl.className = "model-status model-status-clickable model-status-ok";
+      statusEl.className =
+        "model-status model-status-clickable model-status-ok";
       errorEl.style.display = "none";
       errorEl.textContent = "";
     } else {
       statusEl.textContent = "❌不可用";
-      statusEl.className = "model-status model-status-clickable model-status-fail";
-      const modelName = model.name || '未命名';
-      const errorMsg = data.error || data.message || '未知错误';
-      console.error(`[模型验证] ${sectionKey} - ${modelName} 验证失败:`, errorMsg);
+      statusEl.className =
+        "model-status model-status-clickable model-status-fail";
+      const modelName = model.name || "未命名";
+      const errorMsg = data.error || data.message || "未知错误";
+      console.error(
+        `[模型验证] ${sectionKey} - ${modelName} 验证失败:`,
+        errorMsg,
+      );
       errorEl.textContent = `❌ 验证失败: ${errorMsg}`;
       errorEl.style.display = "block";
     }
   } catch (e) {
     statusEl.textContent = "❌不可用";
-    statusEl.className = "model-status model-status-clickable model-status-fail";
-    const modelName = model.name || '未命名';
+    statusEl.className =
+      "model-status model-status-clickable model-status-fail";
+    const modelName = model.name || "未命名";
     console.error(`[模型验证] ${sectionKey} - ${modelName} 验证失败:`, e);
     errorEl.textContent = `❌ 验证失败: ${e.message}`;
     errorEl.style.display = "block";
@@ -3313,7 +3633,7 @@ async function loadConfig() {
     _configData = data.config || {};
 
     // 渲染模型列表
-    Object.keys(MODEL_DEFS).forEach(sectionKey => {
+    Object.keys(MODEL_DEFS).forEach((sectionKey) => {
       renderModelList(sectionKey);
     });
 
@@ -3325,7 +3645,10 @@ async function loadConfig() {
       let val = _configData;
       for (const k of keys) {
         if (val && typeof val === "object") val = val[k];
-        else { val = undefined; break; }
+        else {
+          val = undefined;
+          break;
+        }
       }
       if (val !== undefined && val !== null) {
         el.value = val;
@@ -3356,7 +3679,7 @@ async function saveConfig() {
     const cfg = {};
 
     // 收集模型列表
-    Object.keys(MODEL_DEFS).forEach(sectionKey => {
+    Object.keys(MODEL_DEFS).forEach((sectionKey) => {
       cfg[sectionKey] = collectModelData(sectionKey);
     });
 
@@ -3414,7 +3737,7 @@ function refreshModelSelect() {
   const llms = _configData.llms || [];
   const activeModels = _configData.active_models || {};
   const savedName = activeModels.chat_llm || "";
-  if (savedName && llms.some(m => m.name === savedName)) {
+  if (savedName && llms.some((m) => m.name === savedName)) {
     _currentLlmName = savedName;
   } else if (llms.length > 0) {
     _currentLlmName = llms[0].name || "";
@@ -3431,23 +3754,32 @@ function openLlmConfigPanel() {
   // 填充 LLM 下拉框
   const llmSelect = document.getElementById("activeChatLlm");
   const llms = _configData.llms || [];
-  llmSelect.innerHTML = llms.map((m, i) =>
-    `<option value="${i}" ${m.name === activeModels.chat_llm ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`
-  ).join("");
+  llmSelect.innerHTML = llms
+    .map(
+      (m, i) =>
+        `<option value="${i}" ${m.name === activeModels.chat_llm ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`,
+    )
+    .join("");
 
   // 填充 Embedding 下拉框
   const embSelect = document.getElementById("activeEmbedding");
   const embeddings = _configData.embeddings || [];
-  embSelect.innerHTML = embeddings.map((m, i) =>
-    `<option value="${i}" ${m.name === activeModels.embedding ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`
-  ).join("");
+  embSelect.innerHTML = embeddings
+    .map(
+      (m, i) =>
+        `<option value="${i}" ${m.name === activeModels.embedding ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`,
+    )
+    .join("");
 
   // 填充 Rerank 下拉框
   const rerankSelect = document.getElementById("activeRerank");
   const reranks = _configData.reranks || [];
-  rerankSelect.innerHTML = reranks.map((m, i) =>
-    `<option value="${i}" ${m.name === activeModels.rerank ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`
-  ).join("");
+  rerankSelect.innerHTML = reranks
+    .map(
+      (m, i) =>
+        `<option value="${i}" ${m.name === activeModels.rerank ? "selected" : ""}>${escapeHtml(m.name || `模型 ${i + 1}`)}</option>`,
+    )
+    .join("");
 
   document.getElementById("llmConfigHint").textContent = "";
 }
@@ -3467,9 +3799,18 @@ async function saveLlmConfigFromPanel() {
   const embedding = embeddings[embIdx];
   const rerank = reranks[rerankIdx];
 
-  if (!chatLlm || !chatLlm.name) { hint.textContent = "❌ 请选择对话大语言模型"; return; }
-  if (!embedding || !embedding.name) { hint.textContent = "❌ 请选择向量化模型"; return; }
-  if (!rerank || !rerank.name) { hint.textContent = "❌ 请选择重排模型"; return; }
+  if (!chatLlm || !chatLlm.name) {
+    hint.textContent = "❌ 请选择对话大语言模型";
+    return;
+  }
+  if (!embedding || !embedding.name) {
+    hint.textContent = "❌ 请选择向量化模型";
+    return;
+  }
+  if (!rerank || !rerank.name) {
+    hint.textContent = "❌ 请选择重排模型";
+    return;
+  }
 
   if (!_configData.active_models) _configData.active_models = {};
   _configData.active_models.chat_llm = chatLlm.name;
@@ -3521,9 +3862,10 @@ let _apiGuideLoaded = false;
 const API_DEPLOYMENT_GUIDE_URL = "/static/docs/api-deployment-guide.md";
 
 function getDefaultApiBaseUrl() {
-  const currentOrigin = window.location.origin && window.location.origin !== "null"
-    ? window.location.origin
-    : "http://localhost:8000";
+  const currentOrigin =
+    window.location.origin && window.location.origin !== "null"
+      ? window.location.origin
+      : "http://localhost:8000";
   return `${currentOrigin.replace(/\/$/, "")}/api/v1`;
 }
 
@@ -3536,9 +3878,10 @@ async function apiManagementRequest(path, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = payload.detail;
-    const message = typeof detail === "string"
-      ? detail
-      : detail?.message || payload.message || `HTTP ${response.status}`;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail?.message || payload.message || `HTTP ${response.status}`;
     const code = typeof detail === "object" ? detail?.code : payload.code;
     throw new Error(code ? `${message}（${code}）` : message);
   }
@@ -3546,21 +3889,29 @@ async function apiManagementRequest(path, options = {}) {
 }
 
 function getDeploymentEndpoint(deployment) {
-  const relative = deployment?.endpoint
-    || `/api/v1/deployments/${deployment?.deployment_id || "DEPLOYMENT_ID"}/chat`;
+  const relative =
+    deployment?.endpoint ||
+    `/api/v1/deployments/${deployment?.deployment_id || "DEPLOYMENT_ID"}/chat`;
   const origin = getDefaultApiBaseUrl().replace(/\/api\/v1$/, "");
   return `${origin}${relative}`;
 }
 
 function getSelectedApiDeployment() {
-  return _apiDeployments.find((item) => item.deployment_id === _selectedApiDeploymentId)
-    || _apiDeployments[0]
-    || null;
+  return (
+    _apiDeployments.find(
+      (item) => item.deployment_id === _selectedApiDeploymentId,
+    ) ||
+    _apiDeployments[0] ||
+    null
+  );
 }
 
 function formatApiDate(value) {
   if (!value) return "—";
-  return String(value).replace("T", " ").replace(/\.\d+Z?$/, "").slice(0, 19);
+  return String(value)
+    .replace("T", " ")
+    .replace(/\.\d+Z?$/, "")
+    .slice(0, 19);
 }
 
 function renderApiServiceStatus() {
@@ -3568,17 +3919,21 @@ function renderApiServiceStatus() {
   const baseUrlInput = document.getElementById("apiBaseUrl");
   const summaryEl = document.getElementById("apiDeploymentSummary");
   if (!statusEl || !baseUrlInput) return;
-  const activeCount = _apiDeployments.filter((item) => item.status === "active").length;
+  const activeCount = _apiDeployments.filter(
+    (item) => item.status === "active",
+  ).length;
   const readyCount = _apiDeployments.filter(
     (item) => item.status === "active" && item.health === "healthy",
   ).length;
-  const degradedCount = _apiDeployments.filter((item) => item.health === "degraded").length;
+  const degradedCount = _apiDeployments.filter(
+    (item) => item.health === "degraded",
+  ).length;
   baseUrlInput.value = getDefaultApiBaseUrl();
   statusEl.textContent = readyCount
     ? `${readyCount} 个 Deployment 正在接受请求`
     : activeCount
       ? "Active Deployment 的知识库当前不可用"
-    : "尚无 Active Deployment";
+      : "尚无 Active Deployment";
   statusEl.classList.toggle("is-enabled", readyCount > 0);
   if (summaryEl) {
     summaryEl.textContent = degradedCount
@@ -3591,16 +3946,20 @@ function renderApiKnowledgeBaseChoices(containerId, selectedIds = []) {
   const listEl = document.getElementById(containerId);
   if (!listEl) return;
   const selected = new Set(selectedIds);
-  const items = _apiDeploymentKnowledgeBases.filter((kb) => kb.status === "active");
+  const items = _apiDeploymentKnowledgeBases.filter(
+    (kb) => kb.status === "active",
+  );
 
   if (!items.length) {
-    listEl.innerHTML = '<div class="api-key-empty">暂无 Active 知识库，请先完成知识库构建。</div>';
+    listEl.innerHTML =
+      '<div class="api-key-empty">暂无 Active 知识库，请先完成知识库构建。</div>';
     return;
   }
 
-  listEl.innerHTML = items.map((kb) => {
-    const checked = selected.has(kb.kb_id);
-    return `
+  listEl.innerHTML = items
+    .map((kb) => {
+      const checked = selected.has(kb.kb_id);
+      return `
       <label class="api-kb-checkbox-item ${checked ? "is-selected" : ""}">
         <input
           type="checkbox"
@@ -3613,7 +3972,8 @@ function renderApiKnowledgeBaseChoices(containerId, selectedIds = []) {
         </span>
       </label>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function renderApiKnowledgeBases() {
@@ -3623,9 +3983,12 @@ function renderApiKnowledgeBases() {
 function renderApiDeploymentList() {
   const listEl = document.getElementById("apiDeploymentList");
   if (!listEl) return;
-  if (_selectedApiDeploymentId && !_apiDeployments.some(
-    (item) => item.deployment_id === _selectedApiDeploymentId,
-  )) {
+  if (
+    _selectedApiDeploymentId &&
+    !_apiDeployments.some(
+      (item) => item.deployment_id === _selectedApiDeploymentId,
+    )
+  ) {
     _selectedApiDeploymentId = _apiDeployments[0]?.deployment_id || null;
   }
   if (!_apiDeployments.length) {
@@ -3639,18 +4002,25 @@ function renderApiDeploymentList() {
     `;
     return;
   }
-  listEl.innerHTML = _apiDeployments.map((item) => {
-    const selected = item.deployment_id === _selectedApiDeploymentId;
-    const kbNames = (item.knowledge_bases || []).map((kb) => kb.kb_name || kb.kb_id);
-    const visibleKbNames = kbNames.slice(0, 2);
-    const remainingKbCount = Math.max(0, kbNames.length - visibleKbNames.length);
-    const kbSummary = [
-      ...visibleKbNames,
-      ...(remainingKbCount ? [`+${remainingKbCount}`] : []),
-    ].join("、") || "无";
-    const isActive = item.status === "active";
-    const isHealthy = item.health === "healthy";
-    return `
+  listEl.innerHTML = _apiDeployments
+    .map((item) => {
+      const selected = item.deployment_id === _selectedApiDeploymentId;
+      const kbNames = (item.knowledge_bases || []).map(
+        (kb) => kb.kb_name || kb.kb_id,
+      );
+      const visibleKbNames = kbNames.slice(0, 2);
+      const remainingKbCount = Math.max(
+        0,
+        kbNames.length - visibleKbNames.length,
+      );
+      const kbSummary =
+        [
+          ...visibleKbNames,
+          ...(remainingKbCount ? [`+${remainingKbCount}`] : []),
+        ].join("、") || "无";
+      const isActive = item.status === "active";
+      const isHealthy = item.health === "healthy";
+      return `
       <article class="api-deployment-card ${selected ? "is-selected" : ""}" data-api-select="${escapeHtml(item.deployment_id)}">
         <div class="api-deployment-card-main">
           <div class="api-deployment-title-row">
@@ -3677,7 +4047,8 @@ function renderApiDeploymentList() {
         </div>
       </article>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function buildApiDemoCode(language = _apiDemoLanguage) {
@@ -3746,11 +4117,15 @@ function renderApiDemoCode() {
 function showDeploymentSecret(deployment) {
   const modal = document.getElementById("apiSecretModal");
   if (!modal || !deployment?.api_key) return;
-  document.getElementById("apiSecretDeploymentName").textContent = deployment.name || deployment.deployment_id;
-  document.getElementById("apiRevealedEndpoint").value = getDeploymentEndpoint(deployment);
+  document.getElementById("apiSecretDeploymentName").textContent =
+    deployment.name || deployment.deployment_id;
+  document.getElementById("apiRevealedEndpoint").value =
+    getDeploymentEndpoint(deployment);
   document.getElementById("apiRevealedKey").value = deployment.api_key;
   modal.hidden = false;
-  requestAnimationFrame(() => document.getElementById("btnCopyApiKey")?.focus());
+  requestAnimationFrame(() =>
+    document.getElementById("btnCopyApiKey")?.focus(),
+  );
 }
 
 function closeDeploymentSecret() {
@@ -3768,7 +4143,8 @@ async function loadApiDeployments() {
   const listEl = document.getElementById("apiDeploymentList");
   if (_apiDeploymentsLoading) return;
   _apiDeploymentsLoading = true;
-  if (listEl) listEl.innerHTML = '<div class="api-key-empty">正在加载 Deployment…</div>';
+  if (listEl)
+    listEl.innerHTML = '<div class="api-key-empty">正在加载 Deployment…</div>';
   try {
     const [deploymentData, kbData] = await Promise.all([
       apiManagementRequest("/deployments"),
@@ -3784,7 +4160,8 @@ async function loadApiDeployments() {
     renderApiDeploymentList();
     renderApiDemoCode();
   } catch (error) {
-    if (listEl) listEl.innerHTML = `<div class="api-key-empty">加载失败：${escapeHtml(error.message)}</div>`;
+    if (listEl)
+      listEl.innerHTML = `<div class="api-key-empty">加载失败：${escapeHtml(error.message)}</div>`;
     showToast(`Deployment 加载失败：${error.message}`, "error");
   } finally {
     _apiDeploymentsLoading = false;
@@ -3804,7 +4181,9 @@ function copyApiTextFallback(text) {
 
   const activeElement = document.activeElement;
   const selection = window.getSelection?.();
-  const selectedRange = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+  const selectedRange = selection?.rangeCount
+    ? selection.getRangeAt(0).cloneRange()
+    : null;
 
   document.body.appendChild(textarea);
   textarea.focus();
@@ -3827,7 +4206,10 @@ function copyApiTextFallback(text) {
 
 async function copyApiText(text, label) {
   try {
-    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    if (
+      navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function"
+    ) {
       try {
         await navigator.clipboard.writeText(text);
       } catch (clipboardError) {
@@ -3847,11 +4229,17 @@ function appendApiGuideInline(parent, text) {
   let cursor = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > cursor) {
-      parent.appendChild(document.createTextNode(text.slice(cursor, match.index)));
+      parent.appendChild(
+        document.createTextNode(text.slice(cursor, match.index)),
+      );
     }
     const token = match[0];
-    const element = document.createElement(token.startsWith("**") ? "strong" : "code");
-    element.textContent = token.startsWith("**") ? token.slice(2, -2) : token.slice(1, -1);
+    const element = document.createElement(
+      token.startsWith("**") ? "strong" : "code",
+    );
+    element.textContent = token.startsWith("**")
+      ? token.slice(2, -2)
+      : token.slice(1, -1);
     parent.appendChild(element);
     cursor = match.index + token.length;
   }
@@ -3861,7 +4249,12 @@ function appendApiGuideInline(parent, text) {
 }
 
 function splitApiGuideTableRow(line) {
-  return line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
 }
 
 function appendApiGuideCodeBlock(container, language, codeText) {
@@ -3894,7 +4287,9 @@ function renderApiGuideMarkdown(markdown) {
   content.replaceChildren();
   toc.replaceChildren();
 
-  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const lines = String(markdown || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n");
   const headings = [];
   const isTableDivider = (line) => {
     const cells = splitApiGuideTableRow(line);
@@ -3902,13 +4297,15 @@ function renderApiGuideMarkdown(markdown) {
   };
   const isBlockStart = (index) => {
     const line = lines[index] || "";
-    return /^```/.test(line.trim())
-      || /^#{1,4}\s+/.test(line)
-      || /^\s*(?:[-*]|\d+\.)\s+/.test(line)
-      || (line.includes("|") && isTableDivider(lines[index + 1] || ""));
+    return (
+      /^```/.test(line.trim()) ||
+      /^#{1,4}\s+/.test(line) ||
+      /^\s*(?:[-*]|\d+\.)\s+/.test(line) ||
+      (line.includes("|") && isTableDivider(lines[index + 1] || ""))
+    );
   };
 
-  for (let index = 0; index < lines.length;) {
+  for (let index = 0; index < lines.length; ) {
     const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed) {
@@ -3955,7 +4352,11 @@ function renderApiGuideMarkdown(markdown) {
 
       const tbody = document.createElement("tbody");
       index += 2;
-      while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+      while (
+        index < lines.length &&
+        lines[index].trim() &&
+        lines[index].includes("|")
+      ) {
         const row = document.createElement("tr");
         splitApiGuideTableRow(lines[index]).forEach((cellText) => {
           const cell = document.createElement("td");
@@ -3991,7 +4392,11 @@ function renderApiGuideMarkdown(markdown) {
 
     const paragraphLines = [trimmed];
     index += 1;
-    while (index < lines.length && lines[index].trim() && !isBlockStart(index)) {
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !isBlockStart(index)
+    ) {
       paragraphLines.push(lines[index].trim());
       index += 1;
     }
@@ -4001,8 +4406,15 @@ function renderApiGuideMarkdown(markdown) {
   }
 
   const tocLabels = [
-    "快速开始", "创建一个 API", "API Key", "第一次调用",
-    "conversation_id", "第二轮调用", "Public SSE Events", "Python 完整示例", "常见问题",
+    "快速开始",
+    "创建一个 API",
+    "API Key",
+    "第一次调用",
+    "conversation_id",
+    "第二轮调用",
+    "Public SSE Events",
+    "Python 完整示例",
+    "常见问题",
   ];
   tocLabels.forEach((labelText) => {
     const heading = headings.find((item) => item.title.includes(labelText));
@@ -4028,7 +4440,7 @@ async function loadApiDeploymentGuide() {
   try {
     const response = await fetch(API_DEPLOYMENT_GUIDE_URL, {
       cache: "no-store",
-      headers: { "Accept": "text/markdown, text/plain" },
+      headers: { Accept: "text/markdown, text/plain" },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     renderApiGuideMarkdown(await response.text());
@@ -4051,7 +4463,9 @@ function openApiDeploymentGuide() {
   if (!modal) return;
   modal.hidden = false;
   loadApiDeploymentGuide();
-  requestAnimationFrame(() => modal.querySelector(".api-key-modal-close")?.focus());
+  requestAnimationFrame(() =>
+    modal.querySelector(".api-key-modal-close")?.focus(),
+  );
 }
 
 function closeApiDeploymentGuide() {
@@ -4071,7 +4485,9 @@ function openApiDeploymentCreate() {
   }
   renderApiKnowledgeBaseChoices("apiKbCheckboxList");
   modal.hidden = false;
-  requestAnimationFrame(() => document.getElementById("apiDeploymentName")?.focus());
+  requestAnimationFrame(() =>
+    document.getElementById("apiDeploymentName")?.focus(),
+  );
 }
 
 function closeApiDeploymentCreate() {
@@ -4091,28 +4507,44 @@ async function openApiDeploymentDetail(deployment) {
   );
   _apiDetailDeploymentId = detail.deployment_id;
   _selectedApiDeploymentId = detail.deployment_id;
-  const itemIndex = _apiDeployments.findIndex((item) => item.deployment_id === detail.deployment_id);
+  const itemIndex = _apiDeployments.findIndex(
+    (item) => item.deployment_id === detail.deployment_id,
+  );
   if (itemIndex >= 0) _apiDeployments[itemIndex] = detail;
 
-  document.getElementById("apiDeploymentDetailTitle").textContent = detail.name || "Deployment 详情";
-  document.getElementById("apiDetailDescription").textContent = detail.description || "暂无描述";
+  document.getElementById("apiDeploymentDetailTitle").textContent =
+    detail.name || "Deployment 详情";
+  document.getElementById("apiDetailDescription").textContent =
+    detail.description || "暂无描述";
   document.getElementById("apiDetailId").textContent = detail.deployment_id;
-  document.getElementById("apiDetailStatus").textContent = detail.status === "active" ? "Active" : "Disabled";
-  document.getElementById("apiDetailHealth").textContent = detail.health === "healthy" ? "Healthy" : "Degraded";
-  document.getElementById("apiDetailKeyPrefix").textContent = detail.api_key_prefix || "—";
-  document.getElementById("apiDetailCreated").textContent = formatApiDate(detail.created_at);
-  document.getElementById("apiDetailUpdated").textContent = formatApiDate(detail.updated_at);
+  document.getElementById("apiDetailStatus").textContent =
+    detail.status === "active" ? "Active" : "Disabled";
+  document.getElementById("apiDetailHealth").textContent =
+    detail.health === "healthy" ? "Healthy" : "Degraded";
+  document.getElementById("apiDetailKeyPrefix").textContent =
+    detail.api_key_prefix || "—";
+  document.getElementById("apiDetailCreated").textContent = formatApiDate(
+    detail.created_at,
+  );
+  document.getElementById("apiDetailUpdated").textContent = formatApiDate(
+    detail.updated_at,
+  );
   document.getElementById("apiDetailLastUsed").textContent = detail.last_used_at
     ? formatApiDate(detail.last_used_at)
     : "从未调用";
   document.getElementById("apiDetailEndpoint").textContent = detail.endpoint;
 
   const kbContainer = document.getElementById("apiDetailKnowledgeBases");
-  kbContainer.innerHTML = (detail.knowledge_bases || []).map((kb) => `
+  kbContainer.innerHTML =
+    (detail.knowledge_bases || [])
+      .map(
+        (kb) => `
     <span class="api-detail-kb ${kb.status === "active" ? "healthy" : "degraded"}">
       ${escapeHtml(kb.kb_name || kb.kb_id)} · ${escapeHtml(kb.status || "unknown")}
     </span>
-  `).join("") || '<span class="api-key-empty">未绑定知识库</span>';
+  `,
+      )
+      .join("") || '<span class="api-key-empty">未绑定知识库</span>';
 
   const warning = document.getElementById("apiDetailHealthWarning");
   const unavailable = detail.unavailable_kbs || [];
@@ -4124,7 +4556,11 @@ async function openApiDeploymentDetail(deployment) {
   renderApiDeploymentList();
   renderApiDemoCode();
   document.getElementById("apiDeploymentDetailModal").hidden = false;
-  requestAnimationFrame(() => document.querySelector(".api-key-modal-close[data-api-detail-close]")?.focus());
+  requestAnimationFrame(() =>
+    document
+      .querySelector(".api-key-modal-close[data-api-detail-close]")
+      ?.focus(),
+  );
 }
 
 function closeApiDeploymentModal() {
@@ -4135,15 +4571,23 @@ function closeApiDeploymentModal() {
 function openApiDeploymentModal(deployment) {
   const modal = document.getElementById("apiDeploymentModal");
   if (!modal || !deployment) return;
-  document.getElementById("apiEditDeploymentId").value = deployment.deployment_id;
-  document.getElementById("apiEditDeploymentName").value = deployment.name || "";
-  document.getElementById("apiEditDeploymentDescription").value = deployment.description || "";
+  document.getElementById("apiEditDeploymentId").value =
+    deployment.deployment_id;
+  document.getElementById("apiEditDeploymentName").value =
+    deployment.name || "";
+  document.getElementById("apiEditDeploymentDescription").value =
+    deployment.description || "";
   const errorEl = document.getElementById("apiDeploymentEditError");
   errorEl.hidden = true;
   errorEl.textContent = "";
-  renderApiKnowledgeBaseChoices("apiEditKbCheckboxList", deployment.selected_kbs || []);
+  renderApiKnowledgeBaseChoices(
+    "apiEditKbCheckboxList",
+    deployment.selected_kbs || [],
+  );
   modal.hidden = false;
-  requestAnimationFrame(() => document.getElementById("apiEditDeploymentName")?.focus());
+  requestAnimationFrame(() =>
+    document.getElementById("apiEditDeploymentName")?.focus(),
+  );
 }
 
 async function refreshApiDeployments() {
@@ -4151,7 +4595,12 @@ async function refreshApiDeployments() {
 }
 
 async function rotateApiDeploymentKey(deployment) {
-  if (!window.confirm("生成新密钥后，旧密钥将立即失效。使用旧密钥的客户端将无法继续调用。确定继续吗？")) return;
+  if (
+    !window.confirm(
+      "生成新密钥后，旧密钥将立即失效。使用旧密钥的客户端将无法继续调用。确定继续吗？",
+    )
+  )
+    return;
   const updated = await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}/rotate-key`,
     { method: "POST" },
@@ -4163,22 +4612,32 @@ async function rotateApiDeploymentKey(deployment) {
 
 async function toggleApiDeployment(deployment) {
   const action = deployment.status === "active" ? "disable" : "enable";
-  if (action === "disable" && !window.confirm(
-    "停用后，该 API 将立即停止接受新的调用，但历史 Conversation 不会删除。确定停用吗？",
-  )) return;
+  if (
+    action === "disable" &&
+    !window.confirm(
+      "停用后，该 API 将立即停止接受新的调用，但历史 Conversation 不会删除。确定停用吗？",
+    )
+  )
+    return;
   const updated = await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}/${action}`,
     { method: "POST" },
   );
   _selectedApiDeploymentId = updated.deployment_id;
   await refreshApiDeployments();
-  showToast(action === "enable" ? "Deployment 已启用" : "Deployment 已停用", "success");
+  showToast(
+    action === "enable" ? "Deployment 已启用" : "Deployment 已停用",
+    "success",
+  );
 }
 
 async function deleteApiDeployment(deployment) {
-  if (!window.confirm(
-    `确定删除“${deployment.name}”吗？删除后该 Deployment 将不能继续调用，但不会删除绑定知识库，历史 Conversation 数据也会保留。`,
-  )) return;
+  if (
+    !window.confirm(
+      `确定删除“${deployment.name}”吗？删除后该 Deployment 将不能继续调用，但不会删除绑定知识库，历史 Conversation 数据也会保留。`,
+    )
+  )
+    return;
   await apiManagementRequest(
     `/deployments/${encodeURIComponent(deployment.deployment_id)}`,
     { method: "DELETE" },
@@ -4200,17 +4659,23 @@ function bindApiDeploymentInteractions() {
     container?.addEventListener("change", (event) => {
       const input = event.target.closest('input[type="checkbox"]');
       if (!input) return;
-      input.closest(".api-kb-checkbox-item")?.classList.toggle("is-selected", input.checked);
+      input
+        .closest(".api-kb-checkbox-item")
+        ?.classList.toggle("is-selected", input.checked);
     });
   };
   bindKbChoiceStyle(kbList);
   bindKbChoiceStyle(document.getElementById("apiEditKbCheckboxList"));
 
-  document.getElementById("btnOpenApiGuide")?.addEventListener("click", openApiDeploymentGuide);
+  document
+    .getElementById("btnOpenApiGuide")
+    ?.addEventListener("click", openApiDeploymentGuide);
   document.querySelectorAll("[data-api-guide-close]").forEach((element) => {
     element.addEventListener("click", closeApiDeploymentGuide);
   });
-  document.getElementById("btnOpenApiDeploymentCreate")?.addEventListener("click", openApiDeploymentCreate);
+  document
+    .getElementById("btnOpenApiDeploymentCreate")
+    ?.addEventListener("click", openApiDeploymentCreate);
   document.querySelectorAll("[data-api-create-close]").forEach((element) => {
     element.addEventListener("click", closeApiDeploymentCreate);
   });
@@ -4242,7 +4707,9 @@ function bindApiDeploymentInteractions() {
         method: "POST",
         body: JSON.stringify({
           name: document.getElementById("apiDeploymentName").value.trim(),
-          description: document.getElementById("apiDeploymentDescription").value.trim(),
+          description: document
+            .getElementById("apiDeploymentDescription")
+            .value.trim(),
           selected_kbs: selectedKbs,
         }),
       });
@@ -4267,8 +4734,11 @@ function bindApiDeploymentInteractions() {
       return;
     }
     const card = event.target.closest("[data-api-select]");
-    const deploymentId = actionButton?.dataset.deploymentId || card?.dataset.apiSelect;
-    const deployment = _apiDeployments.find((item) => item.deployment_id === deploymentId);
+    const deploymentId =
+      actionButton?.dataset.deploymentId || card?.dataset.apiSelect;
+    const deployment = _apiDeployments.find(
+      (item) => item.deployment_id === deploymentId,
+    );
     if (!deployment) return;
     _selectedApiDeploymentId = deployment.deployment_id;
     renderApiDeploymentList();
@@ -4278,7 +4748,8 @@ function bindApiDeploymentInteractions() {
     try {
       const action = actionButton.dataset.apiAction;
       if (action === "view") await openApiDeploymentDetail(deployment);
-      if (action === "copy") await copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
+      if (action === "copy")
+        await copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
       if (action === "edit") openApiDeploymentModal(deployment);
       if (action === "rotate") await rotateApiDeploymentKey(deployment);
       if (action === "toggle") await toggleApiDeployment(deployment);
@@ -4290,9 +4761,11 @@ function bindApiDeploymentInteractions() {
     }
   });
 
-  document.querySelectorAll("[data-api-deployment-modal-close]").forEach((element) => {
-    element.addEventListener("click", closeApiDeploymentModal);
-  });
+  document
+    .querySelectorAll("[data-api-deployment-modal-close]")
+    .forEach((element) => {
+      element.addEventListener("click", closeApiDeploymentModal);
+    });
 
   editForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4300,7 +4773,9 @@ function bindApiDeploymentInteractions() {
     const errorEl = document.getElementById("apiDeploymentEditError");
     const button = document.getElementById("btnSaveApiDeployment");
     const selectedKbs = Array.from(
-      document.querySelectorAll('#apiEditKbCheckboxList input[type="checkbox"]:checked'),
+      document.querySelectorAll(
+        '#apiEditKbCheckboxList input[type="checkbox"]:checked',
+      ),
       (checkbox) => checkbox.value,
     );
     errorEl.hidden = true;
@@ -4311,14 +4786,19 @@ function bindApiDeploymentInteractions() {
     }
     button.disabled = true;
     try {
-      await apiManagementRequest(`/deployments/${encodeURIComponent(deploymentId)}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: document.getElementById("apiEditDeploymentName").value.trim(),
-          description: document.getElementById("apiEditDeploymentDescription").value.trim(),
-          selected_kbs: selectedKbs,
-        }),
-      });
+      await apiManagementRequest(
+        `/deployments/${encodeURIComponent(deploymentId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: document.getElementById("apiEditDeploymentName").value.trim(),
+            description: document
+              .getElementById("apiEditDeploymentDescription")
+              .value.trim(),
+            selected_kbs: selectedKbs,
+          }),
+        },
+      );
       closeApiDeploymentModal();
       await refreshApiDeployments();
       showToast("Deployment 已更新", "success");
@@ -4337,33 +4817,49 @@ function bindApiDeploymentInteractions() {
     });
   });
 
-  document.getElementById("btnRefreshApiDeployments")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await refreshApiDeployments();
-    } catch (error) {
-      showToast(error.message, "error");
-    } finally {
-      button.disabled = false;
-    }
-  });
-  document.getElementById("btnCopyApiEndpoint")?.addEventListener("click", () => {
-    copyApiText(document.getElementById("apiRevealedEndpoint").value, "Endpoint");
-  });
+  document
+    .getElementById("btnRefreshApiDeployments")
+    ?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await refreshApiDeployments();
+      } catch (error) {
+        showToast(error.message, "error");
+      } finally {
+        button.disabled = false;
+      }
+    });
+  document
+    .getElementById("btnCopyApiEndpoint")
+    ?.addEventListener("click", () => {
+      copyApiText(
+        document.getElementById("apiRevealedEndpoint").value,
+        "Endpoint",
+      );
+    });
   document.getElementById("btnCopyApiKey")?.addEventListener("click", () => {
     copyApiText(document.getElementById("apiRevealedKey").value, "API Key");
   });
-  document.getElementById("btnCopyApiDetailEndpoint")?.addEventListener("click", () => {
-    const deployment = _apiDeployments.find((item) => item.deployment_id === _apiDetailDeploymentId);
-    if (deployment) copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
-  });
-  document.getElementById("apiGuideContent")?.addEventListener("click", (event) => {
-    const copyButton = event.target.closest("[data-api-guide-copy]");
-    if (!copyButton) return;
-    const code = copyButton.closest(".api-guide-code-block")?.querySelector("code")?.textContent || "";
-    if (code) copyApiText(code, "示例");
-  });
+  document
+    .getElementById("btnCopyApiDetailEndpoint")
+    ?.addEventListener("click", () => {
+      const deployment = _apiDeployments.find(
+        (item) => item.deployment_id === _apiDetailDeploymentId,
+      );
+      if (deployment)
+        copyApiText(getDeploymentEndpoint(deployment), "Endpoint");
+    });
+  document
+    .getElementById("apiGuideContent")
+    ?.addEventListener("click", (event) => {
+      const copyButton = event.target.closest("[data-api-guide-copy]");
+      if (!copyButton) return;
+      const code =
+        copyButton.closest(".api-guide-code-block")?.querySelector("code")
+          ?.textContent || "";
+      if (code) copyApiText(code, "示例");
+    });
   document.getElementById("apiGuideToc")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-api-guide-target]");
     if (!button) return;
@@ -4383,16 +4879,18 @@ function bindApiDeploymentInteractions() {
   });
 }
 
-  document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   const btnSaveConfig = document.getElementById("btnSaveConfig");
   if (btnSaveConfig) {
     btnSaveConfig.addEventListener("click", saveConfig);
   }
   // 绑定各模型列表的添加按钮
-  Object.values(MODEL_DEFS).forEach(def => {
+  Object.values(MODEL_DEFS).forEach((def) => {
     const btn = document.getElementById(def.btnAddId);
     if (btn) {
-      const sectionKey = Object.keys(MODEL_DEFS).find(k => MODEL_DEFS[k] === def);
+      const sectionKey = Object.keys(MODEL_DEFS).find(
+        (k) => MODEL_DEFS[k] === def,
+      );
       btn.addEventListener("click", () => addModelItem(sectionKey));
     }
   });
@@ -4419,13 +4917,17 @@ function bindApiDeploymentInteractions() {
   }
   // 绑定配置导航切换
   const navItems = document.querySelectorAll(".config-nav-item");
-  navItems.forEach(item => {
+  navItems.forEach((item) => {
     item.addEventListener("click", () => {
       const targetKey = item.dataset.config;
-      navItems.forEach(i => i.classList.remove("active"));
-      document.querySelectorAll(".config-group").forEach(g => g.style.display = "none");
+      navItems.forEach((i) => i.classList.remove("active"));
+      document
+        .querySelectorAll(".config-group")
+        .forEach((g) => (g.style.display = "none"));
       item.classList.add("active");
-      const targetGroup = document.getElementById(`configGroup${targetKey.charAt(0).toUpperCase() + targetKey.slice(1)}`);
+      const targetGroup = document.getElementById(
+        `configGroup${targetKey.charAt(0).toUpperCase() + targetKey.slice(1)}`,
+      );
       if (targetGroup) {
         targetGroup.style.display = "block";
       }
@@ -4479,12 +4981,16 @@ async function loadSessionsList() {
 
     // 更新统计
     monitorTotalSessions.textContent = sessions.length;
-    const totalTurns = sessions.reduce((sum, s) => sum + (s.turn_count || 0), 0);
+    const totalTurns = sessions.reduce(
+      (sum, s) => sum + (s.turn_count || 0),
+      0,
+    );
     monitorTotalTurns.textContent = totalTurns;
     monitorLastUpdate.textContent = new Date().toLocaleString("zh-CN");
 
     if (sessions.length === 0) {
-      monitorSessionsList.innerHTML = '<div class="monitor-empty">暂无会话</div>';
+      monitorSessionsList.innerHTML =
+        '<div class="monitor-empty">暂无会话</div>';
       return;
     }
 
@@ -4498,13 +5004,13 @@ async function loadSessionsList() {
           <span class="monitor-session-id" title="${s.id}">${s.id.slice(0, 20)}...</span>
           <span class="monitor-session-title" title="${s.title || "未命名"}">${s.title || "未命名"}</span>
           <span class="monitor-session-turns">${s.turn_count || 0}</span>
-          <span class="monitor-session-time">${s.created_at || "-"}</span>
+          <span class="monitor-session-time">${formatSessionTime(s.created_at)}</span>
           <span class="monitor-session-actions">
             <button class="btn btn-sm btn-outline" onclick="viewSessionDetail('${s.id}')">查看</button>
             <button class="btn btn-sm btn-danger" onclick="deleteSession('${s.id}')">删除</button>
           </span>
         </div>
-      `
+      `,
       )
       .join("");
   } catch (e) {
@@ -4535,11 +5041,12 @@ async function viewSessionDetail(sessionId) {
           <div class="session-turn-user">${escapeHtml(t.user || "(空)")}</div>
           <div class="session-turn-assistant">${renderMarkdown(t.assistant || "(空)")}</div>
         </div>
-      `
+      `,
         )
         .join("");
     } else {
-      sessionDetailTurns.innerHTML = '<div class="monitor-empty">暂无对话记录</div>';
+      sessionDetailTurns.innerHTML =
+        '<div class="monitor-empty">暂无对话记录</div>';
     }
 
     sessionDetailModal.style.display = "flex";
@@ -4550,7 +5057,9 @@ async function viewSessionDetail(sessionId) {
 
 // 删除会话
 async function deleteSession(sessionId) {
-  if (!confirm(`确定要删除会话 ${sessionId.slice(0, 20)}... 吗？此操作不可恢复。`)) {
+  if (
+    !confirm(`确定要删除会话 ${sessionId.slice(0, 20)}... 吗？此操作不可恢复。`)
+  ) {
     return;
   }
 
@@ -4569,9 +5078,11 @@ btnCloseSessionDetail.addEventListener("click", () => {
   sessionDetailModal.style.display = "none";
 });
 
-sessionDetailModal.querySelector(".modal-backdrop").addEventListener("click", () => {
-  sessionDetailModal.style.display = "none";
-});
+sessionDetailModal
+  .querySelector(".modal-backdrop")
+  .addEventListener("click", () => {
+    sessionDetailModal.style.display = "none";
+  });
 
 // 刷新按钮
 btnRefreshSessions.addEventListener("click", () => {

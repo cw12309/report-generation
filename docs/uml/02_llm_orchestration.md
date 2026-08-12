@@ -8,18 +8,18 @@ sequenceDiagram
     participant PB as PromptBuilder
     participant LLM as LLM Client
 
-    Pipe->>TR: _build_tool_registry()
-    TR-->>Pipe: registry (rag_search, edit, refine)
+    Pipe->>TR: 构建工具注册中心
+    TR-->>Pipe: 注册3个工具: 检索生成、编辑报告、精炼报告
 
-    Pipe->>MR: search_relevant(enhanced)
-    MR-->>Pipe: {stm: ["[user] 脑出血", ...]}
+    Pipe->>MR: 检索相关历史对话
+    MR-->>Pipe: 3条相关对话片段
 
-    Pipe->>PB: build("tool_orchestrator", ...)
-    PB-->>Pipe: system_prompt
+    Pipe->>PB: 构建系统提示词
+    PB-->>Pipe: 完整系统提示
 
-    Pipe->>LLM: chat_with_tools(messages, tools)
-    LLM-->>Pipe: tool_calls: [{name: "rag_search", args: {query: "CT 头颅 脑出血"}}]
+    Pipe->>LLM: LLM 决策（选择调用哪个工具）
+    LLM-->>Pipe: 决定调用 rag_search，查询"CT 头颅 脑出血"
 
-    Pipe->>TR: execute("rag_search", args)
-    TR-->>Pipe: result
+    Pipe->>TR: 执行 rag_search 工具
+    TR-->>Pipe: 报告生成结果
 ```

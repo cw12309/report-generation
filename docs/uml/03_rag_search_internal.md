@@ -11,37 +11,37 @@ sequenceDiagram
     participant RET as Retrieval
     participant RS as ReportSchema
 
-    TR->>RAG: handler(args)
+    TR->>RAG: 处理工具调用
 
-    RAG->>ET: slots 自动补全 modality/body_part
-    ET-->>RAG: modality="CT", body_part="头颅"
+    RAG->>ET: 从上下文补全缺失参数
+    ET-->>RAG: 补全: 检查类型CT, 部位头颅
 
-    RAG->>SR: search_reports_fn(query, _emit)
+    RAG->>SR: 调用检索函数
     Note over SR: pipeline.search_reports()
 
-    SR->>QP: build_query_plan(query, context, navigator)
-    QP-->>SR: {filters: {modality:"CT", level_1:"头颅"}, semantic_query}
+    SR->>QP: 构建检索计划
+    QP-->>SR: 过滤条件:CT+头颅, 语义查询词
 
-    SR->>LC: get_embedding(semantic_query)
-    LC-->>SR: query_vector
+    SR->>LC: 向量化查询
+    LC-->>SR: 查询向量
 
-    SR->>RET: retrieve_with_fallback(plan, query_vector, top_k)
+    SR->>RET: 多路混合召回
     Note over RET: strict/modality/kb_only 三通道<br/>Dense+Sparse → RRF 融合
-    RET-->>SR: candidates
+    RET-->>SR: 候选文档列表
 
-    SR->>LC: rerank_with_retry(query, documents, top_n)
-    LC-->>SR: reranked_entities
+    SR->>LC: 精排重排序
+    LC-->>SR: 排序后文档
 
-    SR-->>RAG: (search_result, reranked_entities)
+    SR-->>RAG: 检索结果文本 + 排序后文档
 
-    RAG->>RAG: detect_ambiguity(reranked_entities)
-    RAG-->>RAG: no ambiguity
+    RAG->>RAG: 歧义检测
+    Note over RAG: 无歧义，继续
 
-    RAG->>LC: chat_fn("structure" prompt + references)
-    LC-->>RAG: structured report JSON
+    RAG->>LC: LLM 生成结构化报告
+    LC-->>RAG: 报告 JSON
 
-    RAG->>RS: parse_report_with_repair(raw, repair_fn)
-    RS-->>RAG: canonical report
+    RAG->>RS: 解析校验（失败时自动修复一次）
+    RS-->>RAG: 合法报告
 
-    RAG-->>TR: ToolResult(content, is_final=True)
+    RAG-->>TR: 返回最终结果
 ```

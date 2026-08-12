@@ -8,15 +8,15 @@ sequenceDiagram
     participant CLI as CLI / Server
     actor User
 
-    TR-->>Pipe: result
+    TR-->>Pipe: 工具执行结果
 
-    Pipe->>RS: parse_report_output(result.content)
-    RS-->>Pipe: {"results": [{"影像学表现":"...", "诊断意见":"..."}]}
+    Pipe->>RS: 解析报告 JSON
+    RS-->>Pipe: 结构化报告（影像学表现 + 诊断意见）
 
-    Pipe->>RS: serialize_report(structured)
-    RS-->>Pipe: canonical JSON string
+    Pipe->>RS: 序列化为规范格式
+    RS-->>Pipe: 规范 JSON 字符串
 
-    Pipe->>Pipe: last_report[0] = canonical_report
-    Pipe->>CLI: stm.add_turn(session_id, query, display)
-    CLI-->>User: 📋 结构化报告
+    Pipe->>Pipe: 缓存为当前报告
+    Pipe->>CLI: 记录本轮对话历史
+    CLI-->>User: 输出结构化报告
 ```

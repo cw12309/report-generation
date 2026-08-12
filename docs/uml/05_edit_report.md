@@ -11,31 +11,31 @@ sequenceDiagram
 
     User->>Pipe: "把影像学表现改简洁一点"
 
-    Note over Pipe: Phase 1: 实体提取 → 意图:append → 上下文消解
+    Note over Pipe: Phase 1: 实体提取 → 意图:追加 → 上下文消解
 
-    Pipe->>LLM: chat_with_tools(messages, tools)
-    LLM-->>Pipe: tool_calls: [{name: "edit_report", args: {instruction: "改简洁"}}]
+    Pipe->>LLM: LLM 决策（选择调用哪个工具）
+    LLM-->>Pipe: 决定调用 edit_report，指令"改简洁"
 
-    Pipe->>TR: execute("edit_report", args)
+    Pipe->>TR: 执行编辑工具
 
     Note over Edit,RS: edit_report 内部
 
-    TR->>Edit: handler(args)
-    Edit->>Edit: last_report 作为 current_report
+    TR->>Edit: 处理编辑请求
+    Edit->>Edit: 注入当前报告
 
-    Edit->>LLM: chat_stream("edit" prompt + current_report + instruction)
-    LLM-->>Edit: edited report JSON
+    Edit->>LLM: LLM 编辑报告
+    LLM-->>Edit: 编辑后报告 JSON
 
-    Edit->>RS: parse_report_with_repair(raw)
-    RS-->>Edit: canonical report
+    Edit->>RS: 解析校验
+    RS-->>Edit: 合法报告
 
-    Edit->>RS: 保护医学事实校验 (数字/部位/诊断 不变)
-    RS-->>Edit: preservation check passed
+    Edit->>RS: 医学事实保护校验（数字/部位/诊断不得变更）
+    RS-->>Edit: 校验通过
 
-    Edit-->>TR: ToolResult(content, is_final=True)
-    TR-->>Pipe: result
+    Edit-->>TR: 返回最终结果
+    TR-->>Pipe: 编辑结果
 
-    Pipe->>RS: parse_report_output + serialize
-    Pipe->>Pipe: last_report[0] = updated
-    Pipe-->>User: ✅ 修改后的报告
+    Pipe->>RS: 解析并序列化
+    Pipe->>Pipe: 更新当前报告缓存
+    Pipe-->>User: 输出修改后报告
 ```

@@ -83,6 +83,7 @@ def map_public_event(
     data: dict[str, Any],
     *,
     conversation_id: str,
+    knowledge_bases: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
     """Map internal pipeline events to the stable public SSE contract."""
     if event_type == "status":
@@ -99,8 +100,9 @@ def map_public_event(
         return {"type": "status", "stage": stage, "message": message}
 
     if event_type in {"search", "recall", "rerank"}:
+        kb_count = len(knowledge_bases) if knowledge_bases else 0
         messages = {
-            "search": "正在检索知识库",
+            "search": f"正在检索{(' ' + str(kb_count) + ' 个') if kb_count else ''}知识库...",
             "recall": "正在筛选候选报告",
             "rerank": "正在精排参考报告",
         }
@@ -141,6 +143,20 @@ def map_public_event(
 
     if event_type == "done":
         return {"type": "done", "conversation_id": conversation_id}
+
+    if event_type == "knowledge_bases":
+        kbs = data.get("knowledge_bases")
+        if isinstance(kbs, list):
+            return {
+                "type": "knowledge_bases",
+                "scope": "deployment",
+                "knowledge_bases": [
+                    {"id": kb.get("kb_id", ""), "name": kb.get("name", "")}
+                    for kb in kbs
+                    if isinstance(kb, dict)
+                ],
+            }
+        return None
 
     return None
 

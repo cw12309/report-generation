@@ -3791,9 +3791,51 @@ async function loadApiDeployments() {
   }
 }
 
+function copyApiTextFallback(text) {
+  if (typeof document.execCommand !== "function") return false;
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.inset = "0 auto auto -9999px";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+
+  const activeElement = document.activeElement;
+  const selection = window.getSelection?.();
+  const selectedRange = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+    activeElement?.focus?.();
+    if (selection && selectedRange) {
+      selection.removeAllRanges();
+      selection.addRange(selectedRange);
+    }
+  }
+  return copied;
+}
+
 async function copyApiText(text, label) {
   try {
-    await navigator.clipboard.writeText(text);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (clipboardError) {
+        if (!copyApiTextFallback(text)) throw clipboardError;
+      }
+    } else if (!copyApiTextFallback(text)) {
+      throw new Error("当前浏览器不支持自动复制，请手动选择并复制");
+    }
     showToast(`${label}已复制`, "success");
   } catch (error) {
     showToast(`复制失败：${error.message}`, "error");

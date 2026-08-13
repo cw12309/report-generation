@@ -2,6 +2,9 @@
 
 import json
 import logging
+import re
+from dataclasses import dataclass
+from typing import Optional
 
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
@@ -30,6 +33,98 @@ logger = logging.getLogger(__name__)
 
 RAG_TOP_K = get_rag_top_k()
 RERANK_TOP_K = get_rerank_top_k()
+
+# =============================================================================
+# Recovery Budget — 内部错误恢复机制
+# =============================================================================
+_MAX_RECOVERY_ATTEMPTS = 1
+_MAX_LLM_RETRY_ATTEMPTS = 1
+
+
+@dataclass
+class RecoveryBudget:
+    """内部错误恢复预算，禁止无限循环。"""
+    recovery_attempts: int = 0
+    max_attempts: int = _MAX_RECOVERY_ATTEMPTS
+
+    def can_recover(self) -> bool:
+        return self.recovery_attempts < self.max_attempts
+
+    def consume(self) -> None:
+        self.recovery_attempts += 1
+
+
+def _parse_serialized_tool_call(content: str) -> Optional[dict]:
+    """尝试从 LLM 文本中解析出序列化的工具调用。
+
+    支持格式：
+    - {"tool": "rag_search", "arguments": {...}}
+    - {"name": "rag_search", "arguments": {...}}
+    - rag_search({"query": "..."})
+    """
+    try:
+        data = json.loads(content)
+        if isinstance(data, dict):
+            name = data.get("tool") or data.get("name") or data.get("function")
+            args = data.get("arguments") or data.get("parameters") or {}
+            if isinstance(name, str) and isinstance(args, dict):
+                return {"name": name, "arguments": args}
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    match = re.search(r'(\w+)\s*\(\s*(\{.*?\})\s*\)', content, re.DOTALL)
+    if match:
+        try:
+            name = match.group(1)
+            args = json.loads(match.group(2))
+            return {"name": name, "arguments": args}
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return None
+
+
+def _arbitrate_report_tool(tool_results: list) -> Optional[tuple]:
+    """自动仲裁多个报告工具，按优先级保留一个。
+
+    优先级：rag_search > edit_report > refine_report
+    """
+    priority = {"rag_search": 0, "edit_report": 1, "refine_report": 2}
+    sorted_results = sorted(tool_results, key=lambda x: priority.get(x[1], 99))
+    return sorted_results[0] if sorted_results else None
+
+
+def _classify_tool_error(result_content: str) -> str:
+    """细分 REPORT_TOOL_FAILED 的错误原因。
+
+    Returns:
+        错误码：EDIT_JUDGE_FAILED / EDIT_REPAIR_FAILED / REPORT_PARSE_FAILED /
+        LLM_SERVICE_ERROR / NO_LAST_REPORT / UNKNOWN_TOOL_ERROR
+    """
+    try:
+        data = json.loads(result_content)
+    except (json.JSONDecodeError, TypeError):
+        return "REPORT_PARSE_FAILED"
+
+    error_msg = str(data.get("error", "")).lower() if isinstance(data, dict) else ""
+
+    if "judge" in error_msg:
+        return "EDIT_JUDGE_FAILED"
+    if "repair" in error_msg or "修复" in error_msg:
+        return "EDIT_REPAIR_FAILED"
+    if "没有可修改" in error_msg or "没有可润色" in error_msg or "no_last_report" in error_msg:
+        return "NO_LAST_REPORT"
+    if "service" in error_msg or "unavailable" in error_msg or "不可用" in error_msg:
+        return "LLM_SERVICE_ERROR"
+    if "parse" in error_msg or "解析" in error_msg or "schema" in error_msg:
+        return "REPORT_PARSE_FAILED"
+
+    return "UNKNOWN_TOOL_ERROR"
+
+
+def _is_user_facing_error(error_code: str) -> bool:
+    """判断是否为需要用户处理的错误（非内部可恢复）。"""
+    return error_code in ("NO_LAST_REPORT", "LLM_SERVICE_ERROR")
 
 
 # =============================================================================
@@ -191,7 +286,8 @@ def _build_tool_registry(
 @traceable(run_type="chain", name="Agent_Main_Pipeline")
 async def run_pipeline(query, session_id, stm, entity_tracker, client, last_report,
                        _emit, selected_diagnosis=None, last_ambiguity=None,
-                       selected_kbs=None, knowledge_bases=None):
+                       selected_kbs=None, knowledge_bases=None,
+                       recovery_budget=None):
     """Tool Calling 架构主流程
 
     记忆模块集成点：
@@ -201,6 +297,10 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     4. Phase 3 (Post-LLM): 更新 STM 和当前会话实体
     """
     logger.info(f"── run_pipeline 开始: session={session_id}, query={query[:50]}..., selected_diagnosis={selected_diagnosis}")
+
+    # ── 初始化恢复预算 ──
+    if recovery_budget is None:
+        recovery_budget = RecoveryBudget()
 
     # Session restore is a compatibility boundary: normalize supported legacy
     # reports once, then keep only the canonical representation in the runtime.
@@ -412,27 +512,103 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     # ── 如果没有工具调用，直接回复 ──
     if not tool_calls:
         if content:
+            # 检测 LLM 是否在 content 中直接返回了报告（未走 tool_calls 通道）
             try:
                 parse_report_output(content)
             except ReportSchemaError:
-                pass
+                report_in_content = False
             else:
-                error_message = "报告必须通过受控报告工具生成，请重试。"
+                report_in_content = True
+
+            if report_in_content:
+                # ── 内部恢复：要求 LLM 必须选择一个 Report Tool ──
                 logger.warning("main LLM attempted to return a report without a report tool")
-                _emit("error", {"code": "REPORT_TOOL_REQUIRED", "message": error_message})
-                stm.add_turn(session_id, query, error_message)
-                return error_message
-            if looks_like_serialized_tool_call(content):
-                error_message = "模型返回了无效的工具调用格式，请重试。"
+                if recovery_budget.can_recover():
+                    recovery_budget.consume()
+                    logger.info("recovery: retry LLM with tool-selection prompt")
+                    retry_messages = list(messages)
+                    retry_messages.append({
+                        "role": "user",
+                        "content": (
+                            "你必须通过调用工具来生成报告，不能直接在回复中输出报告内容。"
+                            "请调用 rag_search、edit_report 或 refine_report 工具。"
+                        ),
+                    })
+                    content, tool_calls = await chat_with_tools(
+                        retry_messages,
+                        tools=tools_schema,
+                        max_tokens=512,
+                        temperature=0.5,
+                        debug=True,
+                    )
+                    if tool_calls:
+                        logger.info("recovery: LLM now selected tools after retry")
+                        # 继续执行工具调用（跳转到工具执行部分）
+                    else:
+                        logger.error("recovery: LLM still refused to select a tool after retry")
+                        error_message = "服务暂时不可用，请稍后重试。"
+                        _emit("error", {"code": "RECOVERY_FAILED", "message": error_message})
+                        stm.add_turn(session_id, query, error_message)
+                        return error_message
+                else:
+                    error_message = "服务暂时不可用，请稍后重试。"
+                    _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
+                    stm.add_turn(session_id, query, error_message)
+                    return error_message
+
+            elif looks_like_serialized_tool_call(content):
+                # ── 内部恢复：尝试解析序列化工具调用 ──
                 logger.warning("direct response contained serialized tool call")
-                _emit("error", {"code": "INVALID_TOOL_CALL", "message": error_message})
-                stm.add_turn(session_id, query, error_message)
-                return error_message
-            if _emit:
-                _emit("message", {"content": content})
-            stm.add_turn(session_id, query, content)
-            logger.info(f"── run_pipeline 完成: 直接回复 (无工具调用), content长度={len(content)}")
-            return content
+                parsed = _parse_serialized_tool_call(content)
+                if parsed and parsed["name"] in registry._tools:
+                    logger.info("recovery: parsed serialized tool call -> %s", parsed["name"])
+                    import uuid
+                    tool_calls = [{
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": parsed["name"],
+                            "arguments": json.dumps(parsed["arguments"], ensure_ascii=False),
+                        },
+                    }]
+                    content = None
+                elif recovery_budget.can_recover():
+                    recovery_budget.consume()
+                    logger.info("recovery: failed to parse serialized tool call, retry LLM")
+                    retry_messages = list(messages)
+                    retry_messages.append({
+                        "role": "user",
+                        "content": (
+                            "请使用标准的 function calling 机制选择工具，"
+                            "不要在文本中手动编写工具调用。"
+                        ),
+                    })
+                    content, tool_calls = await chat_with_tools(
+                        retry_messages,
+                        tools=tools_schema,
+                        max_tokens=512,
+                        temperature=0.5,
+                        debug=True,
+                    )
+                    if not tool_calls:
+                        logger.error("recovery: LLM still returned invalid format after retry")
+                        error_message = "服务暂时不可用，请稍后重试。"
+                        _emit("error", {"code": "RECOVERY_FAILED", "message": error_message})
+                        stm.add_turn(session_id, query, error_message)
+                        return error_message
+                else:
+                    error_message = "服务暂时不可用，请稍后重试。"
+                    _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
+                    stm.add_turn(session_id, query, error_message)
+                    return error_message
+
+            else:
+                # 正常直接回复
+                if _emit:
+                    _emit("message", {"content": content})
+                stm.add_turn(session_id, query, content)
+                logger.info(f"── run_pipeline 完成: 直接回复 (无工具调用), content长度={len(content)}")
+                return content
         else:
             _emit("error", {"message": "模型未返回有效回复"})
             logger.warning(f"── run_pipeline 完成: 模型未返回有效回复")
@@ -506,11 +682,11 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     report_results = [item for item in tool_results if item[1] in REPORT_TOOL_NAMES]
     if report_results:
         if len(report_results) != 1:
-            error_message = "一次请求只能执行一个报告操作，请重试。"
-            logger.warning("multiple report tools selected: %s", [item[1] for item in report_results])
-            _emit("error", {"code": "MULTIPLE_REPORT_TOOLS", "message": error_message})
-            stm.add_turn(session_id, query, error_message)
-            return error_message
+            # ── 内部恢复：自动仲裁，只保留一个 ──
+            logger.warning("multiple report tools selected: %s, auto-arbitrating", [item[1] for item in report_results])
+            kept = _arbitrate_report_tool(report_results)
+            report_results = [kept]
+            logger.info("recovery: auto-arbitrated to %s", kept[1])
 
         _tool_id, report_tool_name, report_result = report_results[0]
         try:
@@ -541,25 +717,52 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
         if not report_result.is_final or (
             isinstance(raw_result, dict) and "error" in raw_result
         ):
-            error_message = "报告处理失败，请重试。"
+            error_code = _classify_tool_error(report_result.content)
             logger.warning(
-                "report_tool_terminal: selected_tool=%s status=error tool_is_final=%s",
+                "report_tool_terminal: selected_tool=%s status=error error_code=%s tool_is_final=%s",
                 report_tool_name,
+                error_code,
                 report_result.is_final,
             )
-            _emit("error", {"code": "REPORT_TOOL_FAILED", "message": error_message})
+
+            if _is_user_facing_error(error_code):
+                # 用户可处理的错误：直接展示给用户
+                error_msg = raw_result.get("error", "") if isinstance(raw_result, dict) else ""
+                display = error_msg or "当前没有可修改的报告，请先通过检索生成一份报告。"
+                _emit("error", {"code": error_code, "message": display})
+                stm.add_turn(session_id, query, display)
+                return display
+
+            # 内部错误：尝试恢复
+            if recovery_budget.can_recover():
+                recovery_budget.consume()
+                logger.info("recovery: retry pipeline for internal error %s", error_code)
+                _emit("status", {"message": "正在重试..."})
+                return await run_pipeline(
+                    query, session_id, stm, entity_tracker, client, last_report,
+                    _emit, selected_diagnosis=selected_diagnosis, last_ambiguity=last_ambiguity,
+                    selected_kbs=selected_kbs, knowledge_bases=knowledge_bases,
+                    recovery_budget=recovery_budget,
+                )
+
+            logger.error("recovery: exhausted for internal error %s", error_code)
+            error_message = "最终处理失败，请稍后重试。"
+            _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
             stm.add_turn(session_id, query, error_message)
             return error_message
 
         try:
             structured_report = parse_report_output(report_result.content)
         except ReportSchemaError as exc:
-            error_message = "报告结构校验失败，请重试。"
-            logger.warning(
-                "report_tool_terminal: selected_tool=%s parse_status=invalid error=%s",
+            # Pipeline 层 REPORT_SCHEMA_INVALID：视为 Tool Contract 异常，记录日志并终止
+            # 不再次自由生成报告，不写入 STM
+            logger.error(
+                "report_tool_terminal: selected_tool=%s parse_status=invalid error=%s — "
+                "tool contract violation, terminating",
                 report_tool_name,
                 exc,
             )
+            error_message = "服务暂时不可用，请稍后重试。"
             _emit("error", {"code": "REPORT_SCHEMA_INVALID", "message": error_message})
             stm.add_turn(session_id, query, error_message)
             return error_message
@@ -592,11 +795,30 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
     if not final_content:
         final_content = "操作完成，请查看结果。"
     if looks_like_serialized_tool_call(final_content):
-        error_message = "模型返回了无效的工具调用格式，请重试。"
+        # ── 内部恢复：重新生成一次普通文本回复 ──
         logger.warning("optional final LLM emitted serialized tool call")
-        _emit("error", {"code": "INVALID_FINAL_TOOL_CALL", "message": error_message})
-        stm.add_turn(session_id, query, error_message)
-        return error_message
+        if recovery_budget.can_recover():
+            recovery_budget.consume()
+            logger.info("recovery: retry final LLM with plain text prompt")
+            retry_messages = list(messages)
+            retry_messages.append({
+                "role": "user",
+                "content": "请用普通文本回复，不要使用任何工具调用格式。",
+            })
+            final_content, _ = await chat_with_tools(
+                retry_messages,
+                tools=None,
+                max_tokens=1024,
+                temperature=0.5,
+                debug=True,
+            )
+            if not final_content:
+                final_content = "操作完成，请查看结果。"
+            if looks_like_serialized_tool_call(final_content):
+                logger.error("recovery: final LLM still emitted serialized tool call after retry")
+                final_content = "操作完成，请查看结果。"
+        else:
+            final_content = "操作完成，请查看结果。"
 
     _emit("message", {"content": final_content})
     stm.add_turn(session_id, query, final_content)

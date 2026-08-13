@@ -583,3 +583,501 @@ def test_public_deployment_report_strips_reasoning_and_internal_fields():
         "content": "报告内容",
         "data": {"results": BASE_REPORT["results"]},
     }
+
+
+# =============================================================================
+# Recovery 机制测试
+# =============================================================================
+
+def test_recovery_report_tool_required_retry_then_success(monkeypatch):
+    """REPORT_TOOL_REQUIRED: LLM返回报告但不走工具 → 内部重试 → 成功"""
+    registry = _FakeRegistry(
+        ToolResult(content=serialize_report(BASE_REPORT), is_final=True),
+        tool_name="rag_search"
+    )
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # 第一次：LLM 直接在 content 中返回报告，不走工具
+            return json.dumps(BASE_REPORT, ensure_ascii=False), None
+        else:
+            # 第二次：恢复后正确选择工具
+            return "", [{
+                "id": "call_rag",
+                "name": "rag_search",
+                "arguments": {"query": "CT头颅 脑出血"},
+            }]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅 脑出血",
+        "session-recovery-1",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert call_count[0] == 2
+    assert "report" in [event["type"] for event in events]
+    assert "服务暂时不可用" not in result
+
+
+def test_recovery_report_tool_required_exhausted(monkeypatch):
+    """REPORT_TOOL_REQUIRED: 恢复预算耗尽 → 返回服务不可用"""
+    registry = _FakeRegistry(
+        ToolResult(content=serialize_report(BASE_REPORT), is_final=True),
+        tool_name="rag_search"
+    )
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        # 始终返回报告而不走工具
+        return json.dumps(BASE_REPORT, ensure_ascii=False), None
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅 脑出血",
+        "session-recovery-2",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert "服务暂时不可用" in result
+    assert "error" in [event["type"] for event in events]
+
+
+def test_recovery_serialized_tool_call_parse_success(monkeypatch):
+    """INVALID_TOOL_CALL: 序列化工具调用 → 解析成功 → 继续执行"""
+    registry = _FakeRegistry(
+        ToolResult(content=serialize_report(BASE_REPORT), is_final=True),
+        tool_name="rag_search"
+    )
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        return '{"tool": "rag_search", "arguments": {"query": "CT头颅"}}', None
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅",
+        "session-recovery-3",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert "report" in [event["type"] for event in events]
+    assert "服务暂时不可用" not in result
+
+
+def test_recovery_multiple_report_tools_arbitrate(monkeypatch):
+    """MULTIPLE_REPORT_TOOLS: 多个报告工具 → 自动仲裁，保留 rag_search"""
+    registry = _FakeRegistry(
+        ToolResult(content=serialize_report(BASE_REPORT), is_final=True),
+        tool_name="rag_search"
+    )
+    # 注册多个工具让仲裁逻辑生效
+    registry._tools = {
+        "rag_search": {},
+        "edit_report": {},
+        "refine_report": {},
+    }
+    # 覆盖 get_tools_schema 返回多个工具
+    original_get_schema = registry.get_tools_schema
+    registry.get_tools_schema = lambda: [
+        {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": "test",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        for name in ["rag_search", "edit_report", "refine_report"]
+    ]
+    registry.execute = original_execute = registry.execute
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        return "", [
+            {"id": "call_rag", "name": "rag_search", "arguments": {"query": "CT"}},
+            {"id": "call_edit", "name": "edit_report", "arguments": {"instruction": "改"}},
+            {"id": "call_refine", "name": "refine_report", "arguments": {"style": "正式"}},
+        ]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅",
+        "session-recovery-4",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert "report" in [event["type"] for event in events]
+    assert "服务暂时不可用" not in result
+
+
+def test_recovery_tool_failed_internal_retry(monkeypatch):
+    """REPORT_TOOL_FAILED: 内部错误 → 重试 pipeline → 成功"""
+    tool_result = ToolResult(
+        content=json.dumps({"error": "report parse failed"}, ensure_ascii=False),
+        is_final=False,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="rag_search")
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            # 第一次：LLM 选择工具，但工具返回错误
+            return "", [{
+                "id": "call_rag",
+                "name": "rag_search",
+                "arguments": {"query": "CT头颅"},
+            }]
+        else:
+            # 第二次：恢复后 LLM 再次选择工具
+            return "", [{
+                "id": "call_rag",
+                "name": "rag_search",
+                "arguments": {"query": "CT头颅"},
+            }]
+
+    # 第二次 execute 返回成功
+    execute_count = [0]
+    original_execute = registry.execute
+    async def execute_with_retry(*args, **kwargs):
+        execute_count[0] += 1
+        if execute_count[0] == 1:
+            return tool_result
+        return ToolResult(content=serialize_report(BASE_REPORT), is_final=True)
+    registry.execute = execute_with_retry
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅",
+        "session-recovery-5",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    # 重试后应该成功
+    assert "report" in [event["type"] for event in events]
+    assert "服务暂时不可用" not in result
+    assert "最终处理失败" not in result
+
+
+def test_recovery_tool_failed_user_facing_no_retry(monkeypatch):
+    """REPORT_TOOL_FAILED: 用户可处理错误（NO_LAST_REPORT）→ 直接展示，不重试"""
+    tool_result = ToolResult(
+        content=json.dumps({"error": "当前会话没有可修改的报告"}, ensure_ascii=False),
+        is_final=False,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="edit_report")
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        return "", [{
+            "id": "call_edit",
+            "name": "edit_report",
+            "arguments": {"instruction": "修改"},
+        }]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "修改报告",
+        "session-recovery-6",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    # 用户可处理错误，不重试，直接展示
+    assert call_count[0] == 1  # 只调用了一次 LLM
+    assert "没有可修改的报告" in result
+
+
+def test_recovery_schema_invalid_terminal(monkeypatch):
+    """REPORT_SCHEMA_INVALID: 工具返回非法 JSON → 日志记录并终止，不重试"""
+    tool_result = ToolResult(
+        content='{"results": "not a list"}',
+        is_final=True,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="rag_search")
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        return "", [{
+            "id": "call_rag",
+            "name": "rag_search",
+            "arguments": {"query": "CT头颅"},
+        }]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅",
+        "session-recovery-7",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert "服务暂时不可用" in result
+    assert call_count[0] == 1  # 不重试
+
+
+def test_recovery_final_llm_serialized_retry(monkeypatch):
+    """INVALID_FINAL_TOOL_CALL: 非报告工具二次LLM输出序列化 → 重试 → 成功"""
+    registry = _FakeRegistry(
+        ToolResult(content=json.dumps({"status": "ok"}), is_final=False),
+        tool_name="utility_tool"
+    )
+    # 注册一个非报告工具
+    registry._tools = {"utility_tool": {}}
+    registry.get_tools_schema = lambda: [
+        {
+            "type": "function",
+            "function": {
+                "name": "utility_tool",
+                "description": "utility",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+    call_count = [0]
+
+    async def fake_chat_with_tools(messages, **kwargs):
+        call_count[0] += 1
+        has_tools = kwargs.get("tools") is not None
+        if has_tools:
+            # 第一次：带工具调用
+            return "", [{
+                "id": "call_util",
+                "name": "utility_tool",
+                "arguments": {},
+            }]
+        else:
+            # 第二次：不带工具（final LLM）
+            if call_count[0] == 2:
+                # 第一次 final LLM：返回序列化工具调用
+                return '{"tool": "rag_search", "arguments": {}}', None
+            else:
+                # 第三次 final LLM：正常文本
+                return "操作完成", None
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "查询",
+        "session-recovery-8",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert "操作完成" in result
+    assert call_count[0] == 3  # 1次工具调用 + 2次 final LLM
+
+
+def test_recovery_budget_not_contaminated_by_retry(monkeypatch):
+    """内部恢复错误不写入 STM，避免污染多轮对话"""
+    tool_result = ToolResult(
+        content=json.dumps({"error": "report parse failed"}, ensure_ascii=False),
+        is_final=False,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="rag_search")
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return "", [{
+                "id": "call_rag",
+                "name": "rag_search",
+                "arguments": {"query": "CT头颅"},
+            }]
+        else:
+            return "", [{
+                "id": "call_rag",
+                "name": "rag_search",
+                "arguments": {"query": "CT头颅"},
+            }]
+
+    execute_count = [0]
+    original_execute = registry.execute
+    async def execute_with_retry(*args, **kwargs):
+        execute_count[0] += 1
+        if execute_count[0] == 1:
+            return tool_result
+        return ToolResult(content=serialize_report(BASE_REPORT), is_final=True)
+    registry.execute = execute_with_retry
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "CT头颅",
+        "session-recovery-9",
+        stm,
+        tracker,
+        None,
+        [""],
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    # STM 中不应包含内部错误消息
+    stm_texts = [msg["content"] for msg in stm.history]
+    assert not any("report parse failed" in t for t in stm_texts)
+    assert not any("正在重试" in t for t in stm_texts)
+    # 最终成功结果在 STM 中
+    assert "report" in [event["type"] for event in events]
+
+
+def test_recovery_classify_tool_error():
+    """_classify_tool_error 正确细分错误类型"""
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "当前会话没有可修改的报告"})
+    ) == "NO_LAST_REPORT"
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "Judge 判定存在超范围修改"})
+    ) == "EDIT_JUDGE_FAILED"
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "一次修复后仍未通过"})
+    ) == "EDIT_REPAIR_FAILED"
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "report parse failed"})
+    ) == "REPORT_PARSE_FAILED"
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "service unavailable"})
+    ) == "LLM_SERVICE_ERROR"
+    assert pipeline_module._classify_tool_error(
+        json.dumps({"error": "unknown error"})
+    ) == "UNKNOWN_TOOL_ERROR"
+
+
+def test_recovery_parse_serialized_tool_call():
+    """_parse_serialized_tool_call 正确解析各种格式"""
+    # JSON 格式
+    result = pipeline_module._parse_serialized_tool_call(
+        '{"tool": "rag_search", "arguments": {"query": "CT"}}'
+    )
+    assert result == {"name": "rag_search", "arguments": {"query": "CT"}}
+
+    # name 格式
+    result = pipeline_module._parse_serialized_tool_call(
+        '{"name": "edit_report", "arguments": {"instruction": "修改"}}'
+    )
+    assert result == {"name": "edit_report", "arguments": {"instruction": "修改"}}
+
+    # 函数调用格式
+    result = pipeline_module._parse_serialized_tool_call(
+        'rag_search({"query": "CT头颅"})'
+    )
+    assert result == {"name": "rag_search", "arguments": {"query": "CT头颅"}}
+
+    # 无效格式
+    assert pipeline_module._parse_serialized_tool_call("hello world") is None
+    assert pipeline_module._parse_serialized_tool_call("") is None
+
+
+def test_recovery_arbitrate_report_tool():
+    """_arbitrate_report_tool 按优先级保留一个工具"""
+    tool_results = [
+        ("id1", "refine_report", ToolResult("", False)),
+        ("id2", "edit_report", ToolResult("", False)),
+        ("id3", "rag_search", ToolResult("", False)),
+    ]
+    kept = pipeline_module._arbitrate_report_tool(tool_results)
+    assert kept[1] == "rag_search"
+
+    tool_results = [
+        ("id1", "refine_report", ToolResult("", False)),
+        ("id2", "edit_report", ToolResult("", False)),
+    ]
+    kept = pipeline_module._arbitrate_report_tool(tool_results)
+    assert kept[1] == "edit_report"
+
+
+if __name__ == "__main__":
+    import pytest
+    import sys
+    args = [
+        __file__,
+        "-v",
+        "--tb=short",
+        "-k", "recovery",
+    ]
+    if len(sys.argv) > 1:
+        args = [__file__] + sys.argv[1:]
+    sys.exit(pytest.main(args))

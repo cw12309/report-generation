@@ -12,7 +12,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `server.py`     | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                       |
 | `deployments.py` | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                |
-| `pipeline.py`   | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling）→ Phase 3（记忆更新）                                                      |
+| `pipeline.py`   | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling 决策与调度）→ Phase 3（报告校验/序列化/状态更新/推送） |
 | `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验、edit/refine 事实保护、Edit Judge 输出校验与 Public 脱敏                              |
 | `llm_client.py` | LLM 网络请求封装：`chat_stream()`（流式对话）、`get_embedding()`（向量化）、`chat_with_tools()`（Tool Calling）、`rerank_with_retry()`（重排重试） |
 | `schemas.py`    | Pydantic 请求模型：`ChatRequest`、Deployment CRUD/Chat、KB 与 Eval 等                                                                              |

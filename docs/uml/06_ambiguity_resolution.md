@@ -1,4 +1,4 @@
-**歧义消解流程**
+**歧义消解流程（Phase 2 输出 → Phase 3 用户选择）**
 
 ```mermaid
 sequenceDiagram

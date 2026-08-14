@@ -12,6 +12,7 @@
 | ------------ | --------------------------------------------------------------------------------- |
 | `gateway.py` | API Gateway：全局 API Key 鉴权、Deployment Key 内部转发 + HTTP 流式代理到 Worker |
 | `config.py`  | 统一配置管理：`config.yml` + `.env` 解析、OpenAI 客户端工厂、所有配置 getter 函数 |
+| `observability.py` | Monitor 共用的进程内有界事件层：请求指标、Trace、结构化日志、上下文关联与脱敏 |
 
 ## Symbol Map
 
@@ -41,6 +42,13 @@
 - `normalize_openai_base_url()` / `normalize_openai_model_urls()` — Chat/Embedding Base URL 与旧 endpoint 配置归一化
 - `_normalize_base_url(base_url, path_suffix)` — Rerank 等直接 HTTP endpoint 标准化
 
+### `observability.py`
+
+- `ObservabilityStore` — 有界保存请求指标、Trace stage 与结构化日志
+- `StructuredLogHandler` — 将应用日志转换为脱敏事件，不保存 traceback
+- `bind_observability_context()` — 让异步任务/线程日志关联 `request_id` 与 `session_id`
+- `pipeline_stage()` / `sanitize_value()` — 复用 Pipeline SSE 事件并执行字段白名单与脱敏
+
 ## Entry Points
 
 理解本目录的推荐顺序：
@@ -67,13 +75,17 @@ config.py
   → config.yml (非敏感配置)
   → .env (密钥)
   → 被所有子模块通过 getter 函数消费
+
+observability.py
+  → 被 chat/server.py 的 HTTP middleware、Pipeline event bridge 和 Monitor API 消费
+  → 不依赖 Agent/RAG/Deployment/Gateway 业务实现
 ```
 
 ## Dependencies
 
 ### Internal Dependencies
 
-- 无（`config.py` 被所有子模块依赖，但不依赖任何子模块）
+- 无（`config.py` 与 `observability.py` 被其他模块依赖，但不依赖业务子模块）
 
 ### External Dependencies
 
@@ -86,6 +98,7 @@ config.py
 
 - `gateway.py` 被 Docker Compose 独立部署
 - `config.py` 被所有子模块使用
+- `observability.py` 被 Worker Monitor 和请求执行边界使用
 
 ## Child Contexts
 
@@ -117,12 +130,17 @@ config.py
 
 优先检查: `config.py` → `get_llm_client()`, `get_embed_client()`, `config.yml` → llms/embeddings
 
+### 修改 Monitor / Trace / 实时日志
+
+优先检查: `observability.py`, `chat/server.py` 的 middleware 与 `/api/observability/*`, `front/app.js` 的 Monitor 状态；同步运行 `app/test/test_observability.py`
+
 ## Local Rules
 
 - `config.py` 是配置的唯一入口，其他模块不直接读取 `config.yml` 或 `.env`
 - Config 页面展示实际生效的 `MILVUS_URI`；保存 Milvus 地址时必须通过 `sync_milvus_uri()` 同步 `.env`，运行时客户端不得缓存旧地址
 - 密钥只从 `.env` 或环境变量读取，不回退到 `config.yml`
 - `gateway.py` 不 import Worker 代码，只做 HTTP 代理
+- 可观测事件必须保持有界并先脱敏；禁止保存 Authorization/API Key、完整 Prompt、患者正文或 traceback
 - Gateway 不读取 Deployment 数据库；Deployment Key 的动态摘要校验和状态检查由 Worker 完成
 - 新增配置 getter 函数遵循 `get_<name>()` 命名规范
 

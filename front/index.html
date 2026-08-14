@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=38" />
+    <link rel="stylesheet" href="/static/style.css?v=41" />
   </head>
   <body>
     <div class="app">
@@ -789,60 +789,82 @@ data: [DONE]</code></pre>
           <!-- 监控页面 -->
           <div class="page" id="pageMonitor">
             <header class="header">
-              <h1>会话监控</h1>
-              <p class="subtitle">查看和管理所有用户会话</p>
+              <h1>系统监控</h1>
+              <p class="subtitle">统一查看运行概览、请求 Trace、结构化实时日志和会话记录</p>
             </header>
 
             <div class="monitor-body">
-              <div class="monitor-stats">
-                <div class="monitor-stat">
-                  <span class="monitor-stat-label">总会话数</span>
-                  <span class="monitor-stat-value" id="monitorTotalSessions"
-                    >-</span
-                  >
-                </div>
-                <div class="monitor-stat">
-                  <span class="monitor-stat-label">总对话轮次</span>
-                  <span class="monitor-stat-value" id="monitorTotalTurns"
-                    >-</span
-                  >
-                </div>
-                <div class="monitor-stat">
-                  <span class="monitor-stat-label">最后更新</span>
-                  <span class="monitor-stat-value" id="monitorLastUpdate"
-                    >-</span
-                  >
-                </div>
+              <div class="monitor-tabs" role="tablist" aria-label="监控视图">
+                <button type="button" class="monitor-tab active" data-monitor-tab="overview" role="tab" aria-selected="true">概览</button>
+                <button type="button" class="monitor-tab" data-monitor-tab="sessions" role="tab" aria-selected="false">会话记录</button>
+                <button type="button" class="monitor-tab" data-monitor-tab="traces" role="tab" aria-selected="false">请求 Trace</button>
+                <button type="button" class="monitor-tab" data-monitor-tab="logs" role="tab" aria-selected="false">实时日志</button>
               </div>
 
-              <div class="monitor-actions">
-                <button id="btnRefreshSessions" class="btn btn-outline">
-                  🔄 刷新列表
-                </button>
-              </div>
+              <section class="monitor-panel active" id="monitorPanelOverview" data-monitor-panel="overview" role="tabpanel">
+                <div class="monitor-stats monitor-system-stats">
+                  <div class="monitor-stat"><span class="monitor-stat-label">服务状态</span><span class="monitor-stat-value monitor-status-value" id="monitorServiceStatus">-</span></div>
+                  <div class="monitor-stat"><span class="monitor-stat-label">请求量</span><span class="monitor-stat-value" id="monitorRequestCount">-</span></div>
+                  <div class="monitor-stat"><span class="monitor-stat-label">成功率</span><span class="monitor-stat-value" id="monitorSuccessRate">-</span></div>
+                  <div class="monitor-stat"><span class="monitor-stat-label">平均延迟</span><span class="monitor-stat-value" id="monitorAverageLatency">-</span></div>
+                  <div class="monitor-stat"><span class="monitor-stat-label">P95 延迟</span><span class="monitor-stat-value" id="monitorP95Latency">-</span></div>
+                  <div class="monitor-stat"><span class="monitor-stat-label">错误数</span><span class="monitor-stat-value monitor-error-value" id="monitorErrorCount">-</span></div>
+                </div>
+              </section>
 
-              <div class="monitor-sessions">
-                <div class="monitor-sessions-header">
-                  <span class="monitor-sessions-col monitor-col-id"
-                    >会话 ID</span
-                  >
-                  <span class="monitor-sessions-col monitor-col-title"
-                    >标题</span
-                  >
-                  <span class="monitor-sessions-col monitor-col-turns"
-                    >轮次</span
-                  >
-                  <span class="monitor-sessions-col monitor-col-time"
-                    >创建时间</span
-                  >
-                  <span class="monitor-sessions-col monitor-col-actions"
-                    >操作</span
-                  >
+              <section class="monitor-panel" id="monitorPanelSessions" data-monitor-panel="sessions" role="tabpanel" hidden>
+                <div class="monitor-section-card">
+                  <div class="monitor-section-header">
+                    <div><h2>会话运行记录</h2><p>复用现有 Session 与 Memory 数据</p></div>
+                    <button id="btnRefreshSessions" class="btn btn-outline">🔄 刷新会话</button>
+                  </div>
+                  <div class="monitor-stats monitor-session-stats">
+                    <div class="monitor-stat"><span class="monitor-stat-label">总会话数</span><span class="monitor-stat-value" id="monitorTotalSessions">-</span></div>
+                    <div class="monitor-stat"><span class="monitor-stat-label">总对话轮次</span><span class="monitor-stat-value" id="monitorTotalTurns">-</span></div>
+                    <div class="monitor-stat"><span class="monitor-stat-label">最后更新</span><span class="monitor-stat-value monitor-time-value" id="monitorLastUpdate">-</span></div>
+                  </div>
+
+                  <div class="monitor-sessions">
+                    <div class="monitor-sessions-header">
+                      <span class="monitor-sessions-col monitor-col-id">会话 ID</span>
+                      <span class="monitor-sessions-col monitor-col-title">标题</span>
+                      <span class="monitor-sessions-col monitor-col-turns">轮次</span>
+                      <span class="monitor-sessions-col monitor-col-time">创建时间</span>
+                      <span class="monitor-sessions-col monitor-col-actions">操作</span>
+                    </div>
+                    <div class="monitor-sessions-list" id="monitorSessionsList">
+                      <div class="monitor-empty">加载中...</div>
+                    </div>
+                  </div>
                 </div>
-                <div class="monitor-sessions-list" id="monitorSessionsList">
-                  <div class="monitor-empty">加载中...</div>
+              </section>
+
+              <section class="monitor-panel" id="monitorPanelTraces" data-monitor-panel="traces" role="tabpanel" hidden>
+                <div class="monitor-toolbar">
+                  <input class="config-input" id="monitorTraceRequestFilter" type="text" placeholder="按 request_id 过滤" />
+                  <input class="config-input" id="monitorTraceSessionFilter" type="text" placeholder="按 session_id 过滤" />
+                  <button type="button" id="btnRefreshTraces" class="btn btn-outline">刷新 Trace</button>
                 </div>
-              </div>
+                <div class="monitor-trace-layout">
+                  <div class="monitor-trace-list" id="monitorTraceList"><div class="monitor-empty">加载中...</div></div>
+                  <div class="monitor-trace-detail" id="monitorTraceDetail"><div class="monitor-empty">请选择一个 request_id 查看完整链路</div></div>
+                </div>
+              </section>
+
+              <section class="monitor-panel" id="monitorPanelLogs" data-monitor-panel="logs" role="tabpanel" hidden>
+                <div class="monitor-toolbar monitor-log-toolbar">
+                  <select class="config-input" id="monitorLogLevel">
+                    <option value="">全部 Level</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option><option value="CRITICAL">CRITICAL</option>
+                  </select>
+                  <input class="config-input" id="monitorLogModule" type="text" placeholder="module" />
+                  <input class="config-input" id="monitorLogSessionId" type="text" placeholder="session_id" />
+                  <input class="config-input" id="monitorLogRequestId" type="text" placeholder="request_id" />
+                  <button type="button" id="btnReconnectLogs" class="btn btn-outline">应用过滤</button>
+                  <button type="button" id="btnClearLogs" class="btn btn-outline">清空显示</button>
+                </div>
+                <div class="monitor-log-meta"><span class="monitor-live-dot"></span><span id="monitorLogStatus">未连接</span><span>仅展示脱敏结构化事件，不包含完整 Prompt 或 traceback</span></div>
+                <div class="monitor-log-list" id="monitorLogList"><div class="monitor-empty">切换到实时日志后开始连接</div></div>
+              </section>
             </div>
           </div>
 
@@ -1109,6 +1131,6 @@ data: [DONE]</code></pre>
 
     <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/static/app.js?v=56"></script>
+    <script src="/static/app.js?v=60"></script>
   </body>
 </html>

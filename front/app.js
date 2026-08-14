@@ -386,7 +386,9 @@ sidebarBtns.forEach((btn) => {
       loadConfig();
     }
     if (page === "monitor") {
-      loadSessionsList();
+      activateMonitorTab(monitorActiveTab);
+    } else {
+      stopMonitorLogStream();
     }
   });
 });
@@ -4982,16 +4984,281 @@ function addUserMessage(text) {
   scrollToBottom();
 }
 
-// ========== 会话监控 ==========
+// ========== Monitor：概览 / 会话记录 / Trace / 结构化实时日志 ==========
+let monitorActiveTab = "overview";
+let monitorLogEventSource = null;
+let monitorLogItems = [];
+let monitorLastLogId = 0;
+let monitorPendingTraceRequestId = "";
+
+const monitorTabs = document.querySelectorAll("[data-monitor-tab]");
+const monitorPanels = document.querySelectorAll("[data-monitor-panel]");
 const monitorTotalSessions = document.getElementById("monitorTotalSessions");
 const monitorTotalTurns = document.getElementById("monitorTotalTurns");
 const monitorLastUpdate = document.getElementById("monitorLastUpdate");
 const monitorSessionsList = document.getElementById("monitorSessionsList");
+const monitorServiceStatus = document.getElementById("monitorServiceStatus");
+const monitorRequestCount = document.getElementById("monitorRequestCount");
+const monitorSuccessRate = document.getElementById("monitorSuccessRate");
+const monitorAverageLatency = document.getElementById("monitorAverageLatency");
+const monitorP95Latency = document.getElementById("monitorP95Latency");
+const monitorErrorCount = document.getElementById("monitorErrorCount");
+const monitorTraceList = document.getElementById("monitorTraceList");
+const monitorTraceDetail = document.getElementById("monitorTraceDetail");
+const monitorTraceRequestFilter = document.getElementById("monitorTraceRequestFilter");
+const monitorTraceSessionFilter = document.getElementById("monitorTraceSessionFilter");
+const monitorLogList = document.getElementById("monitorLogList");
+const monitorLogStatus = document.getElementById("monitorLogStatus");
 const btnRefreshSessions = document.getElementById("btnRefreshSessions");
+const btnRefreshTraces = document.getElementById("btnRefreshTraces");
+const btnReconnectLogs = document.getElementById("btnReconnectLogs");
+const btnClearLogs = document.getElementById("btnClearLogs");
 const sessionDetailModal = document.getElementById("sessionDetailModal");
 const sessionDetailInfo = document.getElementById("sessionDetailInfo");
 const sessionDetailTurns = document.getElementById("sessionDetailTurns");
 const btnCloseSessionDetail = document.getElementById("btnCloseSessionDetail");
+
+const TRACE_STAGE_LABELS = {
+  request: "Request",
+  entity: "Entity",
+  memory: "Memory",
+  tool: "Tool",
+  rag: "RAG",
+  recovery: "Recovery",
+  report: "Report",
+  done: "Done",
+  error: "Error",
+};
+
+function formatMonitorTimestamp(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? escapeHtml(String(value))
+    : date.toLocaleString("zh-CN", { hour12: false });
+}
+
+function escapeHtmlAttribute(value) {
+  return escapeHtml(String(value ?? ""))
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderMonitorIdentifier(value, kind, { linkToTrace = false } = {}) {
+  const rawValue = String(value ?? "");
+  if (!rawValue) {
+    return '<span class="monitor-identifier monitor-identifier-empty"><code>-</code></span>';
+  }
+  const normalizedKind = kind === "request_id" ? "request_id" : "session_id";
+  const escapedValue = escapeHtml(rawValue);
+  const escapedAttribute = escapeHtmlAttribute(rawValue);
+  const valueMarkup = linkToTrace
+    ? `<button type="button" class="monitor-id-link" data-open-trace-request-id="${escapedAttribute}" title="打开请求 Trace：${escapedAttribute}"><code>${escapedValue}</code></button>`
+    : `<code title="${escapedAttribute}">${escapedValue}</code>`;
+  return `
+    <span class="monitor-identifier monitor-identifier-${normalizedKind}" title="${escapedAttribute}">
+      ${valueMarkup}
+      <button type="button" class="monitor-id-copy" data-monitor-copy-id="${escapedAttribute}" data-monitor-copy-label="${normalizedKind}" aria-label="复制完整 ${normalizedKind}" title="复制完整 ${normalizedKind}">复制</button>
+    </span>`;
+}
+
+function activateMonitorTab(tabName) {
+  monitorActiveTab = ["overview", "sessions", "traces", "logs"].includes(tabName)
+    ? tabName
+    : "overview";
+  monitorTabs.forEach((tab) => {
+    const active = tab.dataset.monitorTab === monitorActiveTab;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  monitorPanels.forEach((panel) => {
+    const active = panel.dataset.monitorPanel === monitorActiveTab;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+  if (monitorActiveTab === "overview") {
+    stopMonitorLogStream();
+    loadMonitorOverview();
+  } else if (monitorActiveTab === "sessions") {
+    stopMonitorLogStream();
+    loadSessionsList();
+  } else if (monitorActiveTab === "traces") {
+    stopMonitorLogStream();
+    loadMonitorTraces();
+  } else {
+    startMonitorLogStream();
+  }
+}
+
+async function loadMonitorOverview() {
+  await loadObservabilityOverview();
+}
+
+async function loadObservabilityOverview() {
+  try {
+    const response = await fetch(`${API_BASE}/observability/overview`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const healthy = data.service_status === "healthy";
+    monitorServiceStatus.textContent = healthy ? "正常" : "降级";
+    monitorServiceStatus.classList.toggle("is-healthy", healthy);
+    monitorServiceStatus.classList.toggle("is-degraded", !healthy);
+    monitorRequestCount.textContent = String(data.request_count ?? 0);
+    monitorSuccessRate.textContent = `${Number(data.success_rate ?? 0).toFixed(1)}%`;
+    monitorAverageLatency.textContent = `${Number(data.average_latency_ms ?? 0).toFixed(1)} ms`;
+    monitorP95Latency.textContent = `${Number(data.p95_latency_ms ?? 0).toFixed(1)} ms`;
+    monitorErrorCount.textContent = String(data.error_count ?? 0);
+  } catch (error) {
+    monitorServiceStatus.textContent = "不可用";
+    monitorServiceStatus.classList.remove("is-healthy");
+    monitorServiceStatus.classList.add("is-degraded");
+    console.warn("Monitor 概览加载失败", error);
+  }
+}
+
+async function loadMonitorTraces() {
+  if (!monitorTraceList) return;
+  const params = new URLSearchParams({ limit: "100" });
+  const requestId = monitorTraceRequestFilter?.value.trim();
+  const sessionId = monitorTraceSessionFilter?.value.trim();
+  if (requestId) params.set("request_id", requestId);
+  if (sessionId) params.set("session_id", sessionId);
+  monitorTraceList.innerHTML = '<div class="monitor-empty">加载中...</div>';
+  try {
+    const response = await fetch(`${API_BASE}/observability/traces?${params.toString()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    renderMonitorTraceList(data.items || []);
+    if (monitorPendingTraceRequestId) {
+      const requestIdToOpen = monitorPendingTraceRequestId;
+      monitorPendingTraceRequestId = "";
+      await loadMonitorTraceDetail(requestIdToOpen);
+    }
+  } catch (error) {
+    monitorTraceList.innerHTML = `<div class="monitor-empty">Trace 加载失败: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderMonitorTraceList(items) {
+  if (!items.length) {
+    monitorTraceList.innerHTML = '<div class="monitor-empty">暂无请求 Trace</div>';
+    return;
+  }
+  monitorTraceList.innerHTML = items
+    .map((item) => {
+      const stages = [...new Set(item.stages || [])]
+        .map((stage) => TRACE_STAGE_LABELS[stage] || stage)
+        .join(" → ");
+      return `
+        <div class="monitor-trace-item">
+          <div class="monitor-trace-item-head">
+            <span class="monitor-trace-list-request"><span>request:</span>${renderMonitorIdentifier(item.request_id, "request_id")}</span>
+            <span class="monitor-trace-state state-${escapeHtml(String(item.state || "running"))}">${escapeHtml(String(item.status_code ?? "运行中"))}</span>
+          </div>
+          <button type="button" class="monitor-trace-open" data-trace-request-id="${escapeHtmlAttribute(item.request_id)}">
+            <span class="monitor-trace-path">${escapeHtml(String(item.method || ""))} ${escapeHtml(String(item.path || ""))}</span>
+            <span class="monitor-trace-chain">${escapeHtml(stages || "Request")}</span>
+            <span class="monitor-trace-meta">${formatMonitorTimestamp(item.started_at)} · ${item.duration_ms == null ? "-" : `${Number(item.duration_ms).toFixed(1)} ms`}</span>
+          </button>
+          <div class="monitor-trace-list-session"><span>session:</span>${renderMonitorIdentifier(item.session_id, "session_id")}</div>
+        </div>`;
+    })
+    .join("");
+  monitorTraceList.querySelectorAll("[data-trace-request-id]").forEach((button) => {
+    button.addEventListener("click", () => loadMonitorTraceDetail(button.dataset.traceRequestId));
+  });
+}
+
+async function loadMonitorTraceDetail(requestId) {
+  if (!requestId || !monitorTraceDetail) return;
+  monitorTraceDetail.innerHTML = '<div class="monitor-empty">加载中...</div>';
+  try {
+    const response = await fetch(`${API_BASE}/observability/traces/${encodeURIComponent(requestId)}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const trace = await response.json();
+    const events = trace.events || [];
+    monitorTraceDetail.innerHTML = `
+      <div class="monitor-trace-summary">
+        <span class="monitor-trace-request"><span>request:</span>${renderMonitorIdentifier(trace.request_id, "request_id")}</span>
+        <span>${escapeHtml(String(trace.method || ""))} ${escapeHtml(String(trace.path || ""))}</span>
+        <span class="monitor-trace-session"><span>session:</span>${renderMonitorIdentifier(trace.session_id, "session_id")}</span>
+      </div>
+      <div class="monitor-trace-timeline">
+        ${events.map((event, index) => `
+          <div class="monitor-trace-event stage-${escapeHtml(String(event.stage || "request"))}">
+            <span class="monitor-trace-index">${index + 1}</span>
+            <div><strong>${escapeHtml(TRACE_STAGE_LABELS[event.stage] || event.stage || "Event")}</strong><small>${escapeHtml(String(event.event_type || ""))} · ${formatMonitorTimestamp(event.timestamp)}</small><pre>${escapeHtml(JSON.stringify(event.details || {}, null, 2))}</pre></div>
+          </div>`).join("")}
+      </div>`;
+  } catch (error) {
+    monitorTraceDetail.innerHTML = `<div class="monitor-empty">Trace 详情加载失败: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function monitorLogParams() {
+  const params = new URLSearchParams({ after_id: String(monitorLastLogId) });
+  const fields = [
+    ["level", "monitorLogLevel"],
+    ["module", "monitorLogModule"],
+    ["session_id", "monitorLogSessionId"],
+    ["request_id", "monitorLogRequestId"],
+  ];
+  fields.forEach(([key, id]) => {
+    const value = document.getElementById(id)?.value.trim();
+    if (value) params.set(key, value);
+  });
+  return params;
+}
+
+function startMonitorLogStream({ resetCursor = false } = {}) {
+  stopMonitorLogStream();
+  if (resetCursor) monitorLastLogId = 0;
+  monitorLogStatus.textContent = "连接中...";
+  monitorLogEventSource = new EventSource(`${API_BASE}/observability/logs/stream?${monitorLogParams().toString()}`);
+  monitorLogEventSource.addEventListener("log", (event) => {
+    try {
+      const item = JSON.parse(event.data);
+      monitorLastLogId = Math.max(monitorLastLogId, Number(item.id || 0));
+      monitorLogItems.push(item);
+      if (monitorLogItems.length > 500) monitorLogItems = monitorLogItems.slice(-500);
+      renderMonitorLogs();
+    } catch (error) {
+      monitorLogStatus.textContent = `日志解析失败: ${error.message}`;
+    }
+  });
+  monitorLogEventSource.onopen = () => { monitorLogStatus.textContent = "实时连接中"; };
+  monitorLogEventSource.onerror = () => { monitorLogStatus.textContent = "连接中断，浏览器将自动重试"; };
+}
+
+function stopMonitorLogStream() {
+  if (monitorLogEventSource) {
+    monitorLogEventSource.close();
+    monitorLogEventSource = null;
+  }
+  if (monitorLogStatus && monitorActiveTab !== "logs") monitorLogStatus.textContent = "未连接";
+}
+
+function renderMonitorLogs() {
+  if (!monitorLogList) return;
+  if (!monitorLogItems.length) {
+    monitorLogList.innerHTML = '<div class="monitor-empty">暂无匹配日志</div>';
+    return;
+  }
+  monitorLogList.innerHTML = monitorLogItems
+    .map((item) => `
+      <div class="monitor-log-row">
+        <time>${formatMonitorTimestamp(item.timestamp)}</time>
+        <span class="monitor-log-level level-${escapeHtml(String(item.level || "info").toLowerCase())}">${escapeHtml(String(item.level || "INFO"))}</span>
+        <code>${escapeHtml(String(item.module || "-"))}</code>
+        <span class="monitor-log-message">${escapeHtml(String(item.message || ""))}</span>
+        <span class="monitor-log-context">
+          <span class="monitor-log-request"><span>request=</span>${renderMonitorIdentifier(item.request_id, "request_id", { linkToTrace: true })}</span>
+          <span class="monitor-log-session"><span>session=</span>${renderMonitorIdentifier(item.session_id, "session_id")}</span>
+        </span>
+      </div>`)
+    .join("");
+  monitorLogList.scrollTop = monitorLogList.scrollHeight;
+}
 
 // 加载会话列表
 async function loadSessionsList() {
@@ -5020,18 +5287,23 @@ async function loadSessionsList() {
 
     monitorSessionsList.innerHTML = sessions
       .map(
-        (s) => `
-        <div class="monitor-session-row" data-session-id="${s.id}">
-          <span class="monitor-session-id" title="${s.id}">${s.id.slice(0, 20)}...</span>
-          <span class="monitor-session-title" title="${s.title || "未命名"}">${s.title || "未命名"}</span>
+        (s) => {
+          const sessionId = String(s.id || "");
+          const escapedSessionId = escapeHtmlAttribute(sessionId);
+          const sessionTitle = String(s.title || "未命名");
+          return `
+        <div class="monitor-session-row" data-session-id="${escapedSessionId}">
+          <span class="monitor-session-id">${renderMonitorIdentifier(sessionId, "session_id")}</span>
+          <span class="monitor-session-title" title="${escapeHtmlAttribute(sessionTitle)}">${escapeHtml(sessionTitle)}</span>
           <span class="monitor-session-turns">${s.turn_count || 0}</span>
           <span class="monitor-session-time">${formatSessionTime(s.created_at)}</span>
           <span class="monitor-session-actions">
-            <button class="btn btn-sm btn-outline" onclick="viewSessionDetail('${s.id}')">查看</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteSession('${s.id}')">删除</button>
+            <button type="button" class="btn btn-sm btn-outline" data-view-session-id="${escapedSessionId}">查看</button>
+            <button type="button" class="btn btn-sm btn-danger" data-delete-session-id="${escapedSessionId}">删除</button>
           </span>
         </div>
-      `,
+      `;
+        },
       )
       .join("");
   } catch (e) {
@@ -5043,12 +5315,12 @@ async function loadSessionsList() {
 async function viewSessionDetail(sessionId) {
   try {
     // 加载会话记忆
-    const res = await fetch(`${API_BASE}/memory?session_id=${sessionId}`);
+    const res = await fetch(`${API_BASE}/memory?session_id=${encodeURIComponent(sessionId)}`);
     const data = await res.json();
 
     // 显示基本信息
     sessionDetailInfo.innerHTML = `
-      <span>会话 ID: <strong>${sessionId.slice(0, 30)}...</strong></span>
+      <span class="session-detail-session-id"><span>会话 ID:</span>${renderMonitorIdentifier(sessionId, "session_id")}</span>
       <span>当前轮次: <strong>${data.current_turns || 0}</strong></span>
       <span>总轮次: <strong>${data.total_turns || 0}</strong></span>
     `;
@@ -5078,14 +5350,12 @@ async function viewSessionDetail(sessionId) {
 
 // 删除会话
 async function deleteSession(sessionId) {
-  if (
-    !confirm(`确定要删除会话 ${sessionId.slice(0, 20)}... 吗？此操作不可恢复。`)
-  ) {
+  if (!confirm(`确定要删除会话 ${sessionId} 吗？此操作不可恢复。`)) {
     return;
   }
 
   try {
-    await fetch(`${API_BASE}/session?session_id=${sessionId}`, {
+    await fetch(`${API_BASE}/session?session_id=${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     });
     await loadSessionsList();
@@ -5093,6 +5363,38 @@ async function deleteSession(sessionId) {
     alert(`删除会话失败: ${e.message}`);
   }
 }
+
+monitorSessionsList?.addEventListener("click", (event) => {
+  const viewButton = event.target.closest?.("[data-view-session-id]");
+  if (viewButton) {
+    viewSessionDetail(viewButton.dataset.viewSessionId);
+    return;
+  }
+  const deleteButton = event.target.closest?.("[data-delete-session-id]");
+  if (deleteButton) deleteSession(deleteButton.dataset.deleteSessionId);
+});
+
+document.addEventListener("click", (event) => {
+  const copyButton = event.target.closest?.("[data-monitor-copy-id]");
+  if (copyButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    copyApiText(
+      copyButton.dataset.monitorCopyId,
+      copyButton.dataset.monitorCopyLabel || "ID",
+    );
+    return;
+  }
+  const traceLink = event.target.closest?.("[data-open-trace-request-id]");
+  if (!traceLink) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const requestId = traceLink.dataset.openTraceRequestId;
+  monitorTraceRequestFilter.value = requestId;
+  monitorTraceSessionFilter.value = "";
+  monitorPendingTraceRequestId = requestId;
+  activateMonitorTab("traces");
+});
 
 // 关闭会话详情弹窗
 btnCloseSessionDetail.addEventListener("click", () => {
@@ -5110,7 +5412,27 @@ btnRefreshSessions.addEventListener("click", () => {
   loadSessionsList();
 });
 
+monitorTabs.forEach((tab) => {
+  tab.addEventListener("click", () => activateMonitorTab(tab.dataset.monitorTab));
+});
+
+btnRefreshTraces?.addEventListener("click", loadMonitorTraces);
+[monitorTraceRequestFilter, monitorTraceSessionFilter].forEach((input) => {
+  input?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") loadMonitorTraces();
+  });
+});
+btnReconnectLogs?.addEventListener("click", () => {
+  monitorLogItems = [];
+  renderMonitorLogs();
+  startMonitorLogStream({ resetCursor: true });
+});
+btnClearLogs?.addEventListener("click", () => {
+  monitorLogItems = [];
+  renderMonitorLogs();
+});
+
 // 页面加载后自动加载会话列表
 document.addEventListener("DOMContentLoaded", () => {
-  loadSessionsList();
+  loadMonitorOverview();
 });

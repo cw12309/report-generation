@@ -29,7 +29,9 @@ retrieval:
   rag_top_k: 50
   rerank_top_k: 10
   collection_name: medical_reports
-  db_path: ./app/data_pipeline/milvus_lite.db
+milvus:
+  uri: http://220.154.3.166:19530
+  token: ${MILVUS_TOKEN}
 short_term_memory:
   max_rounds: 5
   decay_factor: 0.9

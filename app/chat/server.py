@@ -22,7 +22,7 @@ if str(APP_ROOT) not in sys.path:
 import yaml
 import requests
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, UploadFile, File, Query
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -44,6 +44,14 @@ from data_pipeline.build_vector_db import build_db, ensure_collection_schema
 from data_pipeline.extract_metadata import extract_all
 from data_pipeline.process_reports import process_uploaded_excels
 from milvus_compat import create_milvus_client
+from observability import (
+    bind_observability_context,
+    current_request_id,
+    install_structured_log_handler,
+    new_request_id,
+    normalize_request_id,
+    observability_store,
+)
 from eval.generate_test_cases import stream_generate_cases
 from eval.run_retrieval_eval import (
     DEFAULT_DATASET,
@@ -121,6 +129,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
     )
+    install_structured_log_handler()
 
     app = FastAPI(title="影像报告生成 Agent Worker")
     store = session_store or SessionStore(
@@ -134,6 +143,43 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     auto_generation_lock = asyncio.Lock()
     conversation_locks = ConversationLockRegistry()
     evaluation_tasks: set[asyncio.Task] = set()
+
+    @app.middleware("http")
+    async def observe_http_request(request: Request, call_next):
+        """Record bounded request metrics/traces without inspecting request bodies."""
+        if request.url.path.startswith(("/static", "/api/observability")):
+            return await call_next(request)
+
+        request_id = normalize_request_id(request.headers.get("X-Request-ID", ""))
+        session_id = str(request.query_params.get("session_id") or "")[:128]
+        started_at = time.perf_counter()
+        observability_store.start_request(
+            request_id,
+            method=request.method,
+            path=request.url.path,
+            session_id=session_id,
+        )
+        with bind_observability_context(
+            request_id=request_id,
+            session_id=session_id,
+        ):
+            try:
+                response = await call_next(request)
+            except Exception:
+                observability_store.finish_request(
+                    request_id,
+                    status_code=500,
+                    duration_ms=(time.perf_counter() - started_at) * 1000,
+                )
+                logger.exception("HTTP request failed: path=%s", request.url.path)
+                raise
+        response.headers["X-Request-ID"] = request_id
+        observability_store.finish_request(
+            request_id,
+            status_code=response.status_code,
+            duration_ms=(time.perf_counter() - started_at) * 1000,
+        )
+        return response
 
     async def _persist_evaluation_event(event: dict) -> None:
         event_type = str(event.get("type") or "")
@@ -191,6 +237,104 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         """Only becomes reachable after the Worker startup hook has completed."""
         return {"status": "ok"}
 
+    @app.get("/api/observability/overview", summary="Monitor 运行概览")
+    async def observability_overview():
+        """Combine bounded request metrics with the existing session metrics."""
+        overview = observability_store.overview()
+        sessions = await asyncio.to_thread(store.list_sessions)
+        overview["sessions"] = {
+            "total": len(sessions),
+            "turns": sum(int(item.get("turn_count", 0) or 0) for item in sessions),
+        }
+        overview["services"] = {
+            "worker": "healthy",
+            "observability": "healthy",
+        }
+        return overview
+
+    @app.get("/api/observability/traces", summary="Monitor 请求 Trace 列表")
+    async def observability_traces(
+        limit: int = Query(default=100, ge=1, le=500),
+        session_id: str = Query(default="", max_length=128),
+        request_id: str = Query(default="", max_length=128),
+    ):
+        scan_limit = observability_store.max_traces if (session_id or request_id) else limit
+        items = observability_store.list_traces(limit=scan_limit)
+        if session_id:
+            items = [item for item in items if item.get("session_id") == session_id]
+        if request_id:
+            items = [item for item in items if item.get("request_id") == request_id]
+        return {"items": items[:limit], "total": len(items)}
+
+    @app.get(
+        "/api/observability/traces/{request_id}",
+        summary="Monitor 单次请求完整 Trace",
+    )
+    async def observability_trace_detail(request_id: str):
+        trace = observability_store.get_trace(request_id)
+        if trace is None:
+            raise HTTPException(status_code=404, detail="Trace 不存在或已过期")
+        return trace
+
+    @app.get("/api/observability/logs/stream", summary="Monitor 结构化实时日志 SSE")
+    async def observability_log_stream(
+        request: Request,
+        level: str = Query(default="", max_length=16),
+        module: str = Query(default="", max_length=160),
+        session_id: str = Query(default="", max_length=128),
+        request_id: str = Query(default="", max_length=128),
+        after_id: int = Query(default=0, ge=0),
+    ):
+        normalized_level = level.upper()
+        if normalized_level and normalized_level not in {
+            "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
+        }:
+            raise HTTPException(status_code=422, detail="不支持的日志级别")
+
+        try:
+            reconnect_cursor = max(
+                after_id,
+                int(request.headers.get("Last-Event-ID", "0") or 0),
+            )
+        except ValueError:
+            reconnect_cursor = after_id
+
+        async def event_stream():
+            cursor = reconnect_cursor
+            try:
+                while True:
+                    events = observability_store.list_logs(
+                        after_id=cursor,
+                        level=normalized_level,
+                        module=module,
+                        session_id=session_id,
+                        request_id=request_id,
+                        limit=200,
+                    )
+                    if events:
+                        for event in events:
+                            cursor = max(cursor, int(event["id"]))
+                            yield (
+                                f"id: {event['id']}\n"
+                                "event: log\n"
+                                f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                            )
+                    else:
+                        yield ": heartbeat\n\n"
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                return
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache, no-transform",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     def _resolve_knowledge_bases(selected_kbs: List[str]):
         requested = list(dict.fromkeys(selected_kbs))
         active = {
@@ -209,6 +353,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         return requested, [active[kb_id] for kb_id in requested]
 
     async def _stateless_search(request: RAGSearchRequest):
+        trace_request_id = current_request_id() or new_request_id()
         query = request.query.strip()
         if not query:
             raise HTTPException(status_code=422, detail="query 不能为空")
@@ -233,11 +378,23 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             kwargs["rerank_top_k"] = request.rerank_top_k
 
         def run_search():
-            client = _new_milvus_client()
-            try:
-                return search_reports(query, client=client, **kwargs)
-            finally:
-                client.close()
+            with bind_observability_context(request_id=trace_request_id):
+                client = _new_milvus_client()
+                try:
+                    return search_reports(
+                        query,
+                        client=client,
+                        _emit=lambda event_type, data: (
+                            observability_store.record_pipeline_event(
+                                trace_request_id,
+                                event_type,
+                                data,
+                            )
+                        ),
+                        **kwargs,
+                    )
+                finally:
+                    client.close()
 
         return await asyncio.to_thread(run_search)
 
@@ -646,15 +803,23 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         selected_kbs: list[str],
         active_kbs: list[dict],
         execution_guard=None,
+        request_id: str = "",
     ):
         """Run the existing stateful pipeline and yield internal event dictionaries."""
         event_queue: asyncio.Queue = asyncio.Queue()
         stream_finished = object()
+        trace_request_id = request_id or current_request_id() or new_request_id()
 
         def queue_event(event_type: str, data: dict) -> None:
+            observability_store.record_pipeline_event(
+                trace_request_id,
+                event_type,
+                data,
+                session_id=session_id,
+            )
             event_queue.put_nowait({"type": event_type, **data})
 
-        async def execute() -> None:
+        async def _execute_bound() -> None:
             from langsmith.run_helpers import get_current_run_tree
 
             session = None
@@ -672,6 +837,12 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                         if isinstance(structured, dict):
                             event_data["data"] = structured
                     payload = {"type": event_type, **event_data}
+                    observability_store.record_pipeline_event(
+                        trace_request_id,
+                        event_type,
+                        event_data,
+                        session_id=session_id,
+                    )
                     logger.info(
                         "── _emit_sse: type=%s, len=%s",
                         event_type,
@@ -741,6 +912,13 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 queue_event("done", {"total_time": round(time.time() - start_time, 1)})
                 event_queue.put_nowait(stream_finished)
 
+        async def execute() -> None:
+            with bind_observability_context(
+                request_id=trace_request_id,
+                session_id=session_id,
+            ):
+                await _execute_bound()
+
         async def run() -> None:
             if execution_guard is None:
                 await execute()
@@ -753,12 +931,26 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             try:
                 event = await asyncio.wait_for(event_queue.get(), timeout=120)
             except asyncio.TimeoutError:
-                yield {
+                timeout_event = {
                     "type": "error",
                     "code": "CHAT_TIMEOUT",
                     "message": "等待 Agent 响应超时",
                 }
-                yield {"type": "done", "total_time": 120.0}
+                done_event = {"type": "done", "total_time": 120.0}
+                observability_store.record_pipeline_event(
+                    trace_request_id,
+                    "error",
+                    timeout_event,
+                    session_id=session_id,
+                )
+                observability_store.record_pipeline_event(
+                    trace_request_id,
+                    "done",
+                    done_event,
+                    session_id=session_id,
+                )
+                yield timeout_event
+                yield done_event
                 break
             if event is stream_finished:
                 break
@@ -919,6 +1111,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
 
         store.touch_api_deployment(deployment_id)
         store.touch_api_conversation(deployment_id, conversation_id)
+        trace_request_id = current_request_id() or new_request_id()
 
         async def public_event_stream():
             conversation_event = {
@@ -952,6 +1145,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     deployment_id,
                     conversation_id,
                 ),
+                request_id=trace_request_id,
             ):
                 public_event = map_public_event(
                     str(event.get("type") or ""),
@@ -986,6 +1180,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 status_code=400,
                 detail=f"知识库不存在或不可用: {', '.join(invalid_kbs)}",
             )
+        trace_request_id = current_request_id() or new_request_id()
 
         async def event_stream():
             async for event in _stateful_chat_events(
@@ -994,6 +1189,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 selected_diagnosis=selected_diagnosis,
                 selected_kbs=selected_kbs,
                 active_kbs=list(active_kbs.values()),
+                request_id=trace_request_id,
             ):
                 payload = json.dumps(event, ensure_ascii=False)
                 yield f"data: {payload}\n\n"

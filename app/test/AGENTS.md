@@ -15,6 +15,7 @@
 | `test_rerank_flow.py`                     | pytest: Rerank 流程测试                     |
 | `test_model_base_urls.py`                 | pytest: Base URL 归一化与 Embedding endpoint 防重复测试 |
 | `test_milvus_schema_compat.py`            | pytest: Milvus Lite 标量索引兼容与启动保护测试 |
+| `test_observability.py`                   | pytest: Monitor 指标、Trace、结构化日志、脱敏与接口测试 |
 | `test_knowledge_base_chunks.py`           | pytest: 知识库切片 CRUD 测试                |
 | `test_api_deployments.py`                 | pytest: Deployment 安全、存储、事件和并发锁 |
 | `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成与回归 |

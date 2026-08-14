@@ -35,18 +35,18 @@ index.html ── fixed DOM / pages / forms / modals
 | Knowledge Base | `pageKB`, `manageKbList`, `kbDetailArea`, `kbChunkList`, `xlsxInput`, `kbLog` | `refreshKnowledgeBases()`, `renderManageKbList()`, `loadKnowledgeBaseChunks()`, build/upload/delete helpers | `/api/kbs`, `/api/kbs/{id}/chunks`, `/api/kb/*`; KB list, selected management KB, polling/abort state |
 | API 上线 | `pageDeployments`, `apiDeploymentList`, create/detail/edit/secret/guide modals, KB selectors, `apiDemoCode` | Deployment load/render/actions, `loadApiDeploymentGuide()`, safe guide renderer, `bindApiDeploymentInteractions()` | `/api/deployments*`, `/api/kbs`, static Markdown guide; Deployment and guide-loading state |
 | Eval | `pageEval`, `evalStatus`, `evalDetailsBody`, `evalCaseModal`, `evalAutoGenerateModal` | dataset CRUD/search, `consumeSSEStream()`, `runRetrievalEvaluation()`, `restoreEvaluationState()`, auto-generate helpers | `/api/eval/*`, `/api/kb/filter-options`, `/api/kb/chunks`; run/cancel/poll/filter/abort state |
-| Monitor | `pageMonitor`, `monitorSessionsList`, `sessionDetailModal` | `loadSessionsList()`, `viewSessionDetail()`, `deleteSession()` | `/api/sessions`, `/api/memory`, `/api/session` |
+| Monitor | `pageMonitor`, 四个 `monitorPanel*`, `monitorSessionsList`, `monitorTraceList/Detail`, `monitorLogList`, `sessionDetailModal` | `activateMonitorTab()`, overview/session/trace/log loaders, `renderMonitorIdentifier()`, ID copy/log→Trace navigation, session actions | `/api/observability/*` + 原 `/api/sessions`, `/api/memory`, `/api/session`; 当前 Tab、EventSource、日志游标 |
 | Config | `pageConfig`, `configNav`, `configForm`, `configGroupLlm/Retrieval/System`, `llmConfigPanel` | model card helpers, `loadConfig()`, `saveConfig()`, `testModelConnection()`, active-model helpers | `/api/config`, `/api/test-model`; `_configData`, `_currentLlmName`; Milvus URI 与 `.env` 的 `MILVUS_URI` 双向同步 |
 
 ## Navigation
 
 Navigation order is `agent → kb → deployments → eval → monitor → config`, mapping to `pageAgent`, `pageKB`, `pageDeployments`, `pageEval`, `pageMonitor`, `pageConfig`. There is no `showPage()` function: a top-level `.sidebar-btn` click listener directly toggles `.active`.
 
-Page-entry loads: Agent/KB call `refreshKnowledgeBases()`; Deployments calls `loadApiDeployments()`; Eval calls `restoreEvaluationState()`; Monitor calls `loadSessionsList()`; Config calls `loadConfig()`. Adding a page requires synchronizing the sidebar button, page container, listener `pageMap`, entry initialization, CSS and documentation. Do not bind the same handler again on each visit.
+Page-entry loads: Agent/KB call `refreshKnowledgeBases()`; Deployments calls `loadApiDeployments()`; Eval calls `restoreEvaluationState()`; Monitor restores its active inner Tab and loads that view; Config calls `loadConfig()`. Leaving Monitor closes its日志 EventSource。Adding a page requires synchronizing the sidebar button, page container, listener `pageMap`, entry initialization, CSS and documentation. Do not bind the same handler again on each visit.
 
 ## DOM Ownership
 
-Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns chat/history/memory plus the document-level `agentKbModal`; KB owns `manageKbList` and detail/chunk regions; Deployment owns its list and five modals, including `apiDeploymentGuideModal`, with plaintext Key allowed only temporarily in `apiRevealedKey`; Eval owns metrics/table and two document-level modals; Monitor owns list/detail modal; Config owns only LLM/Retrieval/System groups.
+Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns chat/history/memory plus the document-level `agentKbModal`; KB owns `manageKbList` and detail/chunk regions; Deployment owns its list and five modals, including `apiDeploymentGuideModal`, with plaintext Key allowed only temporarily in `apiRevealedKey`; Eval owns metrics/table and two document-level modals; Monitor owns Overview/Session/Trace/Logs 四个 inner tabs 和现有 session detail modal；Config owns only LLM/Retrieval/System groups.
 
 ## JavaScript Responsibility Map
 
@@ -60,6 +60,7 @@ Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns ch
 
 - Chat/KB: `SESSION_ID`, `currentConversationId`, processing/reader/controller; `knowledgeBases`, selected IDs, management selection, polling/abort state.
 - Deployment/Eval/Config: `_apiDeployments`, KB copies, selected/detail IDs, language/loading (no plaintext-Key variable); Eval flags/request IDs/timers/filters/controllers; `_configData`, `_currentLlmName`.
+- Monitor: `monitorActiveTab`, one `EventSource`, bounded rendered log items and `monitorLastLogId`; authoritative events remain backend-owned.
 
 ### LocalStorage
 
@@ -93,7 +94,8 @@ These values are not interchangeable even when two use a `conv_` prefix. Interna
 | Eval | `GET/DELETE /api/eval/dataset`, `DELETE /api/eval/dataset/{chunk_id}`, `POST /api/eval/add_case` | Dataset management |
 | Eval | `POST /api/eval/run`, `/cancel`, `/auto_generate`; `GET /api/eval/status` | Run/cancel/restore and generate via SSE |
 | Eval | `GET /api/kb/filter-options`, `GET /api/kb/chunks` | Cascading filters and candidate chunk search |
-| Monitor | `GET /api/sessions`, `GET /api/memory`, `DELETE /api/session` | Session list/detail/delete |
+| Monitor | `GET /api/observability/overview`, `/traces`, `/traces/{request_id}`, `/logs/stream` | 共用指标、Trace 与结构化日志 SSE |
+| Monitor | `GET /api/sessions`, `GET /api/memory`, `DELETE /api/session` | 保留原 Session 列表/详情/删除 |
 | Config | `GET/POST /api/config`, `POST /api/test-model` | Masked config load/save and connection test |
 
 ## SSE Map
@@ -109,6 +111,10 @@ Management UI does not call the public stream; it only renders cURL/Python examp
 ### Eval SSE
 
 `consumeSSEStream()` parses blank-line-separated frames. Auto-generation consumes `start`, `warning`, `progress`, `done`, `error`; retrieval runs consume `start`, `progress`, `done`, `cancelled`, `error`. This parser differs from Agent Chat’s line reader.
+
+### Monitor Log SSE
+
+`EventSource` 连接 `/api/observability/logs/stream` 并监听命名 `log` 事件；过滤参数是 `level/module/session_id/request_id`。离开 Monitor 或切到非日志 Tab 必须关闭连接，重新应用过滤时从新游标开始。日志中的 `request_id` 可切换到 Trace Tab、写入过滤条件并自动打开详情。
 
 ## Report Rendering
 
@@ -136,7 +142,7 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 
 ## Asset Cache Rule
 
-`index.html` loads `/static/style.css?v=38` and `/static/app.js?v=56`. After changing `style.css` or `app.js`, increment the corresponding query value in `index.html`; it is manual cache invalidation, not a release version.
+`index.html` loads `/static/style.css?v=41` and `/static/app.js?v=60`. After changing `style.css` or `app.js`, increment the corresponding query value in `index.html`; it is manual cache invalidation, not a release version.
 
 ## Change Map
 
@@ -149,6 +155,7 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 | API 上线 UI | Deployment DOM/functions and `docs/api-deployment-guide.md` | management routes, KB selector, one-time Key/guide modals, safe renderer, copy actions, responsive styles |
 | Deployment API | frontend management/examples | Worker/Gateway, schemas, deployment tests, security rules and docs |
 | Eval UI | Eval DOM, dataset/filter/run helpers | Eval event types, status restore/polling, cancellation and result fields |
+| Monitor | Monitor inner tabs and overview/trace/log helpers | `/api/observability/*`, EventSource cleanup, escaping/redaction, existing Session actions |
 | Config | config groups, model serialization/load/save | `/api/config`, `/api/test-model`, active-model panel; keep Deployment separate |
 | LocalStorage | key constants and history helpers | old snapshot compatibility, UI/backend session mapping, sensitive-data risk |
 | Report display | `handleStreamEvent()`, stream/render helpers | backend report content, `json_to_display()`, references and saved HTML |

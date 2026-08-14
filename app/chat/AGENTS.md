@@ -10,7 +10,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 | File               | Responsibility                                                                                                                                      |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.py`        | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                        |
+| `server.py`        | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置/Monitor API                                                               |
 | `deployments.py`   | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                   |
 | `pipeline.py`      | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling 决策与调度 + Recovery 错误自恢复）→ Phase 3（报告校验/序列化/状态更新/推送） |
 | `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验、edit/refine 事实保护、Edit Judge 输出校验与 Public 脱敏                                |
@@ -28,6 +28,8 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 - `_new_milvus_client()` — 创建 Milvus 客户端
 - `_get_or_create_session(session_id)` — 从 SQLite 恢复或创建新会话
 - `_stateful_chat_events(...)` — 浏览器 Chat 与 Deployment Chat 复用的 Pipeline/持久化事件执行器
+- `observe_http_request()` — 为业务请求生成/透传 `request_id` 并写入共用请求指标与 Trace
+- `/api/observability/overview|traces|logs/stream` — Monitor 概览、Trace 查询与结构化日志 SSE
 - API 路由约 20+ 个（详见 Entry Points）
 
 ### `deployments.py`
@@ -109,6 +111,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 ```
 server.py (路由注册)
+  → observability.py (统一请求指标、Trace、日志与脱敏)
   → deployments.py (Deployment 安全/公共 SSE/锁)
   → pipeline.py (Agent 主流程)
       → llm_client.py (LLM 调用)
@@ -144,6 +147,7 @@ server.py (路由注册)
 - uses `data_pipeline/extract_metadata.py` for `extract_all`
 - uses `data_pipeline/process_reports.py` for `process_uploaded_excels`
 - uses `eval/` for `stream_run_evaluation`, `stream_generate_cases`, `add_retrieval_case`, etc.
+- uses `observability.py` for HTTP request lifecycle, Pipeline event mapping and Monitor APIs
 
 ## Dependencies
 
@@ -156,6 +160,7 @@ server.py (路由注册)
 - `app/data_pipeline/` — 知识库构建
 - `app/eval/` — 评测
 - `app/config.py` — 配置获取
+- `app/observability.py` — Monitor 共用事件层
 
 ### External Dependencies
 
@@ -207,6 +212,10 @@ server.py (路由注册)
 
 优先检查: `deployments.py`, `server.py` 的管理与 internal chat 路由, `schemas.py`, `memory/session_store.py`, `app/gateway.py`, `front/app.js`。公开字段或 SSE 变化必须同步示例和部署测试。
 
+### 修改 Monitor / 可观测性
+
+优先检查: `app/observability.py`, `server.py` 的请求 middleware、`_stateful_chat_events()` 与 `/api/observability/*`, `front/index.html` / `app.js` / `style.css`；不要在 Agent、RAG 或 Deployment 中另建事件状态。
+
 ## Testing
 
 关联测试：
@@ -218,6 +227,7 @@ server.py (路由注册)
 - `app/test/test_memory.py` — 记忆系统测试
 - `app/test/test_rerank_flow.py` — Rerank 流程测试
 - `app/test/test_knowledge_base_chunks.py` — 知识库切片测试
+- `app/test/test_observability.py` — 请求指标、Pipeline Trace 复用、日志过滤/脱敏与 Monitor 路由
 - `app/test/verify_chunk_id_retrieval.py` — chunk_id 一致性验证
 
 修改本模块后建议运行: `pytest app/test/`
@@ -235,6 +245,7 @@ server.py (路由注册)
 - 报告工具成功必须 Final；失败必须直接返回 error，禁止进入 Optional Final LLM
 - 工具错误分类：`UNKNOWN_TOOL_ERROR` 和 `EDIT_REPAIR_FAILED` 为 terminal，禁止 Recovery retry；只有 `_RECOVERABLE_REPORT_ERRORS` 白名单内的错误才允许重试
 - 内部错误（RECOVERY_FAILED / RECOVERY_EXHAUSTED / UNKNOWN_TOOL_ERROR / REPORT_SCHEMA_INVALID）**禁止写入 STM**，避免污染后续多轮记忆
+- Monitor 日志只允许结构化脱敏事件；禁止展示控制台原文、完整 Prompt/患者正文、Authorization/API Key 或 traceback
 
 ## Common Pitfalls
 

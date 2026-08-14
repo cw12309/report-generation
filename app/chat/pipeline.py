@@ -40,6 +40,8 @@ RERANK_TOP_K = get_rerank_top_k()
 _MAX_RECOVERY_ATTEMPTS = 1
 _MAX_LLM_RETRY_ATTEMPTS = 1
 
+_RECOVERABLE_REPORT_ERRORS = {"REPORT_PARSE_FAILED", "EDIT_JUDGE_FAILED"}
+
 
 @dataclass
 class RecoveryBudget:
@@ -546,14 +548,12 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
                         # 继续执行工具调用（跳转到工具执行部分）
                     else:
                         logger.error("recovery: LLM still refused to select a tool after retry")
-                        error_message = "服务暂时不可用，请稍后重试。"
+                        error_message = "本次报告处理未能完成，请稍后再试。"
                         _emit("error", {"code": "RECOVERY_FAILED", "message": error_message})
-                        stm.add_turn(session_id, query, error_message)
                         return error_message
                 else:
-                    error_message = "服务暂时不可用，请稍后重试。"
+                    error_message = "本次报告处理未能完成，请稍后再试。"
                     _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
-                    stm.add_turn(session_id, query, error_message)
                     return error_message
 
             elif looks_like_serialized_tool_call(content):
@@ -565,11 +565,8 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
                     import uuid
                     tool_calls = [{
                         "id": f"call_{uuid.uuid4().hex[:8]}",
-                        "type": "function",
-                        "function": {
-                            "name": parsed["name"],
-                            "arguments": json.dumps(parsed["arguments"], ensure_ascii=False),
-                        },
+                        "name": parsed["name"],
+                        "arguments": parsed["arguments"],
                     }]
                     content = None
                 elif recovery_budget.can_recover():
@@ -594,12 +591,10 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
                         logger.error("recovery: LLM still returned invalid format after retry")
                         error_message = "服务暂时不可用，请稍后重试。"
                         _emit("error", {"code": "RECOVERY_FAILED", "message": error_message})
-                        stm.add_turn(session_id, query, error_message)
                         return error_message
                 else:
                     error_message = "服务暂时不可用，请稍后重试。"
                     _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
-                    stm.add_turn(session_id, query, error_message)
                     return error_message
 
             else:
@@ -726,14 +721,23 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
             )
 
             if _is_user_facing_error(error_code):
-                # 用户可处理的错误：直接展示给用户
                 error_msg = raw_result.get("error", "") if isinstance(raw_result, dict) else ""
                 display = error_msg or "当前没有可修改的报告，请先通过检索生成一份报告。"
                 _emit("error", {"code": error_code, "message": display})
                 stm.add_turn(session_id, query, display)
                 return display
 
-            # 内部错误：尝试恢复
+            if error_code not in _RECOVERABLE_REPORT_ERRORS:
+                logger.error(
+                    "report_tool_terminal: selected_tool=%s non-recoverable error=%s, stopping",
+                    report_tool_name,
+                    error_code,
+                )
+                error_message = "报告处理失败，请重试。"
+                _emit("error", {"code": error_code, "message": error_message})
+                return error_message
+
+            # 内部可恢复错误：尝试恢复
             if recovery_budget.can_recover():
                 recovery_budget.consume()
                 logger.info("recovery: retry pipeline for internal error %s", error_code)
@@ -748,7 +752,6 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
             logger.error("recovery: exhausted for internal error %s", error_code)
             error_message = "最终处理失败，请稍后重试。"
             _emit("error", {"code": "RECOVERY_EXHAUSTED", "message": error_message})
-            stm.add_turn(session_id, query, error_message)
             return error_message
 
         try:
@@ -764,7 +767,6 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
             )
             error_message = "服务暂时不可用，请稍后重试。"
             _emit("error", {"code": "REPORT_SCHEMA_INVALID", "message": error_message})
-            stm.add_turn(session_id, query, error_message)
             return error_message
 
         canonical_report = serialize_report(structured_report)

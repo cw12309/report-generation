@@ -460,7 +460,7 @@ def looks_like_serialized_tool_call(content: str) -> bool:
     if not content:
         return False
     return bool(re.search(
-        r"<\/?tool_call>|<function\s*=|\"name\"\s*:\s*\"(?:rag_search|edit_report|refine_report)\"",
+        r"<\/?tool_call>|<function\s*=|\"(?:name|tool)\"\s*:\s*\"(?:rag_search|edit_report|refine_report)\"",
         content,
         flags=re.IGNORECASE,
     ))

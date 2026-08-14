@@ -8,17 +8,17 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 ## File Map
 
-| File            | Responsibility                                                                                                                                     |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server.py`     | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                       |
-| `deployments.py` | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                |
-| `pipeline.py`   | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling 决策与调度）→ Phase 3（报告校验/序列化/状态更新/推送） |
-| `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验、edit/refine 事实保护、Edit Judge 输出校验与 Public 脱敏                              |
-| `llm_client.py` | LLM 网络请求封装：`chat_stream()`（流式对话）、`get_embedding()`（向量化）、`chat_with_tools()`（Tool Calling）、`rerank_with_retry()`（重排重试） |
-| `schemas.py`    | Pydantic 请求模型：`ChatRequest`、Deployment CRUD/Chat、KB 与 Eval 等                                                                              |
-| `main.py`       | CLI 模式入口（`--web` 转发到 server）                                                                                                              |
-| `utils.py`      | 无状态工具：`retry` 装饰器、`_extract_json`、`json_to_display`                                                                                     |
-| `__init__.py`   | 空文件                                                                                                                                             |
+| File               | Responsibility                                                                                                                                      |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server.py`        | FastAPI Worker：路由、共享 Stateful 执行器、SSE、Deployment/KB/评测/配置 API                                                                        |
+| `deployments.py`   | Deployment Key 生成/摘要、固定 KB 校验、公开 SSE 映射、conversation ID 与进程内锁                                                                   |
+| `pipeline.py`      | Agent 主流程编排：Phase 1（实体提取/意图/消解）→ Phase 2（Tool Calling 决策与调度 + Recovery 错误自恢复）→ Phase 3（报告校验/序列化/状态更新/推送） |
+| `report_schema.py` | Canonical `results[]` 报告定义、旧格式边界归一化、解析/校验、edit/refine 事实保护、Edit Judge 输出校验与 Public 脱敏                                |
+| `llm_client.py`    | LLM 网络请求封装：`chat_stream()`（流式对话）、`get_embedding()`（向量化）、`chat_with_tools()`（Tool Calling）、`rerank_with_retry()`（重排重试）  |
+| `schemas.py`       | Pydantic 请求模型：`ChatRequest`、Deployment CRUD/Chat、KB 与 Eval 等                                                                               |
+| `main.py`          | CLI 模式入口（`--web` 转发到 server）                                                                                                               |
+| `utils.py`         | 无状态工具：`retry` 装饰器、`_extract_json`、`json_to_display`                                                                                      |
+| `__init__.py`      | 空文件                                                                                                                                              |
 
 ## Symbol Map
 
@@ -42,6 +42,17 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 - `run_pipeline(query, session_id, stm, entity_tracker, client, last_report, _emit, ...)` — Agent 主流程入口
 - `search_reports(query, top_k, rerank_top_k, client, _emit, context, selected_kbs, knowledge_bases)` — RAG 检索与 Rerank
 - `_build_tool_registry(...)` — 构建并注册三个工具到 ToolRegistry
+
+**Recovery 错误自恢复**（Phase 2 & Phase 3 内联）：
+
+- `RecoveryBudget` — 恢复预算，每次 pipeline 调用独立，`max_attempts=1`，不跨轮污染
+- `_RECOVERABLE_REPORT_ERRORS` — 可恢复工具错误白名单：`{"REPORT_PARSE_FAILED", "EDIT_JUDGE_FAILED"}`
+- `_classify_tool_error(error_msg)` — 按关键词分类工具错误码（用户可处理 / 可恢复 / terminal）
+- `_is_user_facing_error(error_code)` — 判断是否为用户可处理的业务错误（`NO_LAST_REPORT` / `LLM_SERVICE_ERROR`）
+- `_parse_serialized_tool_call(content)` — 从 LLM 文本中解析序列化工具调用（JSON/函数格式）
+- `_arbitrate_report_tool(selected_tool_names)` — 多报告工具自动仲裁，优先级：rag_search > edit_report > refine_report
+- `looks_like_report_json(content)` — 检测 LLM 是否绕过工具直接输出报告 JSON
+- `looks_like_serialized_tool_call(content)` — 检测 LLM 是否在文本中嵌入工具调用
 
 ### `report_schema.py`
 
@@ -168,6 +179,10 @@ server.py (路由注册)
 
 优先检查: `pipeline.py` → `run_pipeline()`, `memory/entity_tracker.py`, `tools/rag_tool.py`, `prompt/` 相关模板
 
+### 修改 Recovery 错误自恢复
+
+优先检查: `pipeline.py` 的 `RecoveryBudget`、`_RECOVERABLE_REPORT_ERRORS`、`_classify_tool_error`、`_is_user_facing_error`、`_parse_serialized_tool_call`、`_arbitrate_report_tool`；`app/test/test_report_pipeline.py` 的 Recovery 相关测试
+
 ### 修改正式报告结构或终态
 
 优先检查: `report_schema.py`, `pipeline.py`, `tools/rag_tool.py` / `edit_tool.py` / `refine_tool.py`, `prompt/structure.md` / `edit.md` / `refine.md`, `deployments.py`, `server.py` 的 Last Report 恢复与 SSE 数据注入。
@@ -198,7 +213,7 @@ server.py (路由注册)
 
 - `app/test/test_api_deployments.py` — Key、存储、KB 健康、事件映射与锁
 - `app/test/test_api_deployment_routes.py` — 管理 API、Gateway/Worker 鉴权、多轮 SSE 与原接口回归
-- `app/test/test_report_pipeline.py` — Canonical Schema、repair、Last Report 注入、报告工具终态与事实保护
+- `app/test/test_report_pipeline.py` — Canonical Schema、repair、Last Report 注入、报告工具终态与事实保护、Recovery 错误自恢复（12 个 Recovery 测试）
 - `app/test/test_rag_planning.py` — 查询规划测试
 - `app/test/test_memory.py` — 记忆系统测试
 - `app/test/test_rerank_flow.py` — Rerank 流程测试
@@ -217,6 +232,8 @@ server.py (路由注册)
 - Deployment Chat 不接受调用方选择 KB，必须使用部署关系表中的固定范围
 - 正式报告只能以 Canonical `results[{影像学表现, 诊断意见}]` 在运行时传播；旧格式只允许在 `report_schema.py` 边界归一化
 - 报告工具成功必须 Final；失败必须直接返回 error，禁止进入 Optional Final LLM
+- 工具错误分类：`UNKNOWN_TOOL_ERROR` 和 `EDIT_REPAIR_FAILED` 为 terminal，禁止 Recovery retry；只有 `_RECOVERABLE_REPORT_ERRORS` 白名单内的错误才允许重试
+- 内部错误（RECOVERY_FAILED / RECOVERY_EXHAUSTED / UNKNOWN_TOOL_ERROR / REPORT_SCHEMA_INVALID）**禁止写入 STM**，避免污染后续多轮记忆
 
 ## Common Pitfalls
 
@@ -225,3 +242,4 @@ server.py (路由注册)
 - 修改 Embedding 方式后，检查 `data_pipeline/build_vector_db.py` 是否一致
 - SSE 事件格式变更会影响前端解析，需要同步
 - 修改 Milvus Schema 后必须运行 `migrate_milvus_schema.py`
+- 修改 Recovery 白名单或错误分类逻辑后，必须运行 `pytest app/test/test_report_pipeline.py -v` 验证全部 30 个测试

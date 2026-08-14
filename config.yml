@@ -21,9 +21,10 @@ reranks:
   base_url: https://api.siliconflow.cn/v1/rerank
   model: Qwen/Qwen3-VL-Reranker-8B
   api_key: ${SILICONFLOW_API_KEY}
-milvus:
-  uri: http://220.154.3.166:19530
-  token: ${MILVUS_TOKEN}
+- name: bge-reranker-v2-m3
+  base_url: http://14.22.83.225:11002/v1/rerank
+  model: bge-reranker-v2-m3
+  api_key: ${SILICONFLOW_API_KEY}
 retrieval:
   rag_top_k: 50
   rerank_top_k: 10

@@ -531,7 +531,7 @@ def test_report_tool_failure_stops_without_fake_medical_fallback(monkeypatch):
     ("model_content", "expected_event", "expected_text"),
     [
         ("你好，我可以帮助生成或修改影像报告。", "message", "你好"),
-        (json.dumps(BASE_REPORT, ensure_ascii=False), "error", "受控报告工具"),
+        (json.dumps(BASE_REPORT, ensure_ascii=False), "error", "本次报告处理未能完成"),
     ],
 )
 def test_direct_chat_remains_allowed_but_main_llm_cannot_bypass_report_tools(
@@ -633,7 +633,7 @@ def test_recovery_report_tool_required_retry_then_success(monkeypatch):
 
 
 def test_recovery_report_tool_required_exhausted(monkeypatch):
-    """REPORT_TOOL_REQUIRED: 恢复预算耗尽 → 返回服务不可用"""
+    """REPORT_TOOL_REQUIRED: 恢复预算耗尽 → 返回"本次报告处理未能完成" """
     registry = _FakeRegistry(
         ToolResult(content=serialize_report(BASE_REPORT), is_final=True),
         tool_name="rag_search"
@@ -660,7 +660,7 @@ def test_recovery_report_tool_required_exhausted(monkeypatch):
         [""],
         lambda event_type, data: events.append({"type": event_type, **data}),
     ))
-    assert "服务暂时不可用" in result
+    assert "本次报告处理未能完成" in result
     assert "error" in [event["type"] for event in events]
 
 
@@ -1067,6 +1067,86 @@ def test_recovery_arbitrate_report_tool():
     ]
     kept = pipeline_module._arbitrate_report_tool(tool_results)
     assert kept[1] == "edit_report"
+
+
+def test_recovery_edit_repair_failed_is_terminal(monkeypatch):
+    """EDIT_REPAIR_FAILED: edit 内部已做 Judge→Repair，不应再由 Pipeline 重试"""
+    tool_result = ToolResult(
+        content=json.dumps({"error": "一次修复后仍未通过"}, ensure_ascii=False),
+        is_final=False,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="edit_report")
+    call_count = [0]
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        call_count[0] += 1
+        return "", [{
+            "id": "call_edit",
+            "name": "edit_report",
+            "arguments": {"instruction": "修改"},
+        }]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    events = []
+    last_report = [serialize_report(BASE_REPORT)]
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "修改报告",
+        "session-recovery-edit-repair",
+        stm,
+        tracker,
+        None,
+        last_report,
+        lambda event_type, data: events.append({"type": event_type, **data}),
+    ))
+    assert call_count[0] == 1
+    assert "报告处理失败" in result
+    assert "error" in [event["type"] for event in events]
+
+
+def test_recovery_internal_errors_not_in_stm(monkeypatch):
+    """UNKNOWN_TOOL_ERROR / RECOVERY_EXHAUSTED / RECOVERY_FAILED 不写入 STM"""
+    tool_result = ToolResult(
+        content=json.dumps({"error": "unknown error"}, ensure_ascii=False),
+        is_final=False,
+    )
+    registry = _FakeRegistry(tool_result, tool_name="edit_report")
+
+    async def fake_chat_with_tools(_messages, **_kwargs):
+        return "", [{
+            "id": "call_edit",
+            "name": "edit_report",
+            "arguments": {"instruction": "修改"},
+        }]
+
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", fake_chat_with_tools)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda _query: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *_args, **_kwargs: registry)
+
+    stm = _FakeSTM()
+    tracker = EntityTracker()
+    last_report = [serialize_report(BASE_REPORT)]
+    result = asyncio.run(pipeline_module.run_pipeline(
+        "修改报告",
+        "session-recovery-stm",
+        stm,
+        tracker,
+        None,
+        last_report,
+        lambda _event_type, _data: None,
+    ))
+    stm_texts = [msg["content"] for msg in stm.history]
+    assert "报告处理失败" not in stm_texts
+    assert "最终处理失败" not in stm_texts
+    assert "本次报告处理未能完成" not in stm_texts
+    assert "服务暂时不可用" not in stm_texts
+    assert "报告处理失败，请重试。" not in stm_texts
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@
 | `test_knowledge_base_chunks.py`           | pytest: 知识库切片 CRUD 测试                |
 | `test_api_deployments.py`                 | pytest: Deployment 安全、存储、事件和并发锁 |
 | `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成与回归 |
-| `test_report_pipeline.py`                 | pytest: Canonical Report、Edit Judge/单次 repair、Last Report、事实保护与 Final Tool |
+| `test_report_pipeline.py`                 | pytest: Canonical Report、Edit Judge/单次 repair、Last Report、事实保护、Final Tool 与 Recovery 控制流 |
 | `verify_chunk_id_retrieval.py`            | pytest: chunk_id 三端一致性验证             |
 | `eval_retrieval.py`                       | 手动脚本: 检索评测（旧版）                  |
 | `eval_retrieval_v2.py`                    | 手动脚本: 检索评测（新版）                  |
@@ -71,6 +71,7 @@ python app/test/eval_rerank_compare.py
 - `tests_api/` 中的测试依赖外部 API 服务，可能需要网络和认证
 - `test_api_deployment_routes.py` 使用隔离的临时 SQLite、Milvus/Pipeline 替身，不调用真实模型或外部服务
 - `test_report_pipeline.py` 使用注入的 LLM/Registry 替身，不调用真实模型、Embedding、Rerank 或 Milvus
+- Recovery 用例应同时断言调用次数、终态事件和 STM 内容，防止重试预算泄漏或内部错误污染多轮记忆
 - 测试数据文件（如 `retrieval_eval_dataset.jsonl`）与测试代码放在一起
 
 ## Common Pitfalls

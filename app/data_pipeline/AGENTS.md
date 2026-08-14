@@ -8,6 +8,10 @@
 
 ## File Map
 
+共享的 `app/milvus_compat.py` 统一创建 MilvusClient，并在 Windows 本地
+Milvus Lite 3.0.0 上修正 manifest 覆盖写入语义；建库、Worker、Eval 和迁移工具
+必须通过该工厂创建客户端。
+
 | File                             | Responsibility                                                          |
 | -------------------------------- | ----------------------------------------------------------------------- |
 | `process_reports.py`             | Excel→Markdown 转换：解析 Excel，生成层级文件夹结构和 Markdown 文件     |
@@ -33,6 +37,7 @@
 - `build_db(kb_id, markdown_dir, client, batch_size)` — 构建向量库（增量）
 - `ensure_collection_schema(client)` — 确保 Collection Schema 存在
 - `create_collection(client)` — 创建 Collection
+- `_ensure_scalar_indexes(client, collection_name, field_names)` — 远程 Milvus 补建标量索引；Milvus Lite 使用无标量索引兼容模式
 - `parse_markdown(path, kb_id_override)` → dict — 解析单个 Markdown 文件
 
 ### `extract_metadata.py`
@@ -114,7 +119,7 @@ metadata.json (产出)
 - `pymilvus` — Collection 管理、数据插入
 - `openpyxl` / `pandas` — Excel 处理
 - `pyyaml` — Markdown Front Matter 解析
-- `requests` — Embedding API 调用
+- `openai` — 通过 `config.py` 的共享 Embedding client 调用
 
 ## Dependents
 
@@ -150,6 +155,7 @@ metadata.json (产出)
 关联测试：
 
 - `app/test/test_knowledge_base_chunks.py` — 知识库切片测试
+- `app/test/test_milvus_schema_compat.py` — Milvus Lite 标量索引及 Windows manifest 覆盖写入兼容测试
 - `app/test/verify_chunk_id_retrieval.py` — chunk_id 一致性验证
 
 ## Local Rules

@@ -50,13 +50,13 @@ Milvus RRFRanker → 去重并截断 Top-50
 
 Pipeline 会先用规则更新 EntityTracker 和标准化术语。只有 `needs_rewrite()` 判定需要改写时才调用 LLM；失败时记录 warning 并回退到未改写 Query。
 
-OpenAI 兼容地址会被规范化为：
+Query Rewrite 与 Planner 统一配置 OpenAI-compatible Base URL：
 
 ```text
-<base_url>/chat/completions
+http://host:port/v1
 ```
 
-如果配置已经以 `/chat/completions` 结尾，不会重复拼接。改写后的 Query 不替代 `selected_kbs` 或已验证的标量约束。
+具体的 `/chat/completions` endpoint 由 OpenAI SDK 自动追加。旧配置若以 `/chat/completions` 结尾，会先安全归一化为 Base URL。改写后的 Query 不替代 `selected_kbs` 或已验证的标量约束。
 
 ## Metadata Navigator
 

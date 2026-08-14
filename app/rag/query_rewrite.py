@@ -28,28 +28,19 @@ import json
 import logging
 import os
 import re
-from urllib.parse import urlsplit, urlunsplit
 
-import requests
-from config import get_rewrite_base_url, get_rewrite_model, get_rewrite_api_key, get_metadata_path
+from config import (
+    create_openai_client,
+    get_rewrite_base_url,
+    get_rewrite_model,
+    get_rewrite_api_key,
+    get_metadata_path,
+)
 from prompt import load_prompt
 
 logger = logging.getLogger(__name__)
 
-CHAT_API_KEY = get_rewrite_api_key()
-
 METADATA_PATH = get_metadata_path()
-
-
-def normalize_chat_completions_url(url: str) -> str:
-    """Normalize an OpenAI-compatible base URL to its chat completions endpoint."""
-    if not url or not url.strip():
-        raise ValueError("Query Rewrite URL 不能为空")
-    parts = urlsplit(url.strip())
-    path = parts.path.rstrip("/")
-    if not path.endswith("/chat/completions"):
-        path = f"{path}/chat/completions"
-    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
 
 def _load_metadata():
@@ -396,7 +387,7 @@ def rewrite_query(query, chat_url=None, chat_model=None, timeout=10):
     keywords = parse_query_keywords(standardized)
     system_prompt = _build_rewrite_prompt(keywords)
 
-    payload = {
+    request_params = {
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -406,16 +397,10 @@ def rewrite_query(query, chat_url=None, chat_model=None, timeout=10):
         "temperature": 0.3,
         "stream": False,
     }
-    headers = {"Content-Type": "application/json"}
-    if CHAT_API_KEY:
-        headers["Authorization"] = f"Bearer {CHAT_API_KEY}"
-
     try:
-        url = normalize_chat_completions_url(url)
-        resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
-        rewritten = data["choices"][0]["message"]["content"].strip()
+        client = create_openai_client(url, get_rewrite_api_key())
+        response = client.chat.completions.create(**request_params, timeout=timeout)
+        rewritten = (response.choices[0].message.content or "").strip()
         if rewritten and len(rewritten) >= len(standardized):
             return rewritten
         return standardized

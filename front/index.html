@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=37" />
+    <link rel="stylesheet" href="/static/style.css?v=38" />
   </head>
   <body>
     <div class="app">
@@ -603,13 +603,16 @@ data: [DONE]</code></pre>
                         />
                       </div>
                       <div class="config-row">
-                        <label class="config-label">Milvus 数据库路径</label>
+                        <label class="config-label">Milvus 服务地址（MILVUS_URI）</label>
                         <input
                           type="text"
                           class="config-input"
                           id="cfg_retrieval_db_path"
-                          placeholder="相对于项目根目录"
+                          placeholder="例如 http://host:19530"
                         />
+                        <small class="model-field-hint">
+                          与 .env 中的 MILVUS_URI 同步；8899 是 Attu 页面端口，不要填写。
+                        </small>
                       </div>
                     </div>
                     <div
@@ -1106,6 +1109,6 @@ data: [DONE]</code></pre>
 
     <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
 
-    <script src="/static/app.js?v=53"></script>
+    <script src="/static/app.js?v=56"></script>
   </body>
 </html>

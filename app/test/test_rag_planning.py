@@ -11,7 +11,8 @@ if str(APP_DIR) not in sys.path:
 
 from rag.metadata_navigator import MetadataNavigator
 from rag.query_planner import build_query_plan
-from rag.query_rewrite import normalize_chat_completions_url, rewrite_query
+from rag.query_rewrite import rewrite_query
+from config import normalize_openai_base_url
 from rag.retrieval import (
     build_recall_channels,
     retrieve_with_fallback,
@@ -161,20 +162,20 @@ class RagPlanningTest(unittest.TestCase):
         )
         self.assertTrue(all("kb_1" in item["filter_expr"] for item in details["channels"]))
 
-    def test_rewrite_url_is_normalized(self):
+    def test_rewrite_url_uses_base_url_semantics(self):
         self.assertEqual(
-            normalize_chat_completions_url("http://localhost:8001/v1"),
-            "http://localhost:8001/v1/chat/completions",
+            normalize_openai_base_url("http://localhost:8001/v1"),
+            "http://localhost:8001/v1",
         )
         self.assertEqual(
-            normalize_chat_completions_url(
+            normalize_openai_base_url(
                 "http://localhost:8001/v1/chat/completions"
             ),
-            "http://localhost:8001/v1/chat/completions",
+            "http://localhost:8001/v1",
         )
 
-    @patch("rag.query_rewrite.requests.post", side_effect=RuntimeError("offline"))
-    def test_rewrite_failure_logs_warning_and_falls_back(self, _mock_post):
+    @patch("rag.query_rewrite.create_openai_client", side_effect=RuntimeError("offline"))
+    def test_rewrite_failure_logs_warning_and_falls_back(self, _mock_client):
         with self.assertLogs("rag.query_rewrite", level="WARNING") as captured:
             result = rewrite_query(
                 "CT头颅",

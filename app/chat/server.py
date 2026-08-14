@@ -25,7 +25,6 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pymilvus import MilvusClient
 from pydantic import BaseModel, Field
 
 from memory.entity_tracker import EntityTracker
@@ -33,14 +32,18 @@ from memory.short_term import ShortTermMemory
 from memory.session_store import SessionStore
 from config import (
     get_db_path, get_collection_name, get_markdown_dir, get_milvus_token,
-    get_llm_model, get_llm_api_key, get_llm_base_url,
-    get_embed_model, get_embed_api_key, get_embed_base_url,
-    get_rerank_api_key, get_rerank_model, get_rerank_base_url,
+    get_llm_model, get_llm_api_key,
+    get_embed_model, get_embed_api_key,
+    get_rerank_api_key,
     get_max_rounds, reload_config,
+    create_llm_client, create_embed_client,
+    normalize_openai_model_urls, _normalize_base_url,
+    sync_milvus_uri,
 )
 from data_pipeline.build_vector_db import build_db, ensure_collection_schema
 from data_pipeline.extract_metadata import extract_all
 from data_pipeline.process_reports import process_uploaded_excels
+from milvus_compat import create_milvus_client
 from eval.generate_test_cases import stream_generate_cases
 from eval.run_retrieval_eval import (
     DEFAULT_DATASET,
@@ -82,7 +85,6 @@ _ambiguity_cache = {}
 logger = logging.getLogger(__name__)
 
 # 从配置加载常量
-DB_PATH = get_db_path()
 COLLECTION_NAME = get_collection_name()
 CHAT_MODEL = get_llm_model()
 EMBED_MODEL = get_embed_model()
@@ -108,8 +110,7 @@ class ReportGenerateRequest(RAGSearchRequest):
 
 
 def _new_milvus_client():
-    token = get_milvus_token()
-    return MilvusClient(uri=DB_PATH, **({"token": token} if token else {}))
+    return create_milvus_client(get_db_path(), get_milvus_token())
 
 
 def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
@@ -1043,17 +1044,23 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     @app.get("/api/kb/status", summary="知识库状态", description="获取知识库文档总数、切片文件数等信息")
     async def kb_status():
         total = 0
+        db_path = get_db_path()
         try:
-            if os.path.exists(DB_PATH):
+            is_remote = db_path.lower().startswith(("http://", "https://"))
+            if is_remote or os.path.exists(db_path):
                 client = _new_milvus_client()
-                total = len(client.query(COLLECTION_NAME, filter="", output_fields=["count(*)"]))
-                client.close()
+                try:
+                    if client.has_collection(COLLECTION_NAME):
+                        stats = client.get_collection_stats(COLLECTION_NAME)
+                        total = int(stats.get("row_count", 0))
+                finally:
+                    client.close()
         except Exception:
             logger.warning("查询 Milvus 知识库状态失败", exc_info=True)
         markdown_dir = get_markdown_dir()
         md_count = len(list(Path(markdown_dir).rglob("*.md"))) if os.path.isdir(markdown_dir) else 0
         meta_exists = any(kb.get("metadata_tree") for kb in store.list_knowledge_bases())
-        return {"total": total, "md_count": md_count, "db_path": DB_PATH, "metadata_exists": meta_exists}
+        return {"total": total, "md_count": md_count, "db_path": db_path, "metadata_exists": meta_exists}
 
     @app.get("/api/kbs", summary="知识库列表")
     async def list_knowledge_bases():
@@ -1377,6 +1384,16 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             return {"error": "配置文件不存在"}
         with open(config_path, "r", encoding="utf-8") as f:
             config_data = yaml.safe_load(f) or {}
+        normalize_openai_model_urls(config_data)
+
+        # MILVUS_URI 以 .env/进程环境为准，配置页始终展示实际生效值。
+        retrieval_config = config_data.setdefault("retrieval", {})
+        if isinstance(retrieval_config, dict):
+            retrieval_config.pop("db_path", None)
+        milvus_config = config_data.setdefault("milvus", {})
+        if not isinstance(milvus_config, dict):
+            return {"error": "config.yml 中的 milvus 配置格式无效"}
+        milvus_config["uri"] = get_db_path()
 
         # 密钥只能来自环境变量；绝不把 YAML 占位符或真实密钥返回给前端。
         for model_list_key, env_key_func in [
@@ -1390,8 +1407,8 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     m["api_key"] = (
                         "••••••••••••••••••••••••" if env_key_func() else ""
                     )
-        if isinstance(config_data.get("milvus"), dict):
-            config_data["milvus"]["token"] = (
+        if isinstance(milvus_config, dict):
+            milvus_config["token"] = (
                 "••••••••••••••••••••••••" if get_milvus_token() else ""
             )
 
@@ -1399,9 +1416,21 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
 
     @app.post("/api/config", summary="保存配置", description="保存系统配置并重新加载生效")
     async def save_config(request: ConfigSaveRequest):
-        config_data = request.config
+        config_data = normalize_openai_model_urls(request.config)
         if config_data is None:
             return {"error": "缺少 config 参数"}
+
+        milvus_config = config_data.setdefault("milvus", {})
+        if not isinstance(milvus_config, dict):
+            raise HTTPException(status_code=422, detail="milvus 配置必须是对象")
+        submitted_milvus_uri = milvus_config.get("uri") or get_db_path()
+        try:
+            milvus_config["uri"] = sync_milvus_uri(submitted_milvus_uri)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        retrieval_config = config_data.get("retrieval")
+        if isinstance(retrieval_config, dict):
+            retrieval_config.pop("db_path", None)
 
         # 配置页只保存非敏感配置；所有密钥位置始终写回环境变量占位符。
         api_key_placeholders = {
@@ -1414,14 +1443,17 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             if isinstance(models, list):
                 for m in models:
                     m["api_key"] = placeholder
-        if isinstance(config_data.get("milvus"), dict):
-            config_data["milvus"]["token"] = "${MILVUS_TOKEN}"
+        milvus_config["token"] = "${MILVUS_TOKEN}"
 
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.yml")
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
         reload_config()
-        return {"status": "ok", "message": "配置已保存并生效"}
+        return {
+            "status": "ok",
+            "message": "配置已保存并生效，MILVUS_URI 已同步到 .env",
+            "milvus_uri": milvus_config["uri"],
+        }
 
     @app.post("/api/test-model", summary="测试模型连接", description="测试模型 API 连接是否正常")
     async def test_model_connection(request: TestModelRequest):
@@ -1449,8 +1481,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         try:
             if model_type == "embeddings":
                 # 使用 OpenAI SDK 测试 Embedding
-                from openai import OpenAI
-                client = OpenAI(base_url=base_url, api_key=api_key or "not-needed")
+                client = create_embed_client(base_url, api_key)
                 response = client.embeddings.create(model=model_name, input="你好")
                 emb_data = response.data
                 if emb_data:
@@ -1468,7 +1499,12 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     "query": "测试查询",
                     "documents": ["测试文档"],
                 }
-                r = requests.post(base_url, headers=headers, json=payload, timeout=15)
+                r = requests.post(
+                    _normalize_base_url(base_url, "/rerank"),
+                    headers=headers,
+                    json=payload,
+                    timeout=15,
+                )
                 if r.status_code == 200:
                     data = r.json()
                     results = data.get("results", [])
@@ -1482,8 +1518,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     
             else:
                 # 使用 OpenAI SDK 测试 LLM
-                from openai import AsyncOpenAI
-                client = AsyncOpenAI(base_url=base_url, api_key=api_key or "not-needed")
+                client = create_llm_client(base_url, api_key)
                 response = await client.chat.completions.create(
                     model=model_name,
                     messages=[{"role": "user", "content": "你好"}],

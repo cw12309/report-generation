@@ -111,7 +111,7 @@ pipeline.py
 
 - `app/prompt/` — `load_prompt` (entity_extraction.md, summarize.md)
 - `app/data_pipeline/chunk_id.py` — `generate_chunk_id`
-- `app/config.py` — `get_max_rounds`, `get_decay_factor`
+- `app/config.py` — `get_max_rounds`, `get_decay_factor`；`chat_test.py` 复用统一 OpenAI-compatible client 工厂
 
 ### External Dependencies
 

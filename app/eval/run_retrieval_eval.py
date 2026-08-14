@@ -34,6 +34,7 @@ from config import (  # noqa: E402
 from eval.metrics import DEFAULT_HIT_KS, aggregate_hit_rates, first_relevant_rank  # noqa: E402
 from memory.session_store import SessionStore  # noqa: E402
 from pymilvus import MilvusClient  # noqa: E402
+from milvus_compat import create_milvus_client  # noqa: E402
 from rag.retrieval import retrieve_with_fallback  # noqa: E402
 
 DEFAULT_DATASET = EVAL_DIR / "datasets" / "retrieval_test_cases.json"
@@ -254,11 +255,7 @@ def delete_retrieval_case(
 
 
 def new_milvus_client() -> MilvusClient:
-    kwargs = {"uri": get_db_path()}
-    token = get_milvus_token()
-    if token:
-        kwargs["token"] = token
-    return MilvusClient(**kwargs)
+    return create_milvus_client(get_db_path(), get_milvus_token())
 
 
 def active_kb_ids(store: SessionStore, requested: list[str] | None) -> list[str]:

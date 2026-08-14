@@ -8,18 +8,22 @@
   python chat_test.py --debug
 """
 
-import json
 import os
 import sys
 import uuid
 
-import requests
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memory.entity_tracker import EntityTracker
 from memory.short_term import ShortTermMemory
+from config import (
+    create_openai_client,
+    get_llm_api_key,
+    get_llm_base_url,
+    get_llm_model,
+)
 
 
 SESSION_ID = f"test_{uuid.uuid4().hex[:8]}"
@@ -31,63 +35,38 @@ ENV_PATH = os.path.join(
 
 def chat_stream(messages, max_tokens=1024, temperature=0.7):
     load_dotenv(ENV_PATH)
-    chat_url = os.environ.get("CHAT_URL", "http://14.22.86.97:11001/v1/chat/completions")
-    chat_model = os.environ.get("CHAT_MODEL", "qwen36_27b_lora")
-    payload = {
-        "model": chat_model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "stream": True,
-    }
+    client = create_openai_client(get_llm_base_url(), get_llm_api_key())
+    stream = client.chat.completions.create(
+        model=get_llm_model(),
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stream=True,
+    )
 
     full_reply = ""
-    with requests.post(
-        chat_url,
-        headers={"Content-Type": "application/json"},
-        json=payload,
-        stream=True,
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines(decode_unicode=True):
-            if not line:
-                continue
-            data = line[len("data:"):].strip() if line.startswith("data:") else line
-            if data == "[DONE]":
-                break
-            try:
-                obj = json.loads(data)
-                for choice in obj.get("choices", []):
-                    content = choice.get("delta", {}).get("content", "")
-                    if content:
-                        print(content, end="", flush=True)
-                        full_reply += content
-            except (json.JSONDecodeError, AttributeError):
-                continue
+    for chunk in stream:
+        for choice in chunk.choices:
+            content = choice.delta.content or ""
+            if content:
+                print(content, end="", flush=True)
+                full_reply += content
     print()
     return full_reply
 
 
 def summarize_fn(messages: list[dict]) -> str:
     load_dotenv(ENV_PATH)
-    chat_url = os.environ.get("CHAT_URL", "http://14.22.86.97:11001/v1/chat/completions")
-    chat_model = os.environ.get("CHAT_MODEL", "qwen36_27b_lora")
-    payload = {
-        "model": chat_model,
-        "messages": messages,
-        "max_tokens": 80,
-        "temperature": 0.3,
-        "stream": False,
-    }
     try:
-        response = requests.post(
-            chat_url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
+        client = create_openai_client(get_llm_base_url(), get_llm_api_key())
+        response = client.chat.completions.create(
+            model=get_llm_model(),
+            messages=messages,
+            max_tokens=80,
+            temperature=0.3,
             timeout=15,
         )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+        return (response.choices[0].message.content or "").strip()
     except Exception:
         return ""
 
@@ -98,7 +77,7 @@ def main():
     entity_tracker = EntityTracker()
 
     load_dotenv(ENV_PATH)
-    chat_model = os.environ.get("CHAT_MODEL", "qwen36_27b_lora")
+    chat_model = get_llm_model()
     base_system = "你是一个有帮助的AI助手。"
 
     print("=== 当前会话记忆测试已启动 ===")

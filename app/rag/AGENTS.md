@@ -94,12 +94,11 @@ pipeline.py → search_reports()
 `query_rewrite.py`:
 
 - uses `prompt/` → `load_prompt` (for rewrite.md)
-- uses `config.py` → `get_rewrite_base_url`, `get_rewrite_model`, `get_rewrite_api_key`
+- uses `config.py` → shared OpenAI-compatible client factory and Rewrite model configuration
 
 `query_planner.py`:
 
-- uses `openai` SDK 直接调用
-- uses `config.py` → `get_rewrite_base_url`, `get_rewrite_model`, `get_rewrite_api_key`
+- uses `config.py` → `get_rewrite_client`, `get_rewrite_model`
 
 ## Dependencies
 
@@ -112,8 +111,8 @@ pipeline.py → search_reports()
 ### External Dependencies
 
 - `pymilvus` — `AnnSearchRequest`, `RRFRanker`, `MilvusClient`
-- `openai` — `OpenAI` (query_planner 直接调用)
-- `requests` — rerank API 调用
+- `openai` — 由 `config.py` 的共享 client 工厂调用 Query Rewrite/Planner
+- `requests` — 仅用于 rerank API 调用
 - `langsmith` — `@traceable`
 
 ## Dependents

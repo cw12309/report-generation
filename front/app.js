@@ -3418,7 +3418,7 @@ const SIMPLE_FIELDS = {
   "retrieval.rag_top_k": "cfg_retrieval_rag_top_k",
   "retrieval.rerank_top_k": "cfg_retrieval_rerank_top_k",
   "retrieval.collection_name": "cfg_retrieval_collection_name",
-  "retrieval.db_path": "cfg_retrieval_db_path",
+  "milvus.uri": "cfg_retrieval_db_path",
   "short_term_memory.max_rounds": "cfg_stm_max_rounds",
   "short_term_memory.decay_factor": "cfg_stm_decay_factor",
 };
@@ -3450,11 +3450,28 @@ function renderModelList(sectionKey) {
             const val = item[f.key] !== undefined ? item[f.key] : "";
             return `
             <div class="model-field">
-              <label class="model-field-label">${f.label}</label>
+              <label class="model-field-label">${
+                f.key === "base_url" && sectionKey !== "reranks"
+                  ? "Base URL"
+                  : f.label
+              }</label>
               <input type="${f.type}" ${f.step ? `step="${f.step}"` : ""}
                 class="config-input ${f.sm ? "config-input-sm" : ""}"
                 data-field="${f.key}" value="${escapeHtml(String(val))}"
-                placeholder="${f.placeholder || ""}">
+                placeholder="${
+                  f.key === "base_url" && sectionKey !== "reranks"
+                    ? "http://host:port/v1"
+                    : f.placeholder || ""
+                }">
+              ${
+                f.key === "base_url" && sectionKey !== "reranks"
+                  ? `<small class="model-field-hint">请输入 OpenAI-compatible Base URL，例如 http://host:port/v1，不要填写 ${
+                      sectionKey === "llms"
+                        ? "/chat/completions"
+                        : "/embeddings"
+                    }。</small>`
+                  : ""
+              }
             </div>`;
           })
           .join("")}
@@ -3716,9 +3733,13 @@ async function saveConfig() {
     });
     const data = await resp.json();
     if (data.status === "ok") {
+      const milvusUriInput = document.getElementById("cfg_retrieval_db_path");
+      if (milvusUriInput && data.milvus_uri) {
+        milvusUriInput.value = data.milvus_uri;
+      }
       showConfigHint("✅ " + data.message);
     } else {
-      showConfigHint("❌ " + (data.error || "保存失败"));
+      showConfigHint("❌ " + (data.detail || data.error || "保存失败"));
     }
   } catch (e) {
     console.error("[Config] 保存配置失败:", e);

@@ -7,10 +7,8 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
 
 from pymilvus import MilvusClient
-import requests
+from config import get_embed_client, get_embed_model
 
-EMBED_URL = os.environ.get("EMBED_URL", "http://14.22.83.225:11002/v1/embeddings")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "milvus_lite.db")
 COLLECTION_NAME = "report_slices"
 
@@ -29,9 +27,10 @@ for r in results:
 
 print()
 print("=== 向量检索: 'CT脑出血' (top-5) ===")
-payload = {"model": EMBED_MODEL, "input": ["CT脑出血"]}
-resp = requests.post(EMBED_URL, json=payload, timeout=30)
-query_vec = resp.json()["data"][0]["embedding"]
+response = get_embed_client().embeddings.create(
+    model=get_embed_model(), input=["CT脑出血"], timeout=30
+)
+query_vec = response.data[0].embedding
 
 hits = client.search(
     collection_name=COLLECTION_NAME,

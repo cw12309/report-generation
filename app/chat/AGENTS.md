@@ -226,7 +226,8 @@ server.py (路由注册)
 
 - `server.py` 是唯一的路由注册位置，不要在其他文件注册路由
 - `pipeline.py` 是 Agent 编排的唯一入口，不要在 server.py 中直接编排
-- 通用 Chat/Embedding 调用优先复用 `llm_client.py`；Rewrite、Planner、Rerank 等模块当前仍有独立客户端，修改前先核对真实调用点
+- 通用 Chat/Embedding 调用复用 `llm_client.py`；Config 测试、Rewrite、Planner 和建库通过 `config.py` 的同一 OpenAI-compatible client 工厂创建客户端，Rerank 因 SDK 无原生接口保留直接 HTTP 调用
+- Config API 的 Milvus 地址以 `.env` 的 `MILVUS_URI` 为实际生效值；加载时回填该值，保存时同步 `.env`，`_new_milvus_client()` 每次动态读取，禁止缓存旧地址
 - 新增 Worker 请求/响应模型应定义在 `schemas.py`；既有 Stateless internal 模型当前仍在 `server.py`
 - Deployment 明文 Key 只能出现在创建/轮换响应，禁止写入数据库、日志或列表/详情响应
 - Deployment Chat 不接受调用方选择 KB，必须使用部署关系表中的固定范围

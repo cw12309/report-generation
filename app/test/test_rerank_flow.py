@@ -8,14 +8,12 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
 
 from pymilvus import MilvusClient
-import requests
+from config import get_embed_client, get_embed_model
 
 from rag.rerank import rerank_documents, get_rerank_config
 from rag.retrieval import multi_recall
 from rag.query_rewrite import parse_query_keywords
 
-EMBED_URL = os.environ.get("EMBED_URL", "http://14.22.83.225:11002/v1/embeddings")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "milvus_lite.db")
 COLLECTION_NAME = "report_slices"
 
@@ -37,9 +35,10 @@ print(f"Rerank: top-{RERANK_TOP_K}")
 print(f"Rerank模型: {get_rerank_config()['rerank_model']}")
 print("=" * 60)
 
-payload = {"model": EMBED_MODEL, "input": [query]}
-resp = requests.post(EMBED_URL, json=payload, timeout=30)
-query_vec = resp.json()["data"][0]["embedding"]
+response = get_embed_client().embeddings.create(
+    model=get_embed_model(), input=[query], timeout=30
+)
+query_vec = response.data[0].embedding
 
 print(f"\n📌 第一步: 多路召回 (向量检索 + 元数据过滤 + 关键词检索)")
 print("-" * 60)

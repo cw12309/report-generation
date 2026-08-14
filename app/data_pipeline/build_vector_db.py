@@ -9,7 +9,6 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-import requests
 import yaml
 from pymilvus import (
     AnnSearchRequest,
@@ -27,8 +26,7 @@ if str(APP_DIR) not in sys.path:
 from config import (  # noqa: E402
     get_collection_name,
     get_db_path,
-    get_embed_api_key,
-    get_embed_base_url,
+    get_embed_client,
     get_embed_dimension,
     get_embed_model,
     get_markdown_dir,
@@ -36,8 +34,74 @@ from config import (  # noqa: E402
 )
 from rag.sparse_vector import text_to_sparse_vector  # noqa: E402
 from data_pipeline.chunk_id import generate_chunk_id  # noqa: E402
+from milvus_compat import create_milvus_client  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+SCALAR_INDEX_FIELDS = (
+    "kb_id",
+    "chunk_id",
+    "modality",
+    "level_1",
+    "level_2",
+    "level_3",
+    "level_4",
+)
+
+
+def _scalar_indexes_unsupported(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "create_index missing required 'metric_type' parameter" in message
+        or "create_index only supports vector fields" in message
+    )
+
+
+def _uses_milvus_lite() -> bool:
+    uri = str(get_db_path() or "").strip()
+    if uri.lower().startswith(("http://", "https://")):
+        return False
+    return Path(uri).suffix.lower() in {".db", ".sqlite", ".sqlite3"}
+
+
+def _ensure_scalar_indexes(
+    client: MilvusClient,
+    collection_name: str,
+    field_names=SCALAR_INDEX_FIELDS,
+) -> List[str]:
+    """Best-effort scalar indexes without blocking Milvus Lite startup.
+
+    Some Milvus Lite builds bundled with pymilvus 3.0 expose scalar-index APIs
+    but reject scalar index creation at runtime. Filtering still works without
+    these optional indexes, so only that known compatibility error is ignored.
+    """
+    if _uses_milvus_lite():
+        logger.info("Milvus Lite 使用无标量索引兼容模式: %s", collection_name)
+        return []
+
+    indexes = client.list_indexes(collection_name)
+    index_names = {getattr(index, "field_name", None) or str(index) for index in indexes}
+    missing = [field_name for field_name in field_names if field_name not in index_names]
+    if not missing:
+        return []
+
+    index_params = client.prepare_index_params()
+    for field_name in missing:
+        index_params.add_index(field_name=field_name, index_type="INVERTED")
+    try:
+        client.create_index(collection_name=collection_name, index_params=index_params)
+    except Exception as exc:
+        if not _scalar_indexes_unsupported(exc):
+            raise
+        logger.warning(
+            "当前 Milvus 后端不支持标量索引，跳过可选 INVERTED 索引 %s: %s",
+            missing,
+            exc,
+        )
+        return []
+
+    logger.info("已补建标量 INVERTED 索引 %s: %s", missing, collection_name)
+    return missing
 
 
 def _section(content: str, heading: str) -> str:
@@ -99,36 +163,25 @@ def parse_markdown(path: Path, kb_id_override: Optional[str] = None) -> Dict:
     }
 
 
-def _embedding_url() -> str:
-    base_url = get_embed_base_url().rstrip("/")
-    return base_url if base_url.endswith("/embeddings") else f"{base_url}/embeddings"
-
-
 def get_dense_embeddings(
     texts: List[str],
     batch_size: int,
     progress_callback: Optional[Callable[[str], None]] = None,
     batch_progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> List[List[float]]:
-    headers = {"Content-Type": "application/json"}
-    api_key = get_embed_api_key()
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
+    client = get_embed_client()
     embeddings: List[List[float]] = []
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start + batch_size]
         for attempt in range(5):
             try:
-                response = requests.post(
-                    _embedding_url(),
-                    headers=headers,
-                    json={"model": get_embed_model(), "input": batch},
+                response = client.embeddings.create(
+                    model=get_embed_model(),
+                    input=batch,
                     timeout=120,
                 )
-                response.raise_for_status()
-                items = sorted(response.json()["data"], key=lambda item: item["index"])
-                embeddings.extend(item["embedding"] for item in items)
+                items = sorted(response.data, key=lambda item: item.index)
+                embeddings.extend(item.embedding for item in items)
                 if progress_callback:
                     completed = min(start + len(batch), len(texts))
                     percentage = completed * 100 / len(texts)
@@ -148,11 +201,7 @@ def get_dense_embeddings(
 
 
 def _client() -> MilvusClient:
-    kwargs = {"uri": get_db_path()}
-    token = get_milvus_token()
-    if token:
-        kwargs["token"] = token
-    return MilvusClient(**kwargs)
+    return create_milvus_client(get_db_path(), get_milvus_token())
 
 
 def create_collection(client: MilvusClient) -> None:
@@ -179,13 +228,6 @@ def create_collection(client: MilvusClient) -> None:
     ])
 
     indexes = client.prepare_index_params()
-    indexes.add_index(field_name="kb_id", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="chunk_id", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="modality", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="level_1", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="level_2", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="level_3", index_type="INVERTED", metric_type="")
-    indexes.add_index(field_name="level_4", index_type="INVERTED", metric_type="")
     indexes.add_index(
         field_name="dense_vector",
         index_type="HNSW",
@@ -203,6 +245,7 @@ def create_collection(client: MilvusClient) -> None:
         schema=schema,
         index_params=indexes,
     )
+    _ensure_scalar_indexes(client, get_collection_name())
 
 
 def ensure_collection_schema(client: MilvusClient) -> dict:
@@ -233,25 +276,7 @@ def ensure_collection_schema(client: MilvusClient) -> dict:
             "Milvus 不支持原地添加字段，请先执行 migrate_milvus_schema.py "
             "完成一次受控迁移。"
         )
-    indexes = client.list_indexes(collection_name)
-    index_names = {getattr(index, "field_name", None) or str(index) for index in indexes}
-    missing_scalar_indexes = [
-        field_name
-        for field_name in ("kb_id", "chunk_id")
-        if field_name not in index_names
-    ]
-    if missing_scalar_indexes:
-        index_params = client.prepare_index_params()
-        for field_name in missing_scalar_indexes:
-            index_params.add_index(
-                field_name=field_name, index_type="INVERTED", metric_type=""
-            )
-        client.create_index(collection_name=collection_name, index_params=index_params)
-        logger.info(
-            "已补建标量 INVERTED 索引 %s: %s",
-            missing_scalar_indexes,
-            collection_name,
-        )
+    _ensure_scalar_indexes(client, collection_name, ("kb_id", "chunk_id"))
     return {"created": False, "valid": True, "missing_fields": []}
 
 

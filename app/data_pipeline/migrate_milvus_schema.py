@@ -15,15 +15,12 @@ if str(APP_DIR) not in sys.path:
 
 from config import get_collection_name, get_db_path, get_milvus_token  # noqa: E402
 from data_pipeline.build_vector_db import create_collection  # noqa: E402
+from milvus_compat import create_milvus_client  # noqa: E402
 from pymilvus import MilvusClient  # noqa: E402
 
 
 def client() -> MilvusClient:
-    kwargs = {"uri": get_db_path()}
-    token = get_milvus_token()
-    if token:
-        kwargs["token"] = token
-    return MilvusClient(**kwargs)
+    return create_milvus_client(get_db_path(), get_milvus_token())
 
 
 def fields_and_indexes(milvus: MilvusClient, name: str):

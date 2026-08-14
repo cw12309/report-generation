@@ -36,7 +36,7 @@ index.html ── fixed DOM / pages / forms / modals
 | API 上线 | `pageDeployments`, `apiDeploymentList`, create/detail/edit/secret/guide modals, KB selectors, `apiDemoCode` | Deployment load/render/actions, `loadApiDeploymentGuide()`, safe guide renderer, `bindApiDeploymentInteractions()` | `/api/deployments*`, `/api/kbs`, static Markdown guide; Deployment and guide-loading state |
 | Eval | `pageEval`, `evalStatus`, `evalDetailsBody`, `evalCaseModal`, `evalAutoGenerateModal` | dataset CRUD/search, `consumeSSEStream()`, `runRetrievalEvaluation()`, `restoreEvaluationState()`, auto-generate helpers | `/api/eval/*`, `/api/kb/filter-options`, `/api/kb/chunks`; run/cancel/poll/filter/abort state |
 | Monitor | `pageMonitor`, `monitorSessionsList`, `sessionDetailModal` | `loadSessionsList()`, `viewSessionDetail()`, `deleteSession()` | `/api/sessions`, `/api/memory`, `/api/session` |
-| Config | `pageConfig`, `configNav`, `configForm`, `configGroupLlm/Retrieval/System`, `llmConfigPanel` | model card helpers, `loadConfig()`, `saveConfig()`, `testModelConnection()`, active-model helpers | `/api/config`, `/api/test-model`; `_configData`, `_currentLlmName` |
+| Config | `pageConfig`, `configNav`, `configForm`, `configGroupLlm/Retrieval/System`, `llmConfigPanel` | model card helpers, `loadConfig()`, `saveConfig()`, `testModelConnection()`, active-model helpers | `/api/config`, `/api/test-model`; `_configData`, `_currentLlmName`; Milvus URI 与 `.env` 的 `MILVUS_URI` 双向同步 |
 
 ## Navigation
 
@@ -136,7 +136,7 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 
 ## Asset Cache Rule
 
-`index.html` loads `/static/style.css?v=37` and `/static/app.js?v=52`. After changing `style.css` or `app.js`, increment the corresponding query value in `index.html`; it is manual cache invalidation, not a release version.
+`index.html` loads `/static/style.css?v=38` and `/static/app.js?v=56`. After changing `style.css` or `app.js`, increment the corresponding query value in `index.html`; it is manual cache invalidation, not a release version.
 
 ## Change Map
 

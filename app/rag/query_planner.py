@@ -5,9 +5,7 @@ import logging
 import re
 from typing import Dict, Optional
 
-from openai import OpenAI
-
-from config import get_rewrite_api_key, get_rewrite_base_url, get_rewrite_model
+from config import get_rewrite_client, get_rewrite_model
 
 from .metadata_navigator import LEVEL_FIELDS, MetadataNavigator
 from .query_rewrite import parse_query_keywords
@@ -75,10 +73,7 @@ def _llm_plan(query: str, context: Dict, navigator: MetadataNavigator, selected:
         f"历史槽位：{json.dumps(context, ensure_ascii=False)}\n"
         f"允许值：{json.dumps(candidates, ensure_ascii=False)}"
     )
-    client = OpenAI(
-        base_url=get_rewrite_base_url().rstrip("/"),
-        api_key=get_rewrite_api_key() or "not-needed",
-    )
+    client = get_rewrite_client()
     response = client.chat.completions.create(
         model=get_rewrite_model(),
         messages=[

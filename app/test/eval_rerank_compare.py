@@ -14,33 +14,31 @@ import random
 import sys
 import time
 
-import requests
 from dotenv import load_dotenv
 from pymilvus import MilvusClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from config import get_embed_client, get_embed_model
 from rag.rerank import rerank_documents
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
 
-EMBED_URL = os.environ.get("EMBED_URL", "http://14.22.83.225:11002/v1/embeddings")
-EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-m3")
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "milvus_lite.db")
 COLLECTION_NAME = "report_slices"
 
 
 def get_embeddings(texts, batch_size=16):
+    client = get_embed_client()
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i + batch_size]
-        payload = {"model": EMBED_MODEL, "input": batch}
         for attempt in range(5):
             try:
-                r = requests.post(EMBED_URL, json=payload, timeout=120)
-                r.raise_for_status()
-                data = r.json()["data"]
-                data.sort(key=lambda x: x["index"])
-                all_embeddings.extend([d["embedding"] for d in data])
+                response = client.embeddings.create(
+                    model=get_embed_model(), input=batch, timeout=120
+                )
+                data = sorted(response.data, key=lambda item: item.index)
+                all_embeddings.extend(item.embedding for item in data)
                 break
             except Exception as e:
                 if attempt < 4:

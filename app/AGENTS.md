@@ -32,11 +32,14 @@
 - `get_rerank_base_url()`, `get_rerank_model()`, `get_rerank_api_key()` — Rerank 配置
 - `get_rewrite_base_url()`, `get_rewrite_model()`, `get_rewrite_api_key()` — Query Rewrite 配置
 - `get_db_path()`, `get_milvus_token()`, `get_collection_name()` — Milvus 配置
+- `normalize_milvus_uri()` / `sync_milvus_uri()` — 校验 Milvus URI，并同步写入 `.env` 与当前进程环境
 - `get_markdown_dir()`, `get_metadata_path()` — 路径配置
 - `get_rag_top_k()`, `get_rerank_top_k()`, `get_max_rounds()`, `get_decay_factor()` — 检索/记忆参数
-- `get_llm_client()` → AsyncOpenAI, `get_embed_client()` → OpenAI — 客户端工厂
+- `get_llm_client()` → AsyncOpenAI, `get_embed_client()` / `get_rewrite_client()` → OpenAI — 客户端工厂
+- `create_openai_client()`, `create_llm_client()`, `create_embed_client()` — Config 测试与运行链路共用的客户端创建入口
 - `reload_config()` — 热重载配置
-- `_normalize_base_url(base_url, path_suffix)` — URL 标准化
+- `normalize_openai_base_url()` / `normalize_openai_model_urls()` — Chat/Embedding Base URL 与旧 endpoint 配置归一化
+- `_normalize_base_url(base_url, path_suffix)` — Rerank 等直接 HTTP endpoint 标准化
 
 ## Entry Points
 
@@ -117,6 +120,7 @@ config.py
 ## Local Rules
 
 - `config.py` 是配置的唯一入口，其他模块不直接读取 `config.yml` 或 `.env`
+- Config 页面展示实际生效的 `MILVUS_URI`；保存 Milvus 地址时必须通过 `sync_milvus_uri()` 同步 `.env`，运行时客户端不得缓存旧地址
 - 密钥只从 `.env` 或环境变量读取，不回退到 `config.yml`
 - `gateway.py` 不 import Worker 代码，只做 HTTP 代理
 - Gateway 不读取 Deployment 数据库；Deployment Key 的动态摘要校验和状态检查由 Worker 完成

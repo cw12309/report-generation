@@ -3021,7 +3021,17 @@ body {
 .model-field {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
+}
+
+.model-field-hint {
+  flex-basis: 100%;
+  margin-left: 56px;
+  max-width: 520px;
+  color: #999;
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .model-field-label {

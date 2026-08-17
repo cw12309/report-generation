@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
 import { buildDeterministicPreview } from "../domain/parser.js";
 
-const DEFAULT_BASE_URL = "http://14.22.86.97:11001/v1";
-const DEFAULT_MODEL = "qwen36-27b";
-
 export const ALLOWED_FIELDS = {
-  "scenario": { enum: ["normal", "lesion"] },
+  scenario: { enum: ["normal", "lesion"] },
   "exam.indication": { type: "string" },
   "acquisition.quality": { enum: ["satisfactory", "acceptable", "limited"] },
   "comparison.status": { enum: ["none", "compared", "limited"] },
@@ -26,31 +23,63 @@ export const ALLOWED_FIELDS = {
   "lesion.size.cc": { type: "number", min: 0 },
   "lesion.shape": { enum: ["oval", "lobulated", "round", "irregular"] },
   "lesion.margin": { enum: ["circumscribed", "indistinct", "spiculated"] },
-  "lesion.distribution": { enum: ["diffuse", "regional", "focal", "linear", "segmental"] },
+  "lesion.distribution": {
+    enum: ["diffuse", "regional", "focal", "linear", "segmental"],
+  },
   "lesion.internalEnhancement": {
-    enum: ["homogeneous", "heterogeneous", "rim", "darkSeptations", "clumped", "clusteredRing"]
+    enum: [
+      "homogeneous",
+      "heterogeneous",
+      "rim",
+      "darkSeptations",
+      "clumped",
+      "clusteredRing",
+    ],
   },
   "lesion.t2": { enum: ["high", "notHigh", "limited"] },
   "lesion.kinetics.early": { enum: ["slow", "medium", "fast", "limited"] },
-  "lesion.kinetics.delayed": { enum: ["persistent", "plateau", "washout", "limited"] },
+  "lesion.kinetics.delayed": {
+    enum: ["persistent", "plateau", "washout", "limited"],
+  },
   "lesion.dwi.signal": { enum: ["high", "equal", "low", "limited"] },
   "lesion.dwi.adcMin": { type: "number", min: 0 },
   "lesion.dwi.bValue": { type: "number", min: 0 },
   "lesion.dwi.roiMethod": { type: "string" },
-  "lesion.assessment.birads": { enum: ["0", "1", "2", "3", "4", "5", "6"], physicianOnly: true },
+  "lesion.assessment.birads": {
+    enum: ["0", "1", "2", "3", "4", "5", "6"],
+    physicianOnly: true,
+  },
   "lesion.management.action": {
-    enum: ["routine", "shortInterval", "tissueDiagnosis", "surgicalOncology", "additionalImaging"],
-    physicianOnly: true
+    enum: [
+      "routine",
+      "shortInterval",
+      "tissueDiagnosis",
+      "surgicalOncology",
+      "additionalImaging",
+    ],
+    physicianOnly: true,
   },
   "lesion.management.detail": { type: "string", physicianOnly: true },
   "lesion.pathology.reference": { type: "string", physicianOnly: true },
-  "assessment.leftBirads": { enum: ["0", "1", "2", "3", "4", "5", "6"], physicianOnly: true },
-  "assessment.rightBirads": { enum: ["0", "1", "2", "3", "4", "5", "6"], physicianOnly: true },
-  "management.action": {
-    enum: ["routine", "shortInterval", "tissueDiagnosis", "surgicalOncology", "additionalImaging"],
-    physicianOnly: true
+  "assessment.leftBirads": {
+    enum: ["0", "1", "2", "3", "4", "5", "6"],
+    physicianOnly: true,
   },
-  "management.detail": { type: "string", physicianOnly: true }
+  "assessment.rightBirads": {
+    enum: ["0", "1", "2", "3", "4", "5", "6"],
+    physicianOnly: true,
+  },
+  "management.action": {
+    enum: [
+      "routine",
+      "shortInterval",
+      "tissueDiagnosis",
+      "surgicalOncology",
+      "additionalImaging",
+    ],
+    physicianOnly: true,
+  },
+  "management.detail": { type: "string", physicianOnly: true },
 };
 
 const SYSTEM_PROMPT = `你是乳腺MRI报告会话Agent。系统已经加载一份正常报告基线，医生通常只描述异常。你的任务是把医生明确观察或确认的异常事实提取为结构化候选字段。
@@ -87,14 +116,34 @@ ${JSON.stringify(ALLOWED_FIELDS)}
 
 function stripPrivateState(currentCase = {}) {
   const {
-    exam, acquisition, comparison, breastTissue, associatedStructures,
-    lymphNodes, lesion, assessment, management, scenario, provenance
+    exam,
+    acquisition,
+    comparison,
+    breastTissue,
+    associatedStructures,
+    lymphNodes,
+    lesion,
+    assessment,
+    management,
+    scenario,
+    provenance,
   } = currentCase;
-  const { uid: _lesionUid, provenance: _lesionProvenance, ...compactLesion } = lesion || {};
+  const {
+    uid: _lesionUid,
+    provenance: _lesionProvenance,
+    ...compactLesion
+  } = lesion || {};
   const state = {
     scenario: provenance?.scenario ? scenario : "",
-    exam, acquisition, comparison, breastTissue, associatedStructures,
-    lymphNodes, lesion: compactLesion, assessment, management
+    exam,
+    acquisition,
+    comparison,
+    breastTissue,
+    associatedStructures,
+    lymphNodes,
+    lesion: compactLesion,
+    assessment,
+    management,
   };
   const clone = structuredClone(state);
   for (const [path, metadata] of Object.entries(provenance || {})) {
@@ -117,12 +166,15 @@ function parseJsonContent(content) {
 
 function validValue(rule, value) {
   if (rule.enum) return rule.enum.includes(String(value));
-  if (rule.type === "string") return typeof value === "string" && value.trim().length > 0;
+  if (rule.type === "string")
+    return typeof value === "string" && value.trim().length > 0;
   if (rule.type === "number") {
     const number = Number(value);
-    return Number.isFinite(number)
-      && (rule.min === undefined || number >= rule.min)
-      && (rule.max === undefined || number <= rule.max);
+    return (
+      Number.isFinite(number) &&
+      (rule.min === undefined || number >= rule.min) &&
+      (rule.max === undefined || number <= rule.max)
+    );
   }
   return false;
 }
@@ -130,36 +182,51 @@ function validValue(rule, value) {
 export function normalizeAgentResult(raw) {
   const candidateUpdates = Array.isArray(raw?.candidate_updates)
     ? raw.candidate_updates.flatMap((update) => {
-      const rule = ALLOWED_FIELDS[update?.path];
-      if (!rule || !validValue(rule, update.value)) return [];
-      const value = rule.type === "number" ? Number(update.value) : String(update.value);
-      return [{
-        path: update.path,
-        value,
-        sourceText: String(update.source_text || ""),
-        confidence: Math.max(0, Math.min(1, Number(update.confidence) || 0)),
-        requiresExplicitPhysicianConfirmation: Boolean(rule.physicianOnly),
-        sourceType: String(update.source_type || "llm_semantic")
-      }];
-    })
+        const rule = ALLOWED_FIELDS[update?.path];
+        if (!rule || !validValue(rule, update.value)) return [];
+        const value =
+          rule.type === "number" ? Number(update.value) : String(update.value);
+        return [
+          {
+            path: update.path,
+            value,
+            sourceText: String(update.source_text || ""),
+            confidence: Math.max(
+              0,
+              Math.min(1, Number(update.confidence) || 0),
+            ),
+            requiresExplicitPhysicianConfirmation: Boolean(rule.physicianOnly),
+            sourceType: String(update.source_type || "llm_semantic"),
+          },
+        ];
+      })
     : [];
 
   const conflicts = Array.isArray(raw?.conflicts)
-    ? raw.conflicts.filter((item) => ALLOWED_FIELDS[item?.path]).slice(0, 10).map((item) => ({
-      path: item.path,
-      currentValue: item.current_value,
-      candidateValue: item.candidate_value,
-      reason: String(item.reason || "与已有字段不一致")
-    }))
+    ? raw.conflicts
+        .filter((item) => ALLOWED_FIELDS[item?.path])
+        .slice(0, 10)
+        .map((item) => ({
+          path: item.path,
+          currentValue: item.current_value,
+          candidateValue: item.candidate_value,
+          reason: String(item.reason || "与已有字段不一致"),
+        }))
     : [];
 
   const questions = Array.isArray(raw?.questions)
-    ? raw.questions.filter((item) => ALLOWED_FIELDS[item?.path]).slice(0, 1).map((item) => ({
-      path: item.path,
-      question: String(item.question || ""),
-      priority: item.priority === "warning" ? "warning" : "blocking",
-      options: Array.isArray(item.options) ? item.options.map(String).slice(0, 8) : []
-    })).filter((item) => item.question)
+    ? raw.questions
+        .filter((item) => ALLOWED_FIELDS[item?.path])
+        .slice(0, 1)
+        .map((item) => ({
+          path: item.path,
+          question: String(item.question || ""),
+          priority: item.priority === "warning" ? "warning" : "blocking",
+          options: Array.isArray(item.options)
+            ? item.options.map(String).slice(0, 8)
+            : [],
+        }))
+        .filter((item) => item.question)
     : [];
 
   return {
@@ -167,7 +234,9 @@ export function normalizeAgentResult(raw) {
     candidateUpdates,
     conflicts,
     questions,
-    assistantMessage: String(raw?.assistant_message || raw?.summary || "请确认本轮提取结果。")
+    assistantMessage: String(
+      raw?.assistant_message || raw?.summary || "请确认本轮提取结果。",
+    ),
   };
 }
 
@@ -177,7 +246,7 @@ function localFallback(message, error) {
     value: update.value,
     source_text: update.sourceText,
     source_type: "deterministic_parser",
-    confidence: 1
+    confidence: 1,
   }));
   const normalized = normalizeAgentResult({
     summary: `本地规则提取 ${candidateUpdates.length} 个候选字段`,
@@ -186,14 +255,14 @@ function localFallback(message, error) {
     questions: [],
     assistant_message: candidateUpdates.length
       ? "远程模型暂不可用，已使用本地保守规则提取明确事实；请逐项确认候选。"
-      : "远程模型暂不可用，本地规则未识别出可安全写入的明确事实；本轮未修改结构。"
+      : "远程模型暂不可用，本地规则未识别出可安全写入的明确事实；本轮未修改结构。",
   });
   return {
     ...normalized,
     model: "local-rule-fallback",
     usage: null,
     degraded: true,
-    fallbackReason: String(error?.message || "远程模型不可用").slice(0, 300)
+    fallbackReason: String(error?.message || "远程模型不可用").slice(0, 300),
   };
 }
 
@@ -203,51 +272,80 @@ function applyDeterministicAnchors(message, normalizedResult) {
     value: update.value,
     source_text: update.sourceText,
     source_type: "deterministic_parser",
-    confidence: 1
+    confidence: 1,
   }));
-  const anchors = normalizeAgentResult({ candidate_updates: rawAnchors }).candidateUpdates;
+  const anchors = normalizeAgentResult({
+    candidate_updates: rawAnchors,
+  }).candidateUpdates;
   if (!anchors.length) return { ...normalizedResult, deterministicAnchors: [] };
-  const merged = new Map(normalizedResult.candidateUpdates.map((item) => [item.path, item]));
+  const merged = new Map(
+    normalizedResult.candidateUpdates.map((item) => [item.path, item]),
+  );
   for (const anchor of anchors) merged.set(anchor.path, anchor);
   return {
     ...normalizedResult,
     candidateUpdates: [...merged.values()],
-    deterministicAnchors: anchors.map((item) => item.path)
+    deterministicAnchors: anchors.map((item) => item.path),
   };
 }
 
 export function createAgentService(options = {}) {
-  const baseUrl = String(options.baseUrl || process.env.VLLM_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
-  const model = options.model || process.env.VLLM_MODEL || DEFAULT_MODEL;
+  const baseUrl = String(options.baseUrl || process.env.VLLM_BASE_URL || "").replace(/\/+$/, "");
+  const model = options.model || process.env.VLLM_MODEL || "";
+  const apiKey = options.apiKey || process.env.VLLM_API_KEY || "";
   const fetchImpl = options.fetchImpl || fetch;
   const cacheTtlMs = Number(options.cacheTtlMs ?? 30_000);
   const resultCache = new Map();
   const inFlight = new Map();
 
-  const requestKey = (message, currentCase) => createHash("sha256")
-    .update(JSON.stringify({ message: message.trim(), state: stripPrivateState(currentCase) }))
-    .digest("hex");
+  if (!baseUrl || !model) {
+    const error = new Error("VLLM_BASE_URL 和 VLLM_MODEL 必须配置，请通过主项目 config.py 注入或设置环境变量");
+    console.error(error.message);
+    throw error;
+  }
+
+  const requestKey = (message, currentCase) =>
+    createHash("sha256")
+      .update(
+        JSON.stringify({
+          message: message.trim(),
+          state: stripPrivateState(currentCase),
+        }),
+      )
+      .digest("hex");
 
   const rememberResult = (key, value) => {
-    resultCache.set(key, { value: structuredClone(value), expiresAt: Date.now() + cacheTtlMs });
-    if (resultCache.size > 64) resultCache.delete(resultCache.keys().next().value);
+    resultCache.set(key, {
+      value: structuredClone(value),
+      expiresAt: Date.now() + cacheTtlMs,
+    });
+    if (resultCache.size > 64)
+      resultCache.delete(resultCache.keys().next().value);
   };
 
   async function modelStatus() {
+    const headers = { "Content-Type": "application/json" };
+    if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
     const response = await fetchImpl(`${baseUrl}/models`, {
-      signal: AbortSignal.timeout(10_000)
+      headers,
+      signal: AbortSignal.timeout(10_000),
     });
-    if (!response.ok) throw new Error(`模型列表请求失败：HTTP ${response.status}`);
+    if (!response.ok)
+      throw new Error(`模型列表请求失败：HTTP ${response.status}`);
     const payload = await response.json();
     return {
       online: payload.data?.some((item) => item.id === model) || false,
       model,
-      baseUrl
+      baseUrl,
     };
   }
 
   async function runTurn({ message, currentCase }) {
-    if (!message || typeof message !== "string" || message.trim().length === 0) {
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.trim().length === 0
+    ) {
       throw new Error("医生本轮输入不能为空");
     }
     if (message.length > 12_000) throw new Error("本轮输入超过12000字符限制");
@@ -258,61 +356,78 @@ export function createAgentService(options = {}) {
     if (cached && cached.expiresAt > Date.now()) {
       return {
         ...structuredClone(cached.value),
-        timing: { ...cached.value.timing, totalMs: Math.round(performance.now() - startedAt), cacheHit: true }
+        timing: {
+          ...cached.value.timing,
+          totalMs: Math.round(performance.now() - startedAt),
+          cacheHit: true,
+        },
       };
     }
     if (inFlight.has(key)) {
       const shared = await inFlight.get(key);
       return {
         ...structuredClone(shared),
-        timing: { ...shared.timing, totalMs: Math.round(performance.now() - startedAt), cacheHit: true, deduplicated: true }
+        timing: {
+          ...shared.timing,
+          totalMs: Math.round(performance.now() - startedAt),
+          cacheHit: true,
+          deduplicated: true,
+        },
       };
     }
 
     const execute = async () => {
       const modelStartedAt = performance.now();
       try {
-      const response = await fetchImpl(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(60_000),
-        body: JSON.stringify({
-          model,
-          temperature: 0.1,
-          max_tokens: 1800,
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: JSON.stringify({
-                current_confirmed_state: stripPrivateState(currentCase),
-                physician_message: message,
-                instruction: "只提取本轮明确事实。机构正常基线字段已从current_confirmed_state中清空，可被异常描述直接覆盖，不算冲突。只有已由医生确认的非空值与新值不同时列入conflicts。若必须追问，只提出1个会阻断诊断或管理的关键问题。"
-              })
-            }
-          ]
-        })
-      });
-      if (!response.ok) {
-        const detail = await response.text();
-        throw new Error(`模型调用失败：HTTP ${response.status} ${detail.slice(0, 300)}`);
-      }
-      const payload = await response.json();
-      const content = payload.choices?.[0]?.message?.content;
-      if (!content) throw new Error("模型未返回有效内容");
-      const result = {
-        ...applyDeterministicAnchors(message, normalizeAgentResult(parseJsonContent(content))),
-        model,
-        usage: payload.usage || null,
-        degraded: false,
-        timing: {
-          modelMs: Math.round(performance.now() - modelStartedAt),
-          totalMs: Math.round(performance.now() - startedAt),
-          cacheHit: false
+        const headers = { "Content-Type": "application/json" };
+        if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+        const response = await fetchImpl(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers,
+          signal: AbortSignal.timeout(60_000),
+          body: JSON.stringify({
+            model,
+            temperature: 0.1,
+            max_tokens: 1800,
+            response_format: { type: "json_object" },
+            messages: [
+              { role: "system", content: SYSTEM_PROMPT },
+              {
+                role: "user",
+                content: JSON.stringify({
+                  current_confirmed_state: stripPrivateState(currentCase),
+                  physician_message: message,
+                  instruction:
+                    "只提取本轮明确事实。机构正常基线字段已从current_confirmed_state中清空，可被异常描述直接覆盖，不算冲突。只有已由医生确认的非空值与新值不同时列入conflicts。若必须追问，只提出1个会阻断诊断或管理的关键问题。",
+                }),
+              },
+            ],
+          }),
+        });
+        if (!response.ok) {
+          const detail = await response.text();
+          throw new Error(
+            `模型调用失败：HTTP ${response.status} ${detail.slice(0, 300)}`,
+          );
         }
-      };
-      return result;
+        const payload = await response.json();
+        const content = payload.choices?.[0]?.message?.content;
+        if (!content) throw new Error("模型未返回有效内容");
+        const result = {
+          ...applyDeterministicAnchors(
+            message,
+            normalizeAgentResult(parseJsonContent(content)),
+          ),
+          model,
+          usage: payload.usage || null,
+          degraded: false,
+          timing: {
+            modelMs: Math.round(performance.now() - modelStartedAt),
+            totalMs: Math.round(performance.now() - startedAt),
+            cacheHit: false,
+          },
+        };
+        return result;
       } catch (error) {
         if (options.disableFallback) throw error;
         return {
@@ -320,8 +435,8 @@ export function createAgentService(options = {}) {
           timing: {
             modelMs: Math.round(performance.now() - modelStartedAt),
             totalMs: Math.round(performance.now() - startedAt),
-            cacheHit: false
-          }
+            cacheHit: false,
+          },
         };
       }
     };

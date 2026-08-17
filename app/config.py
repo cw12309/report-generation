@@ -224,6 +224,37 @@ def get_server_port() -> int:
 def get_server_host() -> str:
     return _resolve("server.host", "0.0.0.0")
 
+
+# ============================================================
+# 乳腺 MRI 报告工作台 (services/breast-mri-report)
+# ============================================================
+
+def get_breast_mri_llm_base_url() -> str:
+    """返回乳腺 MRI 工作台使用的 LLM Base URL（已规范化为 /v1 格式）。
+
+    复用主项目 Chat LLM 配置，自动清洗 /chat/completions 等后缀，
+    确保 Node 端拼接 /chat/completions 时不会出现路径重复。
+    """
+    return normalize_openai_base_url(get_llm_base_url())
+
+
+def get_breast_mri_llm_model() -> str:
+    """返回乳腺 MRI 工作台使用的 LLM 模型名，复用主项目 Chat LLM。"""
+    return get_llm_model()
+
+
+def get_breast_mri_llm_api_key() -> str:
+    """返回乳腺 MRI 工作台使用的 LLM API Key，复用主项目 Chat LLM。"""
+    return get_llm_api_key()
+
+
+def get_breast_mri_port() -> int:
+    return int(os.environ.get("BREAST_MRI_PORT", "4173"))
+
+
+def get_breast_mri_host() -> str:
+    return os.environ.get("BREAST_MRI_HOST", "127.0.0.1")
+
 def get_metadata_path() -> str:
     path = _resolve("paths.metadata", "./app/data_pipeline/report_template/metadata.json")
     if not os.path.isabs(path):

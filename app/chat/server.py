@@ -20,6 +20,7 @@ if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
 import yaml
+import httpx
 import requests
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, UploadFile, File, Query, Request
@@ -220,6 +221,34 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             )
         finally:
             client.close()
+
+    _breast_mri_launcher = None
+
+    @app.on_event("startup")
+    async def start_breast_mri_service():
+        """自动启动乳腺 MRI 报告工作台 Node 服务，失败不阻塞主项目。"""
+        global _breast_mri_launcher
+        try:
+            import importlib.util
+            launcher_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "services", "breast-mri-report", "launcher.py"
+            )
+            spec = importlib.util.spec_from_file_location("breast_mri_launcher", launcher_path)
+            launcher_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(launcher_module)
+            _breast_mri_launcher = launcher_module.BreastMRILauncher()
+            _breast_mri_launcher.start()
+            logger.info("乳腺 MRI 报告工作台已启动: %s", _breast_mri_launcher.base_url)
+        except Exception as exc:
+            logger.warning("乳腺 MRI 报告工作台启动失败（不影响主项目其他功能）: %s", exc)
+            _breast_mri_launcher = None
+
+    @app.on_event("shutdown")
+    async def stop_breast_mri_service():
+        """主项目退出时自动停止乳腺 MRI 工作台 Node 进程。"""
+        if _breast_mri_launcher is not None:
+            _breast_mri_launcher.stop()
 
     front_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "front")
     if os.path.isdir(front_dir):
@@ -1741,6 +1770,83 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 if "status_code" in error_msg or "http" in error_msg.lower():
                     return {"success": False, "message": error_msg[:200]}
                 return {"success": False, "message": error_msg[:200]}
+
+    # ——————————————————————————————————————————————————————————
+    # 乳腺 MRI 报告工作台代理层
+    # ——————————————————————————————————————————————————————————
+
+    _BREAST_MRI_BASE = "http://127.0.0.1:4173"
+
+    @app.get("/api/breast-mri/health", tags=["breast-mri"])
+    async def breast_mri_health():
+        """代理 breast-mri-report 健康检查，Node 不可用时返回降级状态。"""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{_BREAST_MRI_BASE}/api/health", timeout=5.0)
+                return resp.json()
+        except Exception:
+            return {
+                "status": "unavailable",
+                "service": "breast-mri-report",
+                "message": "乳腺 MRI 报告服务不可用",
+            }
+
+    @app.get("/api/breast-mri/model-status", tags=["breast-mri"])
+    async def breast_mri_model_status():
+        """代理 breast-mri-report LLM 模型状态检查。"""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{_BREAST_MRI_BASE}/api/model-status", timeout=10.0)
+                return resp.json()
+        except Exception as exc:
+            return {"online": False, "error": str(exc)}
+
+    @app.post("/api/breast-mri/turn", tags=["breast-mri"])
+    async def breast_mri_turn(request: Request):
+        """代理 breast-mri-report Agent 对话。"""
+        body = await request.json()
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{_BREAST_MRI_BASE}/api/agent/turn",
+                    json=body,
+                    timeout=90.0,
+                )
+                return resp.json()
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503, detail="乳腺 MRI 报告服务不可用")
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="乳腺 MRI 报告服务响应超时")
+
+    @app.api_route("/breast-mri/{path:path}", methods=["GET", "POST", "PUT", "DELETE"], tags=["breast-mri"])
+    async def proxy_breast_mri_static(path: str, request: Request):
+        """代理 breast-mri-report 静态资源和前端页面。
+
+        通过同源代理解决 iframe 跨端口问题，前端 JS 中的 API 调用
+        也会走 FastAPI 同源，无需修改 breast-mri-report 前端代码。
+        """
+        try:
+            url = f"{_BREAST_MRI_BASE}/{path}"
+            async with httpx.AsyncClient() as client:
+                # 转发请求体（如果有）
+                body = await request.body() if request.method in ("POST", "PUT") else None
+                resp = await client.request(
+                    method=request.method,
+                    url=url,
+                    headers={k: v for k, v in request.headers.items()
+                             if k.lower() not in ("host", "content-length")},
+                    content=body,
+                    timeout=30.0,
+                )
+                return StreamingResponse(
+                    resp.aiter_bytes(),
+                    status_code=resp.status_code,
+                    headers={k: v for k, v in resp.headers.items()
+                             if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")},
+                    media_type=resp.headers.get("content-type"),
+                )
+        except httpx.ConnectError:
+            raise HTTPException(status_code=503, detail="乳腺 MRI 报告服务不可用")
 
     return app
 

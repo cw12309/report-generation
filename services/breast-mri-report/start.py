@@ -1,7 +1,10 @@
-# d:\pythonProject\report_gen_structure\start.py
+# services/breast-mri-report/start.py
 """
 乳腺 MRI 报告服务启动器
 用法：python start.py [--port PORT] [--host HOST] [--open]
+
+配置来源：启动时自动从主项目 config.py 读取 Chat LLM 的 Base URL / Model / API Key，
+通过环境变量注入 Node 进程，不依赖硬编码默认值。
 """
 
 import subprocess
@@ -18,6 +21,30 @@ DEFAULT_HOST = "127.0.0.1"
 MAX_PORT_ATTEMPTS = 50
 
 
+def _load_main_config():
+    """从主项目 config.py 读取 LLM 配置，返回 (base_url, model, api_key)。"""
+    MAIN_PROJECT_ROOT = PROJECT_DIR.parent.parent
+    sys.path.insert(0, str(MAIN_PROJECT_ROOT))
+    try:
+        from app.config import (
+            get_breast_mri_llm_base_url,
+            get_breast_mri_llm_model,
+            get_breast_mri_llm_api_key,
+        )
+        base_url = get_breast_mri_llm_base_url()
+        model = get_breast_mri_llm_model()
+        api_key = get_breast_mri_llm_api_key()
+        if not base_url:
+            print("[WARN] 主项目未配置 LLM Base URL，乳腺 MRI 工作台的 Agent 功能将不可用")
+        if not model:
+            print("[WARN] 主项目未配置 LLM Model，乳腺 MRI 工作台的 Agent 功能将不可用")
+        return base_url, model, api_key
+    except ImportError as exc:
+        print(f"[WARN] 无法导入主项目 config.py: {exc}")
+        print("[WARN] 将使用环境变量 VLLM_BASE_URL / VLLM_MODEL（如果已设置）")
+        return "", "", ""
+
+
 def check_node():
     try:
         result = subprocess.run(
@@ -29,7 +56,7 @@ def check_node():
             return True
     except FileNotFoundError:
         pass
-    except Exception as e:
+    except Exception:
         pass
     print("[ERROR] 未检测到 Node.js，请先安装 Node.js (>=18)")
     return False
@@ -42,7 +69,7 @@ def find_next_port(start_port):
             sock.settimeout(0.5)
             if sock.connect_ex((DEFAULT_HOST, port)) != 0:
                 return port
-    print(f"[ERROR] 端口 {start_port}-{start_port+MAX_PORT_ATTEMPTS} 均被占用")
+    print(f"[ERROR] 端口 {start_port}-{start_port + MAX_PORT_ATTEMPTS} 均被占用")
     return None
 
 
@@ -80,6 +107,18 @@ def main():
     env = os.environ.copy()
     env["PORT"] = str(port)
     env["HOST"] = args.host
+
+    # 从主项目 config.py 读取 LLM 配置，注入 Node 环境变量
+    base_url, model, api_key = _load_main_config()
+    if base_url:
+        env["VLLM_BASE_URL"] = base_url
+    if model:
+        env["VLLM_MODEL"] = model
+    if api_key:
+        env["VLLM_API_KEY"] = api_key
+
+    print(f"[CONFIG] VLLM_BASE_URL = {env.get('VLLM_BASE_URL', '(未设置)')}")
+    print(f"[CONFIG] VLLM_MODEL    = {env.get('VLLM_MODEL', '(未设置)')}")
 
     print(f"[START] 正在启动服务...")
     proc = subprocess.Popen(

@@ -31,19 +31,21 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 
 ## Directory Map
 
-| Directory            | Responsibility                                |
-| -------------------- | --------------------------------------------- |
-| `front/`             | 原生 Web 前端；一级页面依次为 Agent、Knowledge Base、API 上线、Eval、Monitor、Config |
-| `app/`               | 核心应用代码                                  |
-| `app/chat/`          | Worker 服务、Agent 编排、LLM 客户端、工具函数 |
-| `app/tools/`         | Tool Calling 工具注册与实现                   |
-| `app/rag/`           | RAG 检索管线（查询改写/规划/召回/重排）       |
-| `app/memory/`        | 会话记忆（短期记忆、实体追踪、持久化）        |
-| `app/prompt/`        | Prompt 模板与 Builder                         |
-| `app/eval/`          | 独立评测中心                                  |
-| `app/data_pipeline/` | 数据构建流水线（Excel→Markdown→Milvus）       |
-| `app/test/`          | 测试（pytest + 手动脚本）                     |
-| `app/scripts/`       | 运维工具脚本                                  |
+| Directory                     | Responsibility                                                                       |
+| ----------------------------- | ------------------------------------------------------------------------------------ |
+| `front/`                      | 原生 Web 前端；一级页面依次为 Agent、Knowledge Base、API 上线、Eval、Monitor、Config |
+| `app/`                        | 核心应用代码                                                                         |
+| `app/chat/`                   | Worker 服务、Agent 编排、LLM 客户端、工具函数                                        |
+| `app/tools/`                  | Tool Calling 工具注册与实现                                                          |
+| `app/rag/`                    | RAG 检索管线（查询改写/规划/召回/重排）                                              |
+| `app/memory/`                 | 会话记忆（短期记忆、实体追踪、持久化）                                               |
+| `app/prompt/`                 | Prompt 模板与 Builder                                                                |
+| `app/eval/`                   | 独立评测中心                                                                         |
+| `app/data_pipeline/`          | 数据构建流水线（Excel→Markdown→Milvus）                                              |
+| `app/test/`                   | 测试（pytest + 手动脚本）                                                            |
+| `app/scripts/`                | 运维工具脚本                                                                         |
+| `services/`                   | 内部微服务                                                                           |
+| `services/breast-mri-report/` | 乳腺 MRI 报告工作台（Node.js，可选内部服务）                                         |
 
 ## Key Entry Points
 
@@ -55,6 +57,7 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 - **Agent 主流程**: `app/chat/pipeline.py` → `run_pipeline()`
 - **CLI 入口**: `app/chat/main.py` → `main()`
 - **配置**: `app/config.py` + `config.yml` + `.env`
+- **乳腺 MRI 工作台**: `services/breast-mri-report/` — 独立 Node.js 服务，FastAPI 代理层 `/api/breast-mri/*`、`/breast-mri/*`，启动时自动拉起
 - **数据构建**: `app/data_pipeline/build_vector_db.py`, `process_reports.py`
 - **评测**: `app/eval/run_retrieval_eval.py`
 
@@ -149,3 +152,4 @@ Ordinary implementation detail changes do not require updating.
 - `app/eval/AGENTS.md` — 评测中心
 - `app/data_pipeline/AGENTS.md` — 数据构建流水线
 - `app/test/AGENTS.md` — 测试
+- `services/breast-mri-report/AGENTS.md` — 乳腺 MRI 报告工作台（Node.js 微服务）

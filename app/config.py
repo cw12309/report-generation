@@ -255,6 +255,17 @@ def get_breast_mri_port() -> int:
 def get_breast_mri_host() -> str:
     return os.environ.get("BREAST_MRI_HOST", "127.0.0.1")
 
+
+def get_breast_mri_base_url() -> str:
+    """返回乳腺 MRI 报告服务的 base URL，不含尾部斜杠。
+
+    统一配置来源：环境变量 → 默认值 127.0.0.1:4173。
+    调用方使用 f"{base_url}/api/..." 拼接，不会出现双斜杠。
+    """
+    host = get_breast_mri_host()
+    port = get_breast_mri_port()
+    return f"http://{host}:{port}"
+
 def get_metadata_path() -> str:
     path = _resolve("paths.metadata", "./app/data_pipeline/report_template/metadata.json")
     if not os.path.isabs(path):

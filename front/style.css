@@ -192,19 +192,63 @@ body {
   display: flex;
 }
 
-/* 乳腺 MRI 页面 */
-#pageBreastMRI {
+/* 工作台页面 */
+#pageWorkspace {
   display: none;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
-#pageBreastMRI.active {
+#pageWorkspace.active {
   display: flex;
 }
 
-#pageBreastMRI iframe {
+/* 工作台子导航 Tab 栏 */
+.workspace-tabs {
+  display: flex;
+  gap: 0;
+  flex-shrink: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: #fafafa;
+}
+
+.workspace-tab {
+  padding: 10px 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+
+.workspace-tab:hover {
+  color: var(--text);
+}
+
+.workspace-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* 工作台子视图 */
+.workspace-agent-view,
+.workspace-breastmri-view {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-agent-view {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-breastmri-view iframe {
   width: 100%;
   height: 100%;
   border: none;

@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=42" />
+    <link rel="stylesheet" href="/static/style.css?v=43" />
   </head>
   <body>
     <div class="app">
@@ -14,11 +14,11 @@
         <div class="sidebar-nav">
           <button
             class="sidebar-btn active"
-            data-page="agent"
-            title="Agent 对话"
+            data-page="workspace"
+            title="工作台"
           >
             <span class="sidebar-icon">💬</span>
-            <span class="sidebar-label">Agent</span>
+            <span class="sidebar-label">工作台</span>
           </button>
           <button class="sidebar-btn" data-page="kb" title="知识库管理">
             <span class="sidebar-icon">📚</span>
@@ -40,14 +40,6 @@
             <span class="sidebar-icon">⚙️</span>
             <span class="sidebar-label">Config</span>
           </button>
-          <button
-            class="sidebar-btn"
-            data-page="breast-mri"
-            title="乳腺MRI报告"
-          >
-            <span class="sidebar-icon">🩻</span>
-            <span class="sidebar-label">乳腺 MRI</span>
-          </button>
         </div>
       </nav>
 
@@ -55,8 +47,16 @@
       <div id="main-workspace">
         <!-- 主内容区 -->
         <div class="main">
-          <!-- Agent 页面 -->
-          <div class="page active" id="pageAgent">
+          <!-- 工作台页面 -->
+          <div class="page active" id="pageWorkspace">
+            <!-- 工作台子导航 Tab 栏 -->
+            <nav class="workspace-tabs">
+              <button class="workspace-tab active" data-workspace-tab="agent">通用 Agent</button>
+              <button class="workspace-tab" data-workspace-tab="breast-mri">乳腺 MRI</button>
+            </nav>
+
+            <!-- Agent 子视图 -->
+            <div class="workspace-agent-view" id="workspaceAgent">
             <div class="agent-layout">
               <!-- 历史对话侧边栏 -->
               <aside class="chat-history-sidebar" id="chatHistorySidebar">
@@ -151,6 +151,23 @@
                 </div>
               </div>
             </div>
+            </div>
+            <!-- /Agent 子视图 -->
+
+            <!-- 乳腺 MRI 子视图 -->
+            <div class="workspace-breastmri-view" id="workspaceBreastMRI" style="display: none">
+              <div class="breast-mri-loading" id="breastMRILoading">
+                <div class="breast-mri-loading-icon">🩻</div>
+                <p>乳腺 MRI 报告工作台加载中...</p>
+              </div>
+              <div class="breast-mri-error" id="breastMRIError" style="display: none">
+                <div class="breast-mri-error-icon">⚠️</div>
+                <p>乳腺 MRI 报告服务暂不可用</p>
+                <button class="btn btn-outline" id="btnBreastMRIRetry">重试</button>
+              </div>
+              <iframe id="breastMRIIframe" src="" style="display: none"></iframe>
+            </div>
+            <!-- /乳腺 MRI 子视图 -->
           </div>
 
           <!-- 模型选择弹窗 -->
@@ -1428,21 +1445,6 @@ data: [DONE]</code></pre>
             </div>
           </div>
         </div>
-
-          <!-- 乳腺 MRI 页面 -->
-          <div class="page" id="pageBreastMRI">
-            <div class="breast-mri-loading" id="breastMRILoading">
-              <div class="breast-mri-loading-icon">🩻</div>
-              <p>乳腺 MRI 报告工作台加载中...</p>
-            </div>
-            <div class="breast-mri-error" id="breastMRIError" style="display: none">
-              <div class="breast-mri-error-icon">⚠️</div>
-              <p>乳腺 MRI 报告服务暂不可用</p>
-              <button class="btn btn-outline" id="btnBreastMRIRetry">重试</button>
-            </div>
-            <iframe id="breastMRIIframe" src="" style="display: none"></iframe>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -1727,6 +1729,6 @@ data: [DONE]</code></pre>
       hidden
     ></div>
 
-    <script src="/static/app.js?v=61"></script>
+    <script src="/static/app.js?v=62"></script>
   </body>
 </html>

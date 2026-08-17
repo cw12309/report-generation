@@ -19,8 +19,11 @@ import sys
 import socket
 import time
 import os
+import json
 import threading
 import logging
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -75,8 +78,14 @@ class BreastMRILauncher:
         self._check_node()
 
         if self._port_in_use(self._host, self._port):
-            logger.info("breast-mri-report 已在运行（端口 %s 已占用）: %s", self._port, self.base_url)
-            return
+            if self._verify_service():
+                logger.info("breast-mri-report 已在运行（端口 %s 已占用）: %s", self._port, self.base_url)
+                return
+            else:
+                raise RuntimeError(
+                    f"BREAST_MRI_PORT_CONFLICT: 端口 {self._port} 已被其他程序占用，"
+                    f"请释放该端口后重试。"
+                )
 
         env = self._build_env()
         self._start_process(env)
@@ -191,3 +200,14 @@ class BreastMRILauncher:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.5)
             return sock.connect_ex((host, port)) == 0
+
+    def _verify_service(self):
+        """验证已占用端口上运行的是否为 breast-mri-report 服务。"""
+        try:
+            url = f"http://{self._host}:{self._port}/api/health"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data.get("status") == "ok" and data.get("service") == "breast-mri-report"
+        except Exception:
+            return False

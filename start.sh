@@ -48,7 +48,7 @@ init_env() {
 }
 
 init_dirs() {
-    mkdir -p app/data_pipeline/milvus_lite.db
+    mkdir -p app/data_pipeline
     mkdir -p app/data_pipeline/xlsx_slices
     mkdir -p app/report_template
     mkdir -p data

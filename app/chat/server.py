@@ -40,6 +40,7 @@ from config import (
     create_llm_client, create_embed_client,
     normalize_openai_model_urls, _normalize_base_url,
     sync_milvus_uri,
+    get_breast_mri_base_url,
 )
 from data_pipeline.build_vector_db import build_db, ensure_collection_schema
 from data_pipeline.extract_metadata import extract_all
@@ -1775,7 +1776,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     # 乳腺 MRI 报告工作台代理层
     # ——————————————————————————————————————————————————————————
 
-    _BREAST_MRI_BASE = "http://127.0.0.1:4173"
+    _BREAST_MRI_BASE = get_breast_mri_base_url()
 
     def _sanitize_proxy_headers(headers):
         """为同源代理清理安全头，允许 iframe 嵌入。

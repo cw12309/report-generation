@@ -1,4 +1,4 @@
-console.log("[APP] app.js v50 已加载, 时间:", new Date().toISOString());
+console.log("[APP] app.js v62 已加载, 时间:", new Date().toISOString());
 
 // 会话管理 - 每个对话独立的 session_id
 let SESSION_ID = generateSessionId();
@@ -364,26 +364,26 @@ sidebarBtns.forEach((btn) => {
     btn.classList.add("active");
     pages.forEach((p) => p.classList.remove("active"));
     const pageMap = {
-      agent: "pageAgent",
+      workspace: "pageWorkspace",
       kb: "pageKB",
       deployments: "pageDeployments",
       eval: "pageEval",
       config: "pageConfig",
       monitor: "pageMonitor",
-      "breast-mri": "pageBreastMRI",
     };
-    const target = document.getElementById(pageMap[page] || "pageAgent");
+    const target = document.getElementById(pageMap[page] || "pageWorkspace");
     if (target) target.classList.add("active");
     if (page === "kb") {
       refreshKnowledgeBases();
-    } else if (page === "agent") {
-      refreshKnowledgeBases();
+    } else if (page === "workspace") {
+      if (workspaceActiveTab === "agent") {
+        refreshKnowledgeBases();
+      }
+      switchWorkspaceTab(workspaceActiveTab);
     } else if (page === "eval") {
       restoreEvaluationState();
     } else if (page === "deployments") {
       loadApiDeployments();
-    } else if (page === "breast-mri") {
-      initBreastMRI();
     }
     if (page === "config") {
       loadConfig();
@@ -393,6 +393,43 @@ sidebarBtns.forEach((btn) => {
     } else {
       stopMonitorLogStream();
     }
+  });
+});
+
+// ==================== 工作台内部 Tab 切换 ====================
+
+let workspaceActiveTab = "agent";
+
+function switchWorkspaceTab(tab) {
+  workspaceActiveTab = tab;
+
+  const agentView = document.getElementById("workspaceAgent");
+  const mriView = document.getElementById("workspaceBreastMRI");
+
+  const tabs = document.querySelectorAll(".workspace-tab");
+  tabs.forEach((t) => {
+    t.classList.toggle("active", t.dataset.workspaceTab === tab);
+  });
+
+  if (tab === "agent") {
+    if (agentView) agentView.style.display = "";
+    if (mriView) mriView.style.display = "none";
+  } else if (tab === "breast-mri") {
+    if (agentView) agentView.style.display = "none";
+    if (mriView) mriView.style.display = "";
+    if (!breastMRILoaded) {
+      initBreastMRI();
+    }
+  }
+}
+
+// 绑定工作台 Tab 点击事件
+document.addEventListener("DOMContentLoaded", function () {
+  const workspaceTabs = document.querySelectorAll(".workspace-tab");
+  workspaceTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      switchWorkspaceTab(tab.dataset.workspaceTab);
+    });
   });
 });
 
@@ -5053,8 +5090,12 @@ const monitorP95Latency = document.getElementById("monitorP95Latency");
 const monitorErrorCount = document.getElementById("monitorErrorCount");
 const monitorTraceList = document.getElementById("monitorTraceList");
 const monitorTraceDetail = document.getElementById("monitorTraceDetail");
-const monitorTraceRequestFilter = document.getElementById("monitorTraceRequestFilter");
-const monitorTraceSessionFilter = document.getElementById("monitorTraceSessionFilter");
+const monitorTraceRequestFilter = document.getElementById(
+  "monitorTraceRequestFilter",
+);
+const monitorTraceSessionFilter = document.getElementById(
+  "monitorTraceSessionFilter",
+);
 const monitorLogList = document.getElementById("monitorLogList");
 const monitorLogStatus = document.getElementById("monitorLogStatus");
 const btnRefreshSessions = document.getElementById("btnRefreshSessions");
@@ -5111,7 +5152,9 @@ function renderMonitorIdentifier(value, kind, { linkToTrace = false } = {}) {
 }
 
 function activateMonitorTab(tabName) {
-  monitorActiveTab = ["overview", "sessions", "traces", "logs"].includes(tabName)
+  monitorActiveTab = ["overview", "sessions", "traces", "logs"].includes(
+    tabName,
+  )
     ? tabName
     : "overview";
   monitorTabs.forEach((tab) => {
@@ -5173,7 +5216,9 @@ async function loadMonitorTraces() {
   if (sessionId) params.set("session_id", sessionId);
   monitorTraceList.innerHTML = '<div class="monitor-empty">加载中...</div>';
   try {
-    const response = await fetch(`${API_BASE}/observability/traces?${params.toString()}`);
+    const response = await fetch(
+      `${API_BASE}/observability/traces?${params.toString()}`,
+    );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     renderMonitorTraceList(data.items || []);
@@ -5189,7 +5234,8 @@ async function loadMonitorTraces() {
 
 function renderMonitorTraceList(items) {
   if (!items.length) {
-    monitorTraceList.innerHTML = '<div class="monitor-empty">暂无请求 Trace</div>';
+    monitorTraceList.innerHTML =
+      '<div class="monitor-empty">暂无请求 Trace</div>';
     return;
   }
   monitorTraceList.innerHTML = items
@@ -5212,16 +5258,22 @@ function renderMonitorTraceList(items) {
         </div>`;
     })
     .join("");
-  monitorTraceList.querySelectorAll("[data-trace-request-id]").forEach((button) => {
-    button.addEventListener("click", () => loadMonitorTraceDetail(button.dataset.traceRequestId));
-  });
+  monitorTraceList
+    .querySelectorAll("[data-trace-request-id]")
+    .forEach((button) => {
+      button.addEventListener("click", () =>
+        loadMonitorTraceDetail(button.dataset.traceRequestId),
+      );
+    });
 }
 
 async function loadMonitorTraceDetail(requestId) {
   if (!requestId || !monitorTraceDetail) return;
   monitorTraceDetail.innerHTML = '<div class="monitor-empty">加载中...</div>';
   try {
-    const response = await fetch(`${API_BASE}/observability/traces/${encodeURIComponent(requestId)}`);
+    const response = await fetch(
+      `${API_BASE}/observability/traces/${encodeURIComponent(requestId)}`,
+    );
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const trace = await response.json();
     const events = trace.events || [];
@@ -5232,11 +5284,15 @@ async function loadMonitorTraceDetail(requestId) {
         <span class="monitor-trace-session"><span>session:</span>${renderMonitorIdentifier(trace.session_id, "session_id")}</span>
       </div>
       <div class="monitor-trace-timeline">
-        ${events.map((event, index) => `
+        ${events
+          .map(
+            (event, index) => `
           <div class="monitor-trace-event stage-${escapeHtml(String(event.stage || "request"))}">
             <span class="monitor-trace-index">${index + 1}</span>
             <div><strong>${escapeHtml(TRACE_STAGE_LABELS[event.stage] || event.stage || "Event")}</strong><small>${escapeHtml(String(event.event_type || ""))} · ${formatMonitorTimestamp(event.timestamp)}</small><pre>${escapeHtml(JSON.stringify(event.details || {}, null, 2))}</pre></div>
-          </div>`).join("")}
+          </div>`,
+          )
+          .join("")}
       </div>`;
   } catch (error) {
     monitorTraceDetail.innerHTML = `<div class="monitor-empty">Trace 详情加载失败: ${escapeHtml(error.message)}</div>`;
@@ -5262,20 +5318,27 @@ function startMonitorLogStream({ resetCursor = false } = {}) {
   stopMonitorLogStream();
   if (resetCursor) monitorLastLogId = 0;
   monitorLogStatus.textContent = "连接中...";
-  monitorLogEventSource = new EventSource(`${API_BASE}/observability/logs/stream?${monitorLogParams().toString()}`);
+  monitorLogEventSource = new EventSource(
+    `${API_BASE}/observability/logs/stream?${monitorLogParams().toString()}`,
+  );
   monitorLogEventSource.addEventListener("log", (event) => {
     try {
       const item = JSON.parse(event.data);
       monitorLastLogId = Math.max(monitorLastLogId, Number(item.id || 0));
       monitorLogItems.push(item);
-      if (monitorLogItems.length > 500) monitorLogItems = monitorLogItems.slice(-500);
+      if (monitorLogItems.length > 500)
+        monitorLogItems = monitorLogItems.slice(-500);
       renderMonitorLogs();
     } catch (error) {
       monitorLogStatus.textContent = `日志解析失败: ${error.message}`;
     }
   });
-  monitorLogEventSource.onopen = () => { monitorLogStatus.textContent = "实时连接中"; };
-  monitorLogEventSource.onerror = () => { monitorLogStatus.textContent = "连接中断，浏览器将自动重试"; };
+  monitorLogEventSource.onopen = () => {
+    monitorLogStatus.textContent = "实时连接中";
+  };
+  monitorLogEventSource.onerror = () => {
+    monitorLogStatus.textContent = "连接中断，浏览器将自动重试";
+  };
 }
 
 function stopMonitorLogStream() {
@@ -5283,7 +5346,8 @@ function stopMonitorLogStream() {
     monitorLogEventSource.close();
     monitorLogEventSource = null;
   }
-  if (monitorLogStatus && monitorActiveTab !== "logs") monitorLogStatus.textContent = "未连接";
+  if (monitorLogStatus && monitorActiveTab !== "logs")
+    monitorLogStatus.textContent = "未连接";
 }
 
 function renderMonitorLogs() {
@@ -5293,7 +5357,8 @@ function renderMonitorLogs() {
     return;
   }
   monitorLogList.innerHTML = monitorLogItems
-    .map((item) => `
+    .map(
+      (item) => `
       <div class="monitor-log-row">
         <time>${formatMonitorTimestamp(item.timestamp)}</time>
         <span class="monitor-log-level level-${escapeHtml(String(item.level || "info").toLowerCase())}">${escapeHtml(String(item.level || "INFO"))}</span>
@@ -5303,7 +5368,8 @@ function renderMonitorLogs() {
           <span class="monitor-log-request"><span>request=</span>${renderMonitorIdentifier(item.request_id, "request_id", { linkToTrace: true })}</span>
           <span class="monitor-log-session"><span>session=</span>${renderMonitorIdentifier(item.session_id, "session_id")}</span>
         </span>
-      </div>`)
+      </div>`,
+    )
     .join("");
   monitorLogList.scrollTop = monitorLogList.scrollHeight;
 }
@@ -5334,12 +5400,11 @@ async function loadSessionsList() {
     sessions.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     monitorSessionsList.innerHTML = sessions
-      .map(
-        (s) => {
-          const sessionId = String(s.id || "");
-          const escapedSessionId = escapeHtmlAttribute(sessionId);
-          const sessionTitle = String(s.title || "未命名");
-          return `
+      .map((s) => {
+        const sessionId = String(s.id || "");
+        const escapedSessionId = escapeHtmlAttribute(sessionId);
+        const sessionTitle = String(s.title || "未命名");
+        return `
         <div class="monitor-session-row" data-session-id="${escapedSessionId}">
           <span class="monitor-session-id">${renderMonitorIdentifier(sessionId, "session_id")}</span>
           <span class="monitor-session-title" title="${escapeHtmlAttribute(sessionTitle)}">${escapeHtml(sessionTitle)}</span>
@@ -5351,8 +5416,7 @@ async function loadSessionsList() {
           </span>
         </div>
       `;
-        },
-      )
+      })
       .join("");
   } catch (e) {
     monitorSessionsList.innerHTML = `<div class="monitor-empty">加载失败: ${e.message}</div>`;
@@ -5363,7 +5427,9 @@ async function loadSessionsList() {
 async function viewSessionDetail(sessionId) {
   try {
     // 加载会话记忆
-    const res = await fetch(`${API_BASE}/memory?session_id=${encodeURIComponent(sessionId)}`);
+    const res = await fetch(
+      `${API_BASE}/memory?session_id=${encodeURIComponent(sessionId)}`,
+    );
     const data = await res.json();
 
     // 显示基本信息
@@ -5403,9 +5469,12 @@ async function deleteSession(sessionId) {
   }
 
   try {
-    await fetch(`${API_BASE}/session?session_id=${encodeURIComponent(sessionId)}`, {
-      method: "DELETE",
-    });
+    await fetch(
+      `${API_BASE}/session?session_id=${encodeURIComponent(sessionId)}`,
+      {
+        method: "DELETE",
+      },
+    );
     await loadSessionsList();
   } catch (e) {
     alert(`删除会话失败: ${e.message}`);
@@ -5461,7 +5530,9 @@ btnRefreshSessions.addEventListener("click", () => {
 });
 
 monitorTabs.forEach((tab) => {
-  tab.addEventListener("click", () => activateMonitorTab(tab.dataset.monitorTab));
+  tab.addEventListener("click", () =>
+    activateMonitorTab(tab.dataset.monitorTab),
+  );
 });
 
 btnRefreshTraces?.addEventListener("click", loadMonitorTraces);

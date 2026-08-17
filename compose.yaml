@@ -33,8 +33,6 @@ services:
     ports:
       - "7860:8000"
     volumes:
-      # 向量数据库（Milvus Lite）
-      - ./app/data_pipeline/milvus_lite.db:/app/app/data_pipeline/milvus_lite.db
       # Excel 切片文件
       - ./app/data_pipeline/xlsx_slices:/app/app/data_pipeline/xlsx_slices
       # 报告模板

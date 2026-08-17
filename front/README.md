@@ -6,7 +6,7 @@
 
 前端按侧边栏顺序覆盖六个主要页面：
 
-- Agent：选择知识库、发起对话、查看思考过程、参考切片和上下文占用；
+- 工作台：通用 Agent 对话（选择知识库、发起对话、查看思考过程、参考切片和上下文占用）与乳腺 MRI 报告工作台内部 Tab 切换；
 - Knowledge Base：上传 Excel、构建/重建、查看进度、切片和删除知识库；
 - API 上线：创建和管理绑定固定 Active KB 的 Deployment，提供独立 Key 与多轮 SSE 接入示例；
 - Eval：维护 Retrieval Eval 数据集、自动生成用例、执行/取消评测并恢复状态；
@@ -15,17 +15,17 @@
 
 ## Technology Stack
 
-| 能力 | 当前实现 |
-| --- | --- |
-| 页面 | 单个 `index.html` |
-| 样式 | 原生 CSS，集中在 `style.css` |
-| 逻辑 | 原生浏览器 JavaScript，集中在经典脚本 `app.js` |
+| 能力 | 当前实现                                                |
+| ---- | ------------------------------------------------------- |
+| 页面 | 单个 `index.html`                                       |
+| 样式 | 原生 CSS，集中在 `style.css`                            |
+| 逻辑 | 原生浏览器 JavaScript，集中在经典脚本 `app.js`          |
 | 网络 | Fetch API、ReadableStream、TextDecoder、AbortController |
-| 路由 | 无路由库；通过 `data-page` 和 DOM 显隐切换页面 |
-| 状态 | 无状态管理库；模块级变量 + DOM + LocalStorage |
-| 渲染 | DOM API、模板字符串和有限 Markdown 渲染函数 |
-| 构建 | 无 `package.json`、打包器、转译器或 TypeScript |
-| 测试 | 当前没有独立前端自动化测试或 lint 配置 |
+| 路由 | 无路由库；通过 `data-page` 和 DOM 显隐切换页面          |
+| 状态 | 无状态管理库；模块级变量 + DOM + LocalStorage           |
+| 渲染 | DOM API、模板字符串和有限 Markdown 渲染函数             |
+| 构建 | 无 `package.json`、打包器、转译器或 TypeScript          |
+| 测试 | 当前没有独立前端自动化测试或 lint 配置                  |
 
 不要按 React/Vue 项目寻找组件、store 或 router；也不要为小修改假设存在 npm 命令。
 
@@ -158,11 +158,11 @@ Deployment 管理不再属于 Config 页；修改 Config 时不要重新引入 A
 
 ### LocalStorage keys
 
-| Key | 内容 |
-| --- | --- |
-| `chat_history_list` | 浏览器端对话索引、标题、时间和对应 `session_id` |
-| `chat_messages_{conversationId}` | 已渲染的消息 HTML 与思考过程快照 |
-| `selectedKnowledgeBaseIds` | 当前选中的知识库 ID 列表 |
+| Key                              | 内容                                            |
+| -------------------------------- | ----------------------------------------------- |
+| `chat_history_list`              | 浏览器端对话索引、标题、时间和对应 `session_id` |
+| `chat_messages_{conversationId}` | 已渲染的消息 HTML 与思考过程快照                |
+| `selectedKnowledgeBaseIds`       | 当前选中的知识库 ID 列表                        |
 
 浏览器 `conversationId` 用于管理本地 UI 历史，后端 `session_id` 用于恢复 SQLite 中的轮次、槽位和上一份报告，两者不能互换。新建浏览器对话时会生成 `web_` 前缀的 session ID；后端 `/api/session/new` 使用另一种 ID 格式。
 
@@ -178,14 +178,14 @@ const API_BASE = "/api";
 
 因此所有请求默认同源。当前主要调用如下：
 
-| 功能 | 方法与路径 |
-| --- | --- |
-| 对话 | `POST /api/chat`、`POST /api/clear`、`GET /api/memory` |
-| 知识库 | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{id}/build`、`DELETE /api/kb/{id}`、切片和筛选接口 |
-| 配置 | `GET /api/config`、`POST /api/config`、`POST /api/test-model` |
-| API 上线 | `GET/POST /api/deployments`、Deployment 更新/软删除、启停和 Key 轮换 |
-| 评测 | `/api/eval/dataset`、`/api/eval/auto_generate`、`/api/eval/run`、`/api/eval/cancel`、`/api/eval/status` |
-| 会话监控 | `GET /api/sessions`、`GET /api/memory`、`DELETE /api/session` |
+| 功能     | 方法与路径                                                                                              |
+| -------- | ------------------------------------------------------------------------------------------------------- |
+| 对话     | `POST /api/chat`、`POST /api/clear`、`GET /api/memory`                                                  |
+| 知识库   | `GET /api/kbs`、`POST /api/kb/upload`、`POST /api/kb/{id}/build`、`DELETE /api/kb/{id}`、切片和筛选接口 |
+| 配置     | `GET /api/config`、`POST /api/config`、`POST /api/test-model`                                           |
+| API 上线 | `GET/POST /api/deployments`、Deployment 更新/软删除、启停和 Key 轮换                                    |
+| 评测     | `/api/eval/dataset`、`/api/eval/auto_generate`、`/api/eval/run`、`/api/eval/cancel`、`/api/eval/status` |
+| 会话监控 | `GET /api/sessions`、`GET /api/memory`、`DELETE /api/session`                                           |
 
 路由请求模型、完整列表以及外部 `/api/v1/*` 契约见[后端 README](../app/README.md)。
 
@@ -193,20 +193,20 @@ const API_BASE = "/api";
 
 `handleStreamEvent()` 当前显式处理以下类型：
 
-| 事件 | 前端行为 |
-| --- | --- |
-| `status` | 更新顶部状态文案 |
-| `intent`、`query_rewrite`、`context_resolve`、`search` | 添加思考步骤 |
-| `recall`、`rerank`、`search_result` | 展示检索细节；`rerank` 同时收集报告参考切片 |
-| `reasoning`、`memory_retrieval`、`tool_executed` | 展示 Agent/记忆细节 |
-| `entity_update`、`intent_switch` | 展示上下文变化 |
-| `context_usage` | 更新上下文占用 |
-| `ambiguous` | 结束思考状态并显示诊断选择按钮 |
-| `token` | 追加助手文本增量 |
-| `report` | 完成助手消息并按“结构化报告”渲染 |
-| `message` | 完成普通助手消息 |
-| `error` | 中止当前助手消息并显示错误 |
-| `done` | 完成消息并追加总耗时 |
+| 事件                                                   | 前端行为                                    |
+| ------------------------------------------------------ | ------------------------------------------- |
+| `status`                                               | 更新顶部状态文案                            |
+| `intent`、`query_rewrite`、`context_resolve`、`search` | 添加思考步骤                                |
+| `recall`、`rerank`、`search_result`                    | 展示检索细节；`rerank` 同时收集报告参考切片 |
+| `reasoning`、`memory_retrieval`、`tool_executed`       | 展示 Agent/记忆细节                         |
+| `entity_update`、`intent_switch`                       | 展示上下文变化                              |
+| `context_usage`                                        | 更新上下文占用                              |
+| `ambiguous`                                            | 结束思考状态并显示诊断选择按钮              |
+| `token`                                                | 追加助手文本增量                            |
+| `report`                                               | 完成助手消息并按“结构化报告”渲染            |
+| `message`                                              | 完成普通助手消息                            |
+| `error`                                                | 中止当前助手消息并显示错误                  |
+| `done`                                                 | 完成消息并追加总耗时                        |
 
 `search_result` 是兼容分支；在已核对的当前主 Worker/pipeline 中没有对应的主要发送点。后端还可能发出 `query_plan`、`cache_hit`，但当前 `handleStreamEvent()` 没有显式分支，会直接忽略。若这些信息需要展示，应同时定义 payload、增加渲染分支并更新本文。
 
@@ -259,18 +259,18 @@ const API_BASE = "/api";
 
 ## Change Guide
 
-| 要修改的内容 | 主要位置 | 必须联查 |
-| --- | --- | --- |
-| 新增页面/导航 | `index.html`、页面切换逻辑 | `style.css`、默认页面状态 |
-| 聊天请求字段 | `sendMessage()` | 后端 `ChatRequest`、`/api/chat` |
-| SSE 新事件 | `handleStreamEvent()` | 后端发送点、payload 转义、终态处理 |
-| 消息/报告渲染 | assistant stream 与 `renderMarkdown()` | LocalStorage 恢复、XSS 边界 |
-| 知识库操作 | KB 函数与 modal | Worker KB 路由、轮询终止条件 |
-| 评测流程 | Eval 函数与 `consumeSSEStream()` | Worker Eval 事件、状态恢复 |
-| 配置字段 | 配置表单和序列化 | `/api/config`、`app/config.py`、真实消费者 |
+| 要修改的内容        | 主要位置                                 | 必须联查                                                    |
+| ------------------- | ---------------------------------------- | ----------------------------------------------------------- |
+| 新增页面/导航       | `index.html`、页面切换逻辑               | `style.css`、默认页面状态                                   |
+| 聊天请求字段        | `sendMessage()`                          | 后端 `ChatRequest`、`/api/chat`                             |
+| SSE 新事件          | `handleStreamEvent()`                    | 后端发送点、payload 转义、终态处理                          |
+| 消息/报告渲染       | assistant stream 与 `renderMarkdown()`   | LocalStorage 恢复、XSS 边界                                 |
+| 知识库操作          | KB 函数与 modal                          | Worker KB 路由、轮询终止条件                                |
+| 评测流程            | Eval 函数与 `consumeSSEStream()`         | Worker Eval 事件、状态恢复                                  |
+| 配置字段            | 配置表单和序列化                         | `/api/config`、`app/config.py`、真实消费者                  |
 | API 上线/Deployment | `pageDeployments`、Deployment 函数与弹窗 | Worker 管理路由、Gateway 公开路由、Key 一次性显示、SSE 示例 |
-| 样式或 class | `style.css` | HTML 和 JS 的选择器/动态 class |
-| 静态资源 | `app.js`/`style.css` | `index.html` 中对应 `?v=` |
+| 样式或 class        | `style.css`                              | HTML 和 JS 的选择器/动态 class                              |
+| 静态资源            | `app.js`/`style.css`                     | `index.html` 中对应 `?v=`                                   |
 
 ## Related Documentation
 

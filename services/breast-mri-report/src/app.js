@@ -862,7 +862,7 @@ async function runAgentTurn() {
   render();
 
   try {
-    const response = await fetch("/api/agent/turn", {
+    const response = await fetch("./api/agent/turn", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message, currentCase: currentCaseForModel, turnId })
@@ -2127,7 +2127,7 @@ function render() {
 
 async function checkModelStatus() {
   try {
-    const response = await fetch("/api/model-status");
+    const response = await fetch("./api/model-status");
     const payload = await response.json();
     if (payload.fallbackAvailable && !payload.online) {
       dom.modelStatus.textContent = "LLM离线 · 本地提取可用";

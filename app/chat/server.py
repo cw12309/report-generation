@@ -1777,6 +1777,25 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
 
     _BREAST_MRI_BASE = "http://127.0.0.1:4173"
 
+    def _sanitize_proxy_headers(headers):
+        """为同源代理清理安全头，允许 iframe 嵌入。
+
+        移除 X-Frame-Options，将 CSP 中 frame-ancestors 'none'
+        调整为 'self'（同源代理下合法），保留其他 CSP 指令不变。
+        """
+        stripped = [
+            "content-encoding", "transfer-encoding", "content-length",
+            "x-frame-options",
+        ]
+        result = {}
+        for k, v in headers.items():
+            if k.lower() in stripped:
+                continue
+            if k.lower() == "content-security-policy":
+                v = v.replace("frame-ancestors 'none'", "frame-ancestors 'self'")
+            result[k] = v
+        return result
+
     @app.get("/api/breast-mri/health", tags=["breast-mri"])
     async def breast_mri_health():
         """代理 breast-mri-report 健康检查，Node 不可用时返回降级状态。"""
@@ -1841,8 +1860,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 return StreamingResponse(
                     resp.aiter_bytes(),
                     status_code=resp.status_code,
-                    headers={k: v for k, v in resp.headers.items()
-                             if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")},
+                    headers=_sanitize_proxy_headers(resp.headers),
                     media_type=resp.headers.get("content-type"),
                 )
         except httpx.ConnectError:

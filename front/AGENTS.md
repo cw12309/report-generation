@@ -18,35 +18,36 @@ index.html ── fixed DOM / pages / forms / modals
 
 ## File Map
 
-| File | Responsibility |
-| --- | --- |
-| `index.html` | 六个页面、一级导航、表单、Modal 和固定 DOM ID；引用静态资源版本 |
-| `app.js` | 页面行为、Fetch/SSE、渲染、运行时状态和 LocalStorage |
-| `style.css` | 全站布局、页面组件、状态 class、Modal、代码块和响应式样式 |
-| `README.md` | 面向人类的 Frontend 使用与开发指南 |
-| `AGENTS.md` | 本导航；Coding Agent 的页面、状态、契约和变更入口 |
-| `docs/api-deployment-guide.md` | 面向调用方的 API 上线使用手册；页面内帮助窗口的单一内容源 |
+| File                           | Responsibility                                                  |
+| ------------------------------ | --------------------------------------------------------------- |
+| `index.html`                   | 六个页面、一级导航、表单、Modal 和固定 DOM ID；引用静态资源版本 |
+| `app.js`                       | 页面行为、Fetch/SSE、渲染、运行时状态和 LocalStorage            |
+| `style.css`                    | 全站布局、页面组件、状态 class、Modal、代码块和响应式样式       |
+| `README.md`                    | 面向人类的 Frontend 使用与开发指南                              |
+| `AGENTS.md`                    | 本导航；Coding Agent 的页面、状态、契约和变更入口               |
+| `docs/api-deployment-guide.md` | 面向调用方的 API 上线使用手册；页面内帮助窗口的单一内容源       |
 
 ## Page Map
 
-| Page | DOM / important regions | Main JavaScript | APIs / state |
-| --- | --- | --- | --- |
-| Agent | `pageAgent`, `chatContainer`, `userInput`, `memoryPanel`, `chatHistoryList`, `agentKbModal` | `sendMessage()`, `handleStreamEvent()`, assistant render helpers, `initChatHistory()` | `/api/chat`, `/api/clear`, `/api/memory`, `/api/kbs`; `SESSION_ID`, processing/reader/controller, selected KBs, local conversation |
-| Knowledge Base | `pageKB`, `manageKbList`, `kbDetailArea`, `kbChunkList`, `xlsxInput`, `kbLog` | `refreshKnowledgeBases()`, `renderManageKbList()`, `loadKnowledgeBaseChunks()`, build/upload/delete helpers | `/api/kbs`, `/api/kbs/{id}/chunks`, `/api/kb/*`; KB list, selected management KB, polling/abort state |
-| API 上线 | `pageDeployments`, `apiDeploymentList`, create/detail/edit/secret/guide modals, KB selectors, `apiDemoCode` | Deployment load/render/actions, `loadApiDeploymentGuide()`, safe guide renderer, `bindApiDeploymentInteractions()` | `/api/deployments*`, `/api/kbs`, static Markdown guide; Deployment and guide-loading state |
-| Eval | `pageEval`, `evalStatus`, `evalDetailsBody`, `evalCaseModal`, `evalAutoGenerateModal` | dataset CRUD/search, `consumeSSEStream()`, `runRetrievalEvaluation()`, `restoreEvaluationState()`, auto-generate helpers | `/api/eval/*`, `/api/kb/filter-options`, `/api/kb/chunks`; run/cancel/poll/filter/abort state |
-| Monitor | `pageMonitor`, 四个 `monitorPanel*`, `monitorSessionsList`, `monitorTraceList/Detail`, `monitorLogList`, `sessionDetailModal` | `activateMonitorTab()`, overview/session/trace/log loaders, `renderMonitorIdentifier()`, ID copy/log→Trace navigation, session actions | `/api/observability/*` + 原 `/api/sessions`, `/api/memory`, `/api/session`; 当前 Tab、EventSource、日志游标 |
-| Config | `pageConfig`, `configNav`, `configForm`, `configGroupLlm/Retrieval/System`, `llmConfigPanel` | model card helpers, `loadConfig()`, `saveConfig()`, `testModelConnection()`, active-model helpers | `/api/config`, `/api/test-model`; `_configData`, `_currentLlmName`; Milvus URI 与 `.env` 的 `MILVUS_URI` 双向同步 |
+| Page           | DOM / important regions                                                                                                       | Main JavaScript                                                                                                                                            | APIs / state                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Agent          | `pageAgent`, `chatContainer`, `userInput`, `memoryPanel`, `chatHistoryList`, `agentKbModal`                                   | `sendMessage()`, `handleStreamEvent()`, assistant render helpers, `initChatHistory()`                                                                      | `/api/chat`, `/api/clear`, `/api/memory`, `/api/kbs`; `SESSION_ID`, processing/reader/controller, selected KBs, local conversation |
+| Knowledge Base | `pageKB`, `manageKbList`, `kbDetailArea`, `kbChunkList`, `xlsxInput`, `kbLog`                                                 | `refreshKnowledgeBases()`, `renderManageKbList()`, `loadKnowledgeBaseChunks()`, build/upload/delete helpers                                                | `/api/kbs`, `/api/kbs/{id}/chunks`, `/api/kb/*`; KB list, selected management KB, polling/abort state                              |
+| API 上线       | `pageDeployments`, `apiDeploymentList`, create/detail/edit/secret/guide modals, KB selectors, `apiDemoCode`                   | Deployment load/render/actions, `loadApiDeploymentGuide()`, safe guide renderer, `bindApiDeploymentInteractions()`                                         | `/api/deployments*`, `/api/kbs`, static Markdown guide; Deployment and guide-loading state                                         |
+| Eval           | `pageEval`, `evalStatus`, `evalDetailsBody`, `evalCaseModal`, `evalAutoGenerateModal`                                         | dataset CRUD/search, `consumeSSEStream()`, `runRetrievalEvaluation()`, `restoreEvaluationState()`, auto-generate helpers                                   | `/api/eval/*`, `/api/kb/filter-options`, `/api/kb/chunks`; run/cancel/poll/filter/abort state                                      |
+| Monitor        | `pageMonitor`, 四个 `monitorPanel*`, `monitorSessionsList`, `monitorTraceList/Detail`, `monitorLogList`, `sessionDetailModal` | `activateMonitorTab()`, overview/session/trace/log loaders, `renderMonitorIdentifier()`, ID copy/log→Trace navigation, session actions                     | `/api/observability/*` + 原 `/api/sessions`, `/api/memory`, `/api/session`; 当前 Tab、EventSource、日志游标                        |
+| Config         | `pageConfig`, `configNav`, `configForm`, `configGroupLlm/Retrieval/System`, `llmConfigPanel`                                  | model card helpers, `loadConfig()`, `saveConfig()`, `testModelConnection()`, active-model helpers                                                          | `/api/config`, `/api/test-model`; `_configData`, `_currentLlmName`; Milvus URI 与 `.env` 的 `MILVUS_URI` 双向同步                  |
+| 乳腺 MRI       | `pageBreastMRI`, `breastMRILoading`, `breastMRIError`, `breastMRIIframe`, `btnBreastMRIRetry`                                 | `initBreastMRI()`, `retryBreastMRI()`; 进入页面先请求 `/api/breast-mri/health`，通过后 `<iframe src="/breast-mri/">` 加载乳腺 MRI 工作台，失败显示错误占位 | `/api/breast-mri/health`; `breastMRILoaded` 标记防止重复初始化；页面切换不销毁 iframe                                              |
 
 ## Navigation
 
-Navigation order is `agent → kb → deployments → eval → monitor → config`, mapping to `pageAgent`, `pageKB`, `pageDeployments`, `pageEval`, `pageMonitor`, `pageConfig`. There is no `showPage()` function: a top-level `.sidebar-btn` click listener directly toggles `.active`.
+Navigation order is `agent → kb → deployments → eval → monitor → config → breast-mri`, mapping to `pageAgent`, `pageKB`, `pageDeployments`, `pageEval`, `pageMonitor`, `pageConfig`, `pageBreastMRI`. There is no `showPage()` function: a top-level `.sidebar-btn` click listener directly toggles `.active`.
 
-Page-entry loads: Agent/KB call `refreshKnowledgeBases()`; Deployments calls `loadApiDeployments()`; Eval calls `restoreEvaluationState()`; Monitor restores its active inner Tab and loads that view; Config calls `loadConfig()`. Leaving Monitor closes its日志 EventSource。Adding a page requires synchronizing the sidebar button, page container, listener `pageMap`, entry initialization, CSS and documentation. Do not bind the same handler again on each visit.
+Page-entry loads: Agent/KB call `refreshKnowledgeBases()`; Deployments calls `loadApiDeployments()`; Eval calls `restoreEvaluationState()`; Monitor restores its active inner Tab and loads that view; Config calls `loadConfig()`; Breast MRI calls `initBreastMRI()` which checks `/api/breast-mri/health` before loading the iframe. Leaving Monitor closes its日志 EventSource。Adding a page requires synchronizing the sidebar button, page container, listener `pageMap`, entry initialization, CSS and documentation. Do not bind the same handler again on each visit.
 
 ## DOM Ownership
 
-Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns chat/history/memory plus the document-level `agentKbModal`; KB owns `manageKbList` and detail/chunk regions; Deployment owns its list and five modals, including `apiDeploymentGuideModal`, with plaintext Key allowed only temporarily in `apiRevealedKey`; Eval owns metrics/table and two document-level modals; Monitor owns Overview/Session/Trace/Logs 四个 inner tabs 和现有 session detail modal；Config owns only LLM/Retrieval/System groups.
+Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns chat/history/memory plus the document-level `agentKbModal`; KB owns `manageKbList` and detail/chunk regions; Deployment owns its list and five modals, including `apiDeploymentGuideModal`, with plaintext Key allowed only temporarily in `apiRevealedKey`; Eval owns metrics/table and two document-level modals; Monitor owns Overview/Session/Trace/Logs 四个 inner tabs 和现有 session detail modal；Config owns only LLM/Retrieval/System groups; Breast MRI owns `pageBreastMRI` and its loading/error/iframe children.
 
 ## JavaScript Responsibility Map
 
@@ -64,11 +65,11 @@ Navigation owns `.sidebar`, `.sidebar-btn[data-page]` and `.page`. Agent owns ch
 
 ### LocalStorage
 
-| Key | Meaning |
-| --- | --- |
-| `chat_history_list` | UI conversation index, title/time and associated backend `session_id` |
-| `chat_messages_{conversationId}` | Rendered message `innerHTML` and thinking `outerHTML` snapshot |
-| `selectedKnowledgeBaseIds` | Agent-selected KB ID list |
+| Key                              | Meaning                                                               |
+| -------------------------------- | --------------------------------------------------------------------- |
+| `chat_history_list`              | UI conversation index, title/time and associated backend `session_id` |
+| `chat_messages_{conversationId}` | Rendered message `innerHTML` and thinking `outerHTML` snapshot        |
+| `selectedKnowledgeBaseIds`       | Agent-selected KB ID list                                             |
 
 ### Backend-owned State
 
@@ -84,19 +85,20 @@ These values are not interchangeable even when two use a `conv_` prefix. Interna
 
 ## API Map
 
-| Page | Method and path | Purpose |
-| --- | --- | --- |
-| Agent | `POST /api/chat`, `POST /api/clear`, `GET /api/memory`, `GET /api/kbs` | Stateful chat, reset, memory view and per-turn KB selection |
-| KB | `GET /api/kbs`, `GET /api/kbs/{id}/chunks`, `POST /api/kb/upload`, `POST /api/kb/{id}/build`, `DELETE /api/kb/{id}` | KB list, chunks, upload, build and delete |
-| KB maintenance | `POST /api/kb/build`, `POST /api/kb/extract-metadata` | Legacy/maintenance build and metadata actions still called by UI |
-| Deployments | `GET/POST /api/deployments`, `GET/PATCH/DELETE /api/deployments/{id}` | List/create/detail/update/soft-delete |
-| Deployments | `POST /api/deployments/{id}/enable`, `/disable`, `/rotate-key` | Status and one-time key rotation |
-| Eval | `GET/DELETE /api/eval/dataset`, `DELETE /api/eval/dataset/{chunk_id}`, `POST /api/eval/add_case` | Dataset management |
-| Eval | `POST /api/eval/run`, `/cancel`, `/auto_generate`; `GET /api/eval/status` | Run/cancel/restore and generate via SSE |
-| Eval | `GET /api/kb/filter-options`, `GET /api/kb/chunks` | Cascading filters and candidate chunk search |
-| Monitor | `GET /api/observability/overview`, `/traces`, `/traces/{request_id}`, `/logs/stream` | 共用指标、Trace 与结构化日志 SSE |
-| Monitor | `GET /api/sessions`, `GET /api/memory`, `DELETE /api/session` | 保留原 Session 列表/详情/删除 |
-| Config | `GET/POST /api/config`, `POST /api/test-model` | Masked config load/save and connection test |
+| Page           | Method and path                                                                                                     | Purpose                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Agent          | `POST /api/chat`, `POST /api/clear`, `GET /api/memory`, `GET /api/kbs`                                              | Stateful chat, reset, memory view and per-turn KB selection      |
+| KB             | `GET /api/kbs`, `GET /api/kbs/{id}/chunks`, `POST /api/kb/upload`, `POST /api/kb/{id}/build`, `DELETE /api/kb/{id}` | KB list, chunks, upload, build and delete                        |
+| KB maintenance | `POST /api/kb/build`, `POST /api/kb/extract-metadata`                                                               | Legacy/maintenance build and metadata actions still called by UI |
+| Deployments    | `GET/POST /api/deployments`, `GET/PATCH/DELETE /api/deployments/{id}`                                               | List/create/detail/update/soft-delete                            |
+| Deployments    | `POST /api/deployments/{id}/enable`, `/disable`, `/rotate-key`                                                      | Status and one-time key rotation                                 |
+| Eval           | `GET/DELETE /api/eval/dataset`, `DELETE /api/eval/dataset/{chunk_id}`, `POST /api/eval/add_case`                    | Dataset management                                               |
+| Eval           | `POST /api/eval/run`, `/cancel`, `/auto_generate`; `GET /api/eval/status`                                           | Run/cancel/restore and generate via SSE                          |
+| Eval           | `GET /api/kb/filter-options`, `GET /api/kb/chunks`                                                                  | Cascading filters and candidate chunk search                     |
+| Monitor        | `GET /api/observability/overview`, `/traces`, `/traces/{request_id}`, `/logs/stream`                                | 共用指标、Trace 与结构化日志 SSE                                 |
+| Monitor        | `GET /api/sessions`, `GET /api/memory`, `DELETE /api/session`                                                       | 保留原 Session 列表/详情/删除                                    |
+| Config         | `GET/POST /api/config`, `POST /api/test-model`                                                                      | Masked config load/save and connection test                      |
+| Breast MRI     | `GET /api/breast-mri/health`                                                                                        | Health check before loading iframe                               |
 
 ## SSE Map
 
@@ -146,19 +148,19 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 
 ## Change Map
 
-| Change | Start here | Also verify |
-| --- | --- | --- |
-| Add top-level page | `index.html` sidebar/page DOM; sidebar listener `pageMap` | entry load, CSS, resource version, README/AGENTS |
-| Agent Chat | Chat DOM, `sendMessage()`, `handleStreamEvent()` | `/api/chat` schema, reader termination, processing/error state, LocalStorage |
-| SSE contract | Backend emit site, parser, event switch | thinking/report UI, ignored events, done/error and both SSE parsers |
-| KB UI | KB DOM and `refreshKnowledgeBases()` group | Agent selector, poll/abort logic, KB routes, Deployment Active-KB selector |
-| API 上线 UI | Deployment DOM/functions and `docs/api-deployment-guide.md` | management routes, KB selector, one-time Key/guide modals, safe renderer, copy actions, responsive styles |
-| Deployment API | frontend management/examples | Worker/Gateway, schemas, deployment tests, security rules and docs |
-| Eval UI | Eval DOM, dataset/filter/run helpers | Eval event types, status restore/polling, cancellation and result fields |
-| Monitor | Monitor inner tabs and overview/trace/log helpers | `/api/observability/*`, EventSource cleanup, escaping/redaction, existing Session actions |
-| Config | config groups, model serialization/load/save | `/api/config`, `/api/test-model`, active-model panel; keep Deployment separate |
-| LocalStorage | key constants and history helpers | old snapshot compatibility, UI/backend session mapping, sensitive-data risk |
-| Report display | `handleStreamEvent()`, stream/render helpers | backend report content, `json_to_display()`, references and saved HTML |
+| Change             | Start here                                                  | Also verify                                                                                               |
+| ------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Add top-level page | `index.html` sidebar/page DOM; sidebar listener `pageMap`   | entry load, CSS, resource version, README/AGENTS                                                          |
+| Agent Chat         | Chat DOM, `sendMessage()`, `handleStreamEvent()`            | `/api/chat` schema, reader termination, processing/error state, LocalStorage                              |
+| SSE contract       | Backend emit site, parser, event switch                     | thinking/report UI, ignored events, done/error and both SSE parsers                                       |
+| KB UI              | KB DOM and `refreshKnowledgeBases()` group                  | Agent selector, poll/abort logic, KB routes, Deployment Active-KB selector                                |
+| API 上线 UI        | Deployment DOM/functions and `docs/api-deployment-guide.md` | management routes, KB selector, one-time Key/guide modals, safe renderer, copy actions, responsive styles |
+| Deployment API     | frontend management/examples                                | Worker/Gateway, schemas, deployment tests, security rules and docs                                        |
+| Eval UI            | Eval DOM, dataset/filter/run helpers                        | Eval event types, status restore/polling, cancellation and result fields                                  |
+| Monitor            | Monitor inner tabs and overview/trace/log helpers           | `/api/observability/*`, EventSource cleanup, escaping/redaction, existing Session actions                 |
+| Config             | config groups, model serialization/load/save                | `/api/config`, `/api/test-model`, active-model panel; keep Deployment separate                            |
+| LocalStorage       | key constants and history helpers                           | old snapshot compatibility, UI/backend session mapping, sensitive-data risk                               |
+| Report display     | `handleStreamEvent()`, stream/render helpers                | backend report content, `json_to_display()`, references and saved HTML                                    |
 
 ## Testing / Validation
 
@@ -166,6 +168,7 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 - Exercise navigation/entry loads/modals/repeated visits plus loading/empty/error/disabled/responsive states and Deployment secret cleanup.
 - Verify Fetch method/path/payload and SSE types against Backend; check cache values, Markdown links and `git diff --check`; run the smallest relevant backend test for contract changes.
 - No automated browser test currently exists.
+
 ## Local Rules
 
 - Keep native HTML/CSS/classic JS and current DOM switching; fixed IDs are cross-file contracts, and dynamic backend text must use `escapeHtml()` or `textContent`.
@@ -177,9 +180,11 @@ Contract changes require checking `../app/chat/server.py`, relevant request mode
 - Missing navigation mapping/entry load, stale DOM selectors/classes, or stale `?v=`; confusing local `currentConversationId`, Agent `SESSION_ID` and Deployment `conversation_id`.
 - Persisting a plaintext Key, adding public `selected_kbs`, moving Deployment UI into Config, or mixing Agent/Deployment KB rules.
 - Assuming backend events are rendered (`query_plan/cache_hit`) or `search_result` is emitted; treating both SSE parsers/token behavior as identical, or changing report DOM without checking stored snapshots.
+
 ## Human Documentation
 
 Frontend setup, page usage and API examples belong in [README.md](README.md). Whole-project architecture and review paths belong in [../PROJECT_GUIDE.md](../PROJECT_GUIDE.md). Do not copy those guides into this navigation file.
+
 ## Agent Workflow
 
 1. Read root [../AGENTS.md](../AGENTS.md), then this file; use Page/Change Map to select minimal frontend context.

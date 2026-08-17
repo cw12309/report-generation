@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=41" />
+    <link rel="stylesheet" href="/static/style.css?v=42" />
   </head>
   <body>
     <div class="app">
@@ -39,6 +39,14 @@
           <button class="sidebar-btn" data-page="config" title="系统配置">
             <span class="sidebar-icon">⚙️</span>
             <span class="sidebar-label">Config</span>
+          </button>
+          <button
+            class="sidebar-btn"
+            data-page="breast-mri"
+            title="乳腺MRI报告"
+          >
+            <span class="sidebar-icon">🩻</span>
+            <span class="sidebar-label">乳腺 MRI</span>
           </button>
         </div>
       </nav>
@@ -236,14 +244,24 @@
               <div>
                 <h1>API 上线</h1>
                 <p class="subtitle">
-                  将一个或多个知识库发布为独立的多轮 Agent API。上线后，外部系统通过 Deployment Endpoint 和 API Key 调用，知识库范围由 Deployment 固定控制。
+                  将一个或多个知识库发布为独立的多轮 Agent
+                  API。上线后，外部系统通过 Deployment Endpoint 和 API Key
+                  调用，知识库范围由 Deployment 固定控制。
                 </p>
               </div>
               <div class="api-page-actions">
-                <button type="button" class="btn btn-outline" id="btnOpenApiGuide">
+                <button
+                  type="button"
+                  class="btn btn-outline"
+                  id="btnOpenApiGuide"
+                >
                   使用说明
                 </button>
-                <button type="button" class="btn btn-primary" id="btnOpenApiDeploymentCreate">
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  id="btnOpenApiDeploymentCreate"
+                >
                   + 创建 API
                 </button>
               </div>
@@ -255,16 +273,26 @@
                   <div>
                     <h2 class="config-section-title">Deployment Service</h2>
                     <p class="api-section-description">
-                      外部系统通过 Deployment Endpoint 和独立 API Key 调用；不同 Deployment 使用不同密钥。
+                      外部系统通过 Deployment Endpoint 和独立 API Key 调用；不同
+                      Deployment 使用不同密钥。
                     </p>
                   </div>
-                  <span class="api-deployment-summary" id="apiDeploymentSummary">正在加载…</span>
+                  <span class="api-deployment-summary" id="apiDeploymentSummary"
+                    >正在加载…</span
+                  >
                 </div>
                 <div class="api-status-body">
-                  <div class="api-service-state" id="apiStatusText">正在检查服务状态</div>
+                  <div class="api-service-state" id="apiStatusText">
+                    正在检查服务状态
+                  </div>
                   <label class="api-base-url-field" for="apiBaseUrl">
                     <span>当前公共基址</span>
-                    <input type="url" class="config-input" id="apiBaseUrl" readonly />
+                    <input
+                      type="url"
+                      class="config-input"
+                      id="apiBaseUrl"
+                      readonly
+                    />
                   </label>
                 </div>
               </section>
@@ -274,54 +302,141 @@
                   <div>
                     <h2 class="config-section-title">Deployment List</h2>
                     <p class="api-section-description">
-                      查看固定知识库范围、健康状态、Endpoint、Key Prefix 和最近调用时间。
+                      查看固定知识库范围、健康状态、Endpoint、Key Prefix
+                      和最近调用时间。
                     </p>
                   </div>
-                  <button type="button" class="btn btn-sm btn-outline" id="btnRefreshApiDeployments">刷新</button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline"
+                    id="btnRefreshApiDeployments"
+                  >
+                    刷新
+                  </button>
                 </div>
-                <div class="api-deployment-list" id="apiDeploymentList" aria-live="polite"></div>
+                <div
+                  class="api-deployment-list"
+                  id="apiDeploymentList"
+                  aria-live="polite"
+                ></div>
               </section>
             </div>
 
             <!-- 创建 Deployment -->
-            <div class="api-key-modal" id="apiDeploymentCreateModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentCreateTitle" hidden>
-              <button type="button" class="api-key-modal-backdrop" data-api-create-close aria-label="关闭创建窗口"></button>
+            <div
+              class="api-key-modal"
+              id="apiDeploymentCreateModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiDeploymentCreateTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-create-close
+                aria-label="关闭创建窗口"
+              ></button>
               <div class="api-key-modal-dialog">
                 <div class="api-key-modal-header">
                   <div>
                     <h3 id="apiDeploymentCreateTitle">创建 API</h3>
-                    <p>选择一个或多个 Active Knowledge Base，发布为支持多轮对话的 Agent API。</p>
+                    <p>
+                      选择一个或多个 Active Knowledge Base，发布为支持多轮对话的
+                      Agent API。
+                    </p>
                   </div>
-                  <button type="button" class="api-key-modal-close" data-api-create-close aria-label="关闭">×</button>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-create-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
                 </div>
                 <form id="apiDeploymentForm">
                   <div class="api-key-modal-body">
                     <label for="apiDeploymentName">名称</label>
-                    <input id="apiDeploymentName" class="config-input" maxlength="120" autocomplete="off" required placeholder="例如：胸部报告 API" />
+                    <input
+                      id="apiDeploymentName"
+                      class="config-input"
+                      maxlength="120"
+                      autocomplete="off"
+                      required
+                      placeholder="例如：胸部报告 API"
+                    />
                     <label for="apiDeploymentDescription">描述（可选）</label>
-                    <textarea id="apiDeploymentDescription" class="config-input" maxlength="2000" rows="3" placeholder="例如：供 HIS 系统服务端调用"></textarea>
-                    <div class="api-field-label">Knowledge Base（仅显示 Active）</div>
-                    <div class="api-kb-checkbox-list api-kb-checkbox-list-modal" id="apiKbCheckboxList"></div>
-                    <p class="api-key-form-error" id="apiDeploymentFormError" role="alert" hidden></p>
+                    <textarea
+                      id="apiDeploymentDescription"
+                      class="config-input"
+                      maxlength="2000"
+                      rows="3"
+                      placeholder="例如：供 HIS 系统服务端调用"
+                    ></textarea>
+                    <div class="api-field-label">
+                      Knowledge Base（仅显示 Active）
+                    </div>
+                    <div
+                      class="api-kb-checkbox-list api-kb-checkbox-list-modal"
+                      id="apiKbCheckboxList"
+                    ></div>
+                    <p
+                      class="api-key-form-error"
+                      id="apiDeploymentFormError"
+                      role="alert"
+                      hidden
+                    ></p>
                   </div>
                   <div class="api-key-modal-footer">
-                    <button type="button" class="btn btn-outline" data-api-create-close>取消</button>
-                    <button type="submit" id="btnCreateApiDeployment" class="btn btn-primary">创建并上线</button>
+                    <button
+                      type="button"
+                      class="btn btn-outline"
+                      data-api-create-close
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      id="btnCreateApiDeployment"
+                      class="btn btn-primary"
+                    >
+                      创建并上线
+                    </button>
                   </div>
                 </form>
               </div>
             </div>
 
             <!-- 创建/轮换后的一次性密钥 -->
-            <div class="api-key-modal" id="apiSecretModal" role="dialog" aria-modal="true" aria-labelledby="apiSecretModalTitle" hidden>
-              <button type="button" class="api-key-modal-backdrop" data-api-secret-close aria-label="关闭密钥窗口"></button>
+            <div
+              class="api-key-modal"
+              id="apiSecretModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiSecretModalTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-secret-close
+                aria-label="关闭密钥窗口"
+              ></button>
               <div class="api-key-modal-dialog api-secret-modal-dialog">
                 <div class="api-key-modal-header">
                   <div>
                     <h3 id="apiSecretModalTitle">API 已上线</h3>
                     <p id="apiSecretDeploymentName"></p>
                   </div>
-                  <button type="button" class="api-key-modal-close" data-api-secret-close aria-label="关闭">×</button>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-secret-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
                 </div>
                 <div class="api-key-modal-body">
                   <div class="api-secret-warning" role="alert">
@@ -329,56 +444,137 @@
                     <span>关闭后无法再次查看；遗失时只能重新生成。</span>
                   </div>
                   <div class="api-secret-grid">
-                    <label for="apiRevealedEndpoint"><span>Endpoint · POST</span></label>
+                    <label for="apiRevealedEndpoint"
+                      ><span>Endpoint · POST</span></label
+                    >
                     <div class="api-copy-row">
-                      <input id="apiRevealedEndpoint" class="config-input" readonly />
-                      <button type="button" class="btn btn-outline" id="btnCopyApiEndpoint">复制 Endpoint</button>
+                      <input
+                        id="apiRevealedEndpoint"
+                        class="config-input"
+                        readonly
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-outline"
+                        id="btnCopyApiEndpoint"
+                      >
+                        复制 Endpoint
+                      </button>
                     </div>
                     <label for="apiRevealedKey"><span>API Key</span></label>
                     <div class="api-copy-row">
-                      <input id="apiRevealedKey" class="config-input api-secret-value" readonly />
-                      <button type="button" class="btn btn-primary" id="btnCopyApiKey">复制 API Key</button>
+                      <input
+                        id="apiRevealedKey"
+                        class="config-input api-secret-value"
+                        readonly
+                      />
+                      <button
+                        type="button"
+                        class="btn btn-primary"
+                        id="btnCopyApiKey"
+                      >
+                        复制 API Key
+                      </button>
                     </div>
                   </div>
-                  <p class="api-secret-guidance">请由服务器端系统或 Secret Manager 保存，不要提交到 Git，也不要放入公开网页 JavaScript。</p>
+                  <p class="api-secret-guidance">
+                    请由服务器端系统或 Secret Manager 保存，不要提交到
+                    Git，也不要放入公开网页 JavaScript。
+                  </p>
                 </div>
                 <div class="api-key-modal-footer">
-                  <button type="button" class="btn btn-primary" data-api-secret-close>我已保存，关闭</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    data-api-secret-close
+                  >
+                    我已保存，关闭
+                  </button>
                 </div>
               </div>
             </div>
 
             <!-- Deployment 详情与 API Usage -->
-            <div class="api-key-modal" id="apiDeploymentDetailModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentDetailTitle" hidden>
-              <button type="button" class="api-key-modal-backdrop" data-api-detail-close aria-label="关闭详情"></button>
+            <div
+              class="api-key-modal"
+              id="apiDeploymentDetailModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiDeploymentDetailTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-detail-close
+                aria-label="关闭详情"
+              ></button>
               <div class="api-key-modal-dialog api-detail-modal-dialog">
                 <div class="api-key-modal-header">
                   <div>
                     <h3 id="apiDeploymentDetailTitle">Deployment 详情</h3>
                     <p id="apiDetailDescription">—</p>
                   </div>
-                  <button type="button" class="api-key-modal-close" data-api-detail-close aria-label="关闭">×</button>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-detail-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
                 </div>
                 <div class="api-key-modal-body api-detail-body">
                   <div class="api-detail-grid">
-                    <div><span>Deployment ID</span><code id="apiDetailId">—</code></div>
-                    <div><span>Status</span><strong id="apiDetailStatus">—</strong></div>
-                    <div><span>Health</span><strong id="apiDetailHealth">—</strong></div>
-                    <div><span>API Key Prefix</span><code id="apiDetailKeyPrefix">—</code></div>
-                    <div><span>Created At</span><strong id="apiDetailCreated">—</strong></div>
-                    <div><span>Updated At</span><strong id="apiDetailUpdated">—</strong></div>
-                    <div><span>Last Used At</span><strong id="apiDetailLastUsed">从未调用</strong></div>
+                    <div>
+                      <span>Deployment ID</span><code id="apiDetailId">—</code>
+                    </div>
+                    <div>
+                      <span>Status</span><strong id="apiDetailStatus">—</strong>
+                    </div>
+                    <div>
+                      <span>Health</span><strong id="apiDetailHealth">—</strong>
+                    </div>
+                    <div>
+                      <span>API Key Prefix</span
+                      ><code id="apiDetailKeyPrefix">—</code>
+                    </div>
+                    <div>
+                      <span>Created At</span
+                      ><strong id="apiDetailCreated">—</strong>
+                    </div>
+                    <div>
+                      <span>Updated At</span
+                      ><strong id="apiDetailUpdated">—</strong>
+                    </div>
+                    <div>
+                      <span>Last Used At</span
+                      ><strong id="apiDetailLastUsed">从未调用</strong>
+                    </div>
                   </div>
                   <div class="api-detail-section">
                     <div class="api-field-label">Knowledge Bases</div>
-                    <div id="apiDetailKnowledgeBases" class="api-detail-kbs"></div>
-                    <div id="apiDetailHealthWarning" class="api-health-warning" hidden></div>
+                    <div
+                      id="apiDetailKnowledgeBases"
+                      class="api-detail-kbs"
+                    ></div>
+                    <div
+                      id="apiDetailHealthWarning"
+                      class="api-health-warning"
+                      hidden
+                    ></div>
                   </div>
                   <div class="api-detail-section">
                     <div class="api-field-label">Endpoint · POST</div>
                     <div class="api-copy-row">
                       <code id="apiDetailEndpoint">—</code>
-                      <button type="button" class="btn btn-sm btn-outline" id="btnCopyApiDetailEndpoint">复制</button>
+                      <button
+                        type="button"
+                        class="btn btn-sm btn-outline"
+                        id="btnCopyApiDetailEndpoint"
+                      >
+                        复制
+                      </button>
                     </div>
                   </div>
 
@@ -386,29 +582,71 @@
                     <div class="api-section-heading api-usage-heading">
                       <div>
                         <h4>API Usage</h4>
-                        <p>示例始终使用 <code>YOUR_API_KEY</code>，完整 Key 只在创建或轮换弹窗中出现。</p>
+                        <p>
+                          示例始终使用 <code>YOUR_API_KEY</code>，完整 Key
+                          只在创建或轮换弹窗中出现。
+                        </p>
                       </div>
-                      <div class="api-demo-tabs" role="tablist" aria-label="代码示例语言">
-                        <button type="button" class="api-demo-tab active" data-api-demo-language="curl" role="tab" aria-selected="true">cURL</button>
-                        <button type="button" class="api-demo-tab" data-api-demo-language="python" role="tab" aria-selected="false">Python</button>
+                      <div
+                        class="api-demo-tabs"
+                        role="tablist"
+                        aria-label="代码示例语言"
+                      >
+                        <button
+                          type="button"
+                          class="api-demo-tab active"
+                          data-api-demo-language="curl"
+                          role="tab"
+                          aria-selected="true"
+                        >
+                          cURL
+                        </button>
+                        <button
+                          type="button"
+                          class="api-demo-tab"
+                          data-api-demo-language="python"
+                          role="tab"
+                          aria-selected="false"
+                        >
+                          Python
+                        </button>
                       </div>
                     </div>
-                    <pre class="api-demo-code-block"><code id="apiDemoCode"></code></pre>
+                    <pre
+                      class="api-demo-code-block"
+                    ><code id="apiDemoCode"></code></pre>
                   </div>
 
                   <div class="api-detail-section api-multiturn-section">
                     <h4>多轮对话</h4>
-                    <p>第一次请求省略 <code>conversation_id</code>，保存服务端首先返回的 ID：</p>
-                    <pre class="api-compact-code"><code>{"type":"conversation","conversation_id":"conv_xxx"}</code></pre>
+                    <p>
+                      第一次请求省略
+                      <code>conversation_id</code>，保存服务端首先返回的 ID：
+                    </p>
+                    <pre
+                      class="api-compact-code"
+                    ><code>{"type":"conversation","conversation_id":"conv_xxx"}</code></pre>
                     <p>之后复用同一 ID：</p>
-                    <pre class="api-compact-code"><code>{"message":"把右侧病灶描述得详细一点","conversation_id":"conv_xxx"}</code></pre>
-                    <strong>后续请求复用相同 <code>conversation_id</code> 即可保持上下文。</strong>
+                    <pre
+                      class="api-compact-code"
+                    ><code>{"message":"把右侧病灶描述得详细一点","conversation_id":"conv_xxx"}</code></pre>
+                    <strong
+                      >后续请求复用相同
+                      <code>conversation_id</code> 即可保持上下文。</strong
+                    >
                   </div>
 
                   <div class="api-detail-section">
                     <h4>Public SSE Contract</h4>
-                    <p><code>conversation</code> · <code>status</code> · <code>message</code> · <code>report</code> · <code>ambiguous</code> · <code>error</code> · <code>done</code> · <code>[DONE]</code></p>
-                    <pre class="api-compact-code"><code>data: {"type":"conversation","conversation_id":"conv_xxx"}
+                    <p>
+                      <code>conversation</code> · <code>status</code> ·
+                      <code>message</code> · <code>report</code> ·
+                      <code>ambiguous</code> · <code>error</code> ·
+                      <code>done</code> · <code>[DONE]</code>
+                    </p>
+                    <pre
+                      class="api-compact-code"
+                    ><code>data: {"type":"conversation","conversation_id":"conv_xxx"}
 
 data: {"type":"status","stage":"retrieving","message":"正在检索知识库"}
 
@@ -422,9 +660,16 @@ data: [DONE]</code></pre>
                   <div class="api-detail-section api-key-guidance">
                     <h4>API Key 使用说明</h4>
                     <ul>
-                      <li>API Key 只属于当前 Deployment，不同 Deployment 使用不同 Key。</li>
+                      <li>
+                        API Key 只属于当前 Deployment，不同 Deployment 使用不同
+                        Key。
+                      </li>
                       <li>完整 Key 只在创建或重新生成时显示一次。</li>
-                      <li>不要提交到 Git，也不要放入浏览器公开前端代码；推荐由服务端 Secret Manager 保存。</li>
+                      <li>
+                        不要提交到
+                        Git，也不要放入浏览器公开前端代码；推荐由服务端 Secret
+                        Manager 保存。
+                      </li>
                     </ul>
                   </div>
                 </div>
@@ -432,54 +677,143 @@ data: [DONE]</code></pre>
             </div>
 
             <!-- 编辑 Deployment -->
-            <div class="api-key-modal" id="apiDeploymentModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentModalTitle" hidden>
-              <button type="button" class="api-key-modal-backdrop" data-api-deployment-modal-close aria-label="关闭"></button>
+            <div
+              class="api-key-modal"
+              id="apiDeploymentModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiDeploymentModalTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-deployment-modal-close
+                aria-label="关闭"
+              ></button>
               <div class="api-key-modal-dialog">
                 <div class="api-key-modal-header">
                   <div>
                     <h3 id="apiDeploymentModalTitle">编辑 Deployment</h3>
-                    <p>更新后，后续 API 请求将使用新的固定 Knowledge Base Scope。</p>
+                    <p>
+                      更新后，后续 API 请求将使用新的固定 Knowledge Base Scope。
+                    </p>
                   </div>
-                  <button type="button" class="api-key-modal-close" data-api-deployment-modal-close aria-label="关闭">×</button>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-deployment-modal-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
                 </div>
                 <form id="apiDeploymentEditForm">
                   <div class="api-key-modal-body">
                     <input type="hidden" id="apiEditDeploymentId" />
                     <label for="apiEditDeploymentName">名称</label>
-                    <input type="text" class="config-input" id="apiEditDeploymentName" maxlength="120" autocomplete="off" required />
+                    <input
+                      type="text"
+                      class="config-input"
+                      id="apiEditDeploymentName"
+                      maxlength="120"
+                      autocomplete="off"
+                      required
+                    />
                     <label for="apiEditDeploymentDescription">描述</label>
-                    <textarea class="config-input" id="apiEditDeploymentDescription" maxlength="2000" rows="3"></textarea>
-                    <div class="api-field-label">Knowledge Base（仅显示 Active）</div>
-                    <div class="api-kb-checkbox-list api-kb-checkbox-list-modal" id="apiEditKbCheckboxList"></div>
-                    <p class="api-key-form-error" id="apiDeploymentEditError" role="alert" hidden></p>
+                    <textarea
+                      class="config-input"
+                      id="apiEditDeploymentDescription"
+                      maxlength="2000"
+                      rows="3"
+                    ></textarea>
+                    <div class="api-field-label">
+                      Knowledge Base（仅显示 Active）
+                    </div>
+                    <div
+                      class="api-kb-checkbox-list api-kb-checkbox-list-modal"
+                      id="apiEditKbCheckboxList"
+                    ></div>
+                    <p
+                      class="api-key-form-error"
+                      id="apiDeploymentEditError"
+                      role="alert"
+                      hidden
+                    ></p>
                   </div>
                   <div class="api-key-modal-footer">
-                    <button type="button" class="btn btn-outline" data-api-deployment-modal-close>取消</button>
-                    <button type="submit" class="btn btn-primary" id="btnSaveApiDeployment">保存修改</button>
+                    <button
+                      type="button"
+                      class="btn btn-outline"
+                      data-api-deployment-modal-close
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="submit"
+                      class="btn btn-primary"
+                      id="btnSaveApiDeployment"
+                    >
+                      保存修改
+                    </button>
                   </div>
                 </form>
               </div>
             </div>
 
             <!-- API 上线使用指南 -->
-            <div class="api-key-modal" id="apiDeploymentGuideModal" role="dialog" aria-modal="true" aria-labelledby="apiDeploymentGuideTitle" hidden>
-              <button type="button" class="api-key-modal-backdrop" data-api-guide-close aria-label="关闭使用说明"></button>
+            <div
+              class="api-key-modal"
+              id="apiDeploymentGuideModal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apiDeploymentGuideTitle"
+              hidden
+            >
+              <button
+                type="button"
+                class="api-key-modal-backdrop"
+                data-api-guide-close
+                aria-label="关闭使用说明"
+              ></button>
               <div class="api-key-modal-dialog api-guide-modal-dialog">
                 <div class="api-key-modal-header">
                   <div>
                     <h3 id="apiDeploymentGuideTitle">API 上线使用指南</h3>
                     <p>从创建 Deployment 到完成多轮 HTTP + SSE 调用。</p>
                   </div>
-                  <button type="button" class="api-key-modal-close" data-api-guide-close aria-label="关闭">×</button>
+                  <button
+                    type="button"
+                    class="api-key-modal-close"
+                    data-api-guide-close
+                    aria-label="关闭"
+                  >
+                    ×
+                  </button>
                 </div>
                 <div class="api-guide-modal-body">
-                  <nav class="api-guide-toc" id="apiGuideToc" aria-label="使用指南目录" hidden></nav>
-                  <article class="api-guide-content" id="apiGuideContent" aria-live="polite">
+                  <nav
+                    class="api-guide-toc"
+                    id="apiGuideToc"
+                    aria-label="使用指南目录"
+                    hidden
+                  ></nav>
+                  <article
+                    class="api-guide-content"
+                    id="apiGuideContent"
+                    aria-live="polite"
+                  >
                     <p class="api-guide-loading">正在加载使用说明…</p>
                   </article>
                 </div>
                 <div class="api-key-modal-footer">
-                  <button type="button" class="btn btn-primary" data-api-guide-close>关闭</button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    data-api-guide-close
+                  >
+                    关闭
+                  </button>
                 </div>
               </div>
             </div>
@@ -489,9 +823,7 @@ data: [DONE]</code></pre>
           <div class="page" id="pageConfig">
             <header class="header">
               <h1>系统配置</h1>
-              <p class="subtitle">
-                管理模型、检索、向量数据库与系统运行参数
-              </p>
+              <p class="subtitle">管理模型、检索、向量数据库与系统运行参数</p>
             </header>
 
             <div class="config-body">
@@ -603,7 +935,9 @@ data: [DONE]</code></pre>
                         />
                       </div>
                       <div class="config-row">
-                        <label class="config-label">Milvus 服务地址（MILVUS_URI）</label>
+                        <label class="config-label"
+                          >Milvus 服务地址（MILVUS_URI）</label
+                        >
                         <input
                           type="text"
                           class="config-input"
@@ -611,7 +945,8 @@ data: [DONE]</code></pre>
                           placeholder="例如 http://host:19530"
                         />
                         <small class="model-field-hint">
-                          与 .env 中的 MILVUS_URI 同步；8899 是 Attu 页面端口，不要填写。
+                          与 .env 中的 MILVUS_URI 同步；8899 是 Attu
+                          页面端口，不要填写。
                         </small>
                       </div>
                     </div>
@@ -672,42 +1007,58 @@ data: [DONE]</code></pre>
                 </div>
               </div>
             </div>
-
           </div>
 
           <!-- 评测中心页面 -->
           <div class="page" id="pageEval">
             <header class="header">
               <h1>评测中心</h1>
-              <p class="subtitle">运行真实 Hybrid Search + Rerank，观察检索命中表现</p>
+              <p class="subtitle">
+                运行真实 Hybrid Search + Rerank，观察检索命中表现
+              </p>
             </header>
 
             <div class="eval-container" id="evalContainer">
               <section class="eval-run-panel">
                 <div>
                   <h2>Retrieval Eval</h2>
-                  <p>使用独立 JSON 测试集，统计 Rerank 后的 Hit@1、Hit@3、Hit@5。</p>
+                  <p>
+                    使用独立 JSON 测试集，统计 Rerank 后的 Hit@1、Hit@3、Hit@5。
+                  </p>
                 </div>
                 <div class="eval-run-actions">
-                  <button id="btnAddEvalCase" class="btn btn-outline eval-add-case-btn">
+                  <button
+                    id="btnAddEvalCase"
+                    class="btn btn-outline eval-add-case-btn"
+                  >
                     ➕ 新增用例
                   </button>
-                  <button id="btnAutoGenerateCases" class="btn btn-outline eval-auto-generate-btn">
+                  <button
+                    id="btnAutoGenerateCases"
+                    class="btn btn-outline eval-auto-generate-btn"
+                  >
                     🤖 自动生成用例
                   </button>
-                  <button id="btn-clear-dataset" class="btn btn-danger eval-clear-dataset-btn">
+                  <button
+                    id="btn-clear-dataset"
+                    class="btn btn-danger eval-clear-dataset-btn"
+                  >
                     🗑️ 清空测试集
                   </button>
                   <button id="btnRunEval" class="btn btn-primary eval-run-btn">
                     <span class="eval-run-btn-text">▶ 开始评测</span>
-                    <span class="eval-run-btn-loading" hidden>⏳ 评测中...</span>
+                    <span class="eval-run-btn-loading" hidden
+                      >⏳ 评测中...</span
+                    >
                   </button>
                 </div>
               </section>
 
               <div id="evalStatus" class="eval-status" aria-live="polite">
                 <div class="eval-progress-copy">
-                  <span id="evalProgressText">点击“开始评测”运行当前 Retrieval Eval 数据集。</span>
+                  <span id="evalProgressText"
+                    >点击“开始评测”运行当前 Retrieval Eval 数据集。</span
+                  >
                   <strong id="evalProgressPercent" hidden>0%</strong>
                 </div>
                 <div
@@ -738,17 +1089,23 @@ data: [DONE]</code></pre>
                 <article class="eval-metric-card hit1">
                   <span class="eval-metric-label">Hit@1</span>
                   <strong id="evalHit1" class="eval-metric-value">--</strong>
-                  <span id="evalHit1Count" class="eval-metric-count">尚未运行</span>
+                  <span id="evalHit1Count" class="eval-metric-count"
+                    >尚未运行</span
+                  >
                 </article>
                 <article class="eval-metric-card hit3">
                   <span class="eval-metric-label">Hit@3</span>
                   <strong id="evalHit3" class="eval-metric-value">--</strong>
-                  <span id="evalHit3Count" class="eval-metric-count">尚未运行</span>
+                  <span id="evalHit3Count" class="eval-metric-count"
+                    >尚未运行</span
+                  >
                 </article>
                 <article class="eval-metric-card hit5">
                   <span class="eval-metric-label">Hit@5</span>
                   <strong id="evalHit5" class="eval-metric-value">--</strong>
-                  <span id="evalHit5Count" class="eval-metric-count">尚未运行</span>
+                  <span id="evalHit5Count" class="eval-metric-count"
+                    >尚未运行</span
+                  >
                 </article>
               </section>
 
@@ -790,47 +1147,160 @@ data: [DONE]</code></pre>
           <div class="page" id="pageMonitor">
             <header class="header">
               <h1>系统监控</h1>
-              <p class="subtitle">统一查看运行概览、请求 Trace、结构化实时日志和会话记录</p>
+              <p class="subtitle">
+                统一查看运行概览、请求 Trace、结构化实时日志和会话记录
+              </p>
             </header>
 
             <div class="monitor-body">
               <div class="monitor-tabs" role="tablist" aria-label="监控视图">
-                <button type="button" class="monitor-tab active" data-monitor-tab="overview" role="tab" aria-selected="true">概览</button>
-                <button type="button" class="monitor-tab" data-monitor-tab="sessions" role="tab" aria-selected="false">会话记录</button>
-                <button type="button" class="monitor-tab" data-monitor-tab="traces" role="tab" aria-selected="false">请求 Trace</button>
-                <button type="button" class="monitor-tab" data-monitor-tab="logs" role="tab" aria-selected="false">实时日志</button>
+                <button
+                  type="button"
+                  class="monitor-tab active"
+                  data-monitor-tab="overview"
+                  role="tab"
+                  aria-selected="true"
+                >
+                  概览
+                </button>
+                <button
+                  type="button"
+                  class="monitor-tab"
+                  data-monitor-tab="sessions"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  会话记录
+                </button>
+                <button
+                  type="button"
+                  class="monitor-tab"
+                  data-monitor-tab="traces"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  请求 Trace
+                </button>
+                <button
+                  type="button"
+                  class="monitor-tab"
+                  data-monitor-tab="logs"
+                  role="tab"
+                  aria-selected="false"
+                >
+                  实时日志
+                </button>
               </div>
 
-              <section class="monitor-panel active" id="monitorPanelOverview" data-monitor-panel="overview" role="tabpanel">
+              <section
+                class="monitor-panel active"
+                id="monitorPanelOverview"
+                data-monitor-panel="overview"
+                role="tabpanel"
+              >
                 <div class="monitor-stats monitor-system-stats">
-                  <div class="monitor-stat"><span class="monitor-stat-label">服务状态</span><span class="monitor-stat-value monitor-status-value" id="monitorServiceStatus">-</span></div>
-                  <div class="monitor-stat"><span class="monitor-stat-label">请求量</span><span class="monitor-stat-value" id="monitorRequestCount">-</span></div>
-                  <div class="monitor-stat"><span class="monitor-stat-label">成功率</span><span class="monitor-stat-value" id="monitorSuccessRate">-</span></div>
-                  <div class="monitor-stat"><span class="monitor-stat-label">平均延迟</span><span class="monitor-stat-value" id="monitorAverageLatency">-</span></div>
-                  <div class="monitor-stat"><span class="monitor-stat-label">P95 延迟</span><span class="monitor-stat-value" id="monitorP95Latency">-</span></div>
-                  <div class="monitor-stat"><span class="monitor-stat-label">错误数</span><span class="monitor-stat-value monitor-error-value" id="monitorErrorCount">-</span></div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">服务状态</span
+                    ><span
+                      class="monitor-stat-value monitor-status-value"
+                      id="monitorServiceStatus"
+                      >-</span
+                    >
+                  </div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">请求量</span
+                    ><span class="monitor-stat-value" id="monitorRequestCount"
+                      >-</span
+                    >
+                  </div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">成功率</span
+                    ><span class="monitor-stat-value" id="monitorSuccessRate"
+                      >-</span
+                    >
+                  </div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">平均延迟</span
+                    ><span class="monitor-stat-value" id="monitorAverageLatency"
+                      >-</span
+                    >
+                  </div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">P95 延迟</span
+                    ><span class="monitor-stat-value" id="monitorP95Latency"
+                      >-</span
+                    >
+                  </div>
+                  <div class="monitor-stat">
+                    <span class="monitor-stat-label">错误数</span
+                    ><span
+                      class="monitor-stat-value monitor-error-value"
+                      id="monitorErrorCount"
+                      >-</span
+                    >
+                  </div>
                 </div>
               </section>
 
-              <section class="monitor-panel" id="monitorPanelSessions" data-monitor-panel="sessions" role="tabpanel" hidden>
+              <section
+                class="monitor-panel"
+                id="monitorPanelSessions"
+                data-monitor-panel="sessions"
+                role="tabpanel"
+                hidden
+              >
                 <div class="monitor-section-card">
                   <div class="monitor-section-header">
-                    <div><h2>会话运行记录</h2><p>复用现有 Session 与 Memory 数据</p></div>
-                    <button id="btnRefreshSessions" class="btn btn-outline">🔄 刷新会话</button>
+                    <div>
+                      <h2>会话运行记录</h2>
+                      <p>复用现有 Session 与 Memory 数据</p>
+                    </div>
+                    <button id="btnRefreshSessions" class="btn btn-outline">
+                      🔄 刷新会话
+                    </button>
                   </div>
                   <div class="monitor-stats monitor-session-stats">
-                    <div class="monitor-stat"><span class="monitor-stat-label">总会话数</span><span class="monitor-stat-value" id="monitorTotalSessions">-</span></div>
-                    <div class="monitor-stat"><span class="monitor-stat-label">总对话轮次</span><span class="monitor-stat-value" id="monitorTotalTurns">-</span></div>
-                    <div class="monitor-stat"><span class="monitor-stat-label">最后更新</span><span class="monitor-stat-value monitor-time-value" id="monitorLastUpdate">-</span></div>
+                    <div class="monitor-stat">
+                      <span class="monitor-stat-label">总会话数</span
+                      ><span
+                        class="monitor-stat-value"
+                        id="monitorTotalSessions"
+                        >-</span
+                      >
+                    </div>
+                    <div class="monitor-stat">
+                      <span class="monitor-stat-label">总对话轮次</span
+                      ><span class="monitor-stat-value" id="monitorTotalTurns"
+                        >-</span
+                      >
+                    </div>
+                    <div class="monitor-stat">
+                      <span class="monitor-stat-label">最后更新</span
+                      ><span
+                        class="monitor-stat-value monitor-time-value"
+                        id="monitorLastUpdate"
+                        >-</span
+                      >
+                    </div>
                   </div>
 
                   <div class="monitor-sessions">
                     <div class="monitor-sessions-header">
-                      <span class="monitor-sessions-col monitor-col-id">会话 ID</span>
-                      <span class="monitor-sessions-col monitor-col-title">标题</span>
-                      <span class="monitor-sessions-col monitor-col-turns">轮次</span>
-                      <span class="monitor-sessions-col monitor-col-time">创建时间</span>
-                      <span class="monitor-sessions-col monitor-col-actions">操作</span>
+                      <span class="monitor-sessions-col monitor-col-id"
+                        >会话 ID</span
+                      >
+                      <span class="monitor-sessions-col monitor-col-title"
+                        >标题</span
+                      >
+                      <span class="monitor-sessions-col monitor-col-turns"
+                        >轮次</span
+                      >
+                      <span class="monitor-sessions-col monitor-col-time"
+                        >创建时间</span
+                      >
+                      <span class="monitor-sessions-col monitor-col-actions"
+                        >操作</span
+                      >
                     </div>
                     <div class="monitor-sessions-list" id="monitorSessionsList">
                       <div class="monitor-empty">加载中...</div>
@@ -839,31 +1309,104 @@ data: [DONE]</code></pre>
                 </div>
               </section>
 
-              <section class="monitor-panel" id="monitorPanelTraces" data-monitor-panel="traces" role="tabpanel" hidden>
+              <section
+                class="monitor-panel"
+                id="monitorPanelTraces"
+                data-monitor-panel="traces"
+                role="tabpanel"
+                hidden
+              >
                 <div class="monitor-toolbar">
-                  <input class="config-input" id="monitorTraceRequestFilter" type="text" placeholder="按 request_id 过滤" />
-                  <input class="config-input" id="monitorTraceSessionFilter" type="text" placeholder="按 session_id 过滤" />
-                  <button type="button" id="btnRefreshTraces" class="btn btn-outline">刷新 Trace</button>
+                  <input
+                    class="config-input"
+                    id="monitorTraceRequestFilter"
+                    type="text"
+                    placeholder="按 request_id 过滤"
+                  />
+                  <input
+                    class="config-input"
+                    id="monitorTraceSessionFilter"
+                    type="text"
+                    placeholder="按 session_id 过滤"
+                  />
+                  <button
+                    type="button"
+                    id="btnRefreshTraces"
+                    class="btn btn-outline"
+                  >
+                    刷新 Trace
+                  </button>
                 </div>
                 <div class="monitor-trace-layout">
-                  <div class="monitor-trace-list" id="monitorTraceList"><div class="monitor-empty">加载中...</div></div>
-                  <div class="monitor-trace-detail" id="monitorTraceDetail"><div class="monitor-empty">请选择一个 request_id 查看完整链路</div></div>
+                  <div class="monitor-trace-list" id="monitorTraceList">
+                    <div class="monitor-empty">加载中...</div>
+                  </div>
+                  <div class="monitor-trace-detail" id="monitorTraceDetail">
+                    <div class="monitor-empty">
+                      请选择一个 request_id 查看完整链路
+                    </div>
+                  </div>
                 </div>
               </section>
 
-              <section class="monitor-panel" id="monitorPanelLogs" data-monitor-panel="logs" role="tabpanel" hidden>
+              <section
+                class="monitor-panel"
+                id="monitorPanelLogs"
+                data-monitor-panel="logs"
+                role="tabpanel"
+                hidden
+              >
                 <div class="monitor-toolbar monitor-log-toolbar">
                   <select class="config-input" id="monitorLogLevel">
-                    <option value="">全部 Level</option><option value="INFO">INFO</option><option value="WARNING">WARNING</option><option value="ERROR">ERROR</option><option value="CRITICAL">CRITICAL</option>
+                    <option value="">全部 Level</option>
+                    <option value="INFO">INFO</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="CRITICAL">CRITICAL</option>
                   </select>
-                  <input class="config-input" id="monitorLogModule" type="text" placeholder="module" />
-                  <input class="config-input" id="monitorLogSessionId" type="text" placeholder="session_id" />
-                  <input class="config-input" id="monitorLogRequestId" type="text" placeholder="request_id" />
-                  <button type="button" id="btnReconnectLogs" class="btn btn-outline">应用过滤</button>
-                  <button type="button" id="btnClearLogs" class="btn btn-outline">清空显示</button>
+                  <input
+                    class="config-input"
+                    id="monitorLogModule"
+                    type="text"
+                    placeholder="module"
+                  />
+                  <input
+                    class="config-input"
+                    id="monitorLogSessionId"
+                    type="text"
+                    placeholder="session_id"
+                  />
+                  <input
+                    class="config-input"
+                    id="monitorLogRequestId"
+                    type="text"
+                    placeholder="request_id"
+                  />
+                  <button
+                    type="button"
+                    id="btnReconnectLogs"
+                    class="btn btn-outline"
+                  >
+                    应用过滤
+                  </button>
+                  <button
+                    type="button"
+                    id="btnClearLogs"
+                    class="btn btn-outline"
+                  >
+                    清空显示
+                  </button>
                 </div>
-                <div class="monitor-log-meta"><span class="monitor-live-dot"></span><span id="monitorLogStatus">未连接</span><span>仅展示脱敏结构化事件，不包含完整 Prompt 或 traceback</span></div>
-                <div class="monitor-log-list" id="monitorLogList"><div class="monitor-empty">切换到实时日志后开始连接</div></div>
+                <div class="monitor-log-meta">
+                  <span class="monitor-live-dot"></span
+                  ><span id="monitorLogStatus">未连接</span
+                  ><span
+                    >仅展示脱敏结构化事件，不包含完整 Prompt 或 traceback</span
+                  >
+                </div>
+                <div class="monitor-log-list" id="monitorLogList">
+                  <div class="monitor-empty">切换到实时日志后开始连接</div>
+                </div>
               </section>
             </div>
           </div>
@@ -883,6 +1426,21 @@ data: [DONE]</code></pre>
                 <div class="session-detail-turns" id="sessionDetailTurns"></div>
               </div>
             </div>
+          </div>
+        </div>
+
+          <!-- 乳腺 MRI 页面 -->
+          <div class="page" id="pageBreastMRI">
+            <div class="breast-mri-loading" id="breastMRILoading">
+              <div class="breast-mri-loading-icon">🩻</div>
+              <p>乳腺 MRI 报告工作台加载中...</p>
+            </div>
+            <div class="breast-mri-error" id="breastMRIError" style="display: none">
+              <div class="breast-mri-error-icon">⚠️</div>
+              <p>乳腺 MRI 报告服务暂不可用</p>
+              <button class="btn btn-outline" id="btnBreastMRIRetry">重试</button>
+            </div>
+            <iframe id="breastMRIIframe" src="" style="display: none"></iframe>
           </div>
         </div>
       </div>
@@ -1023,12 +1581,22 @@ data: [DONE]</code></pre>
               </div>
             </div>
             <p class="eval-case-help">
-              请选择最符合该 Query 完美答案的知识库切片，系统会自动使用其 Chunk ID。
+              请选择最符合该 Query 完美答案的知识库切片，系统会自动使用其 Chunk
+              ID。
             </p>
-            <div id="evalCaseError" class="eval-case-error" role="alert" hidden></div>
+            <div
+              id="evalCaseError"
+              class="eval-case-error"
+              role="alert"
+              hidden
+            ></div>
           </div>
           <div class="eval-case-modal-footer">
-            <button type="button" id="btnCancelEvalCase" class="btn btn-outline">
+            <button
+              type="button"
+              id="btnCancelEvalCase"
+              class="btn btn-outline"
+            >
               取消
             </button>
             <button type="submit" id="btnSaveEvalCase" class="btn btn-primary">
@@ -1055,7 +1623,9 @@ data: [DONE]</code></pre>
             <span class="eval-case-modal-icon eval-auto-modal-icon">🤖</span>
             <div>
               <h3 id="evalAutoGenerateModalTitle">自动生成评测用例</h3>
-              <p class="eval-auto-modal-subtitle">从已激活知识库抽样，并由 LLM 逆向生成真实 Query</p>
+              <p class="eval-auto-modal-subtitle">
+                从已激活知识库抽样，并由 LLM 逆向生成真实 Query
+              </p>
             </div>
           </div>
           <button
@@ -1109,19 +1679,39 @@ data: [DONE]</code></pre>
                 aria-valuemax="100"
                 aria-valuenow="0"
               >
-                <div id="evalAutoProgressBar" class="eval-auto-progress-bar"></div>
+                <div
+                  id="evalAutoProgressBar"
+                  class="eval-auto-progress-bar"
+                ></div>
               </div>
-              <div id="evalAutoGenerateLog" class="eval-auto-log" aria-live="polite">
+              <div
+                id="evalAutoGenerateLog"
+                class="eval-auto-log"
+                aria-live="polite"
+              >
                 设置参数后点击“开始生成”。
               </div>
             </div>
-            <div id="evalAutoGenerateError" class="eval-case-error" role="alert" hidden></div>
+            <div
+              id="evalAutoGenerateError"
+              class="eval-case-error"
+              role="alert"
+              hidden
+            ></div>
           </div>
           <div class="eval-case-modal-footer">
-            <button type="button" id="btnCancelEvalAutoGenerate" class="btn btn-outline">
+            <button
+              type="button"
+              id="btnCancelEvalAutoGenerate"
+              class="btn btn-outline"
+            >
               取消
             </button>
-            <button type="submit" id="btnStartEvalAutoGenerate" class="btn btn-primary">
+            <button
+              type="submit"
+              id="btnStartEvalAutoGenerate"
+              class="btn btn-primary"
+            >
               开始生成
             </button>
           </div>
@@ -1129,8 +1719,14 @@ data: [DONE]</code></pre>
       </div>
     </div>
 
-    <div id="appToast" class="app-toast" role="status" aria-live="polite" hidden></div>
+    <div
+      id="appToast"
+      class="app-toast"
+      role="status"
+      aria-live="polite"
+      hidden
+    ></div>
 
-    <script src="/static/app.js?v=60"></script>
+    <script src="/static/app.js?v=61"></script>
   </body>
 </html>

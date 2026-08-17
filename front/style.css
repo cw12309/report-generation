@@ -108,10 +108,10 @@ body {
 
 #main-workspace {
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
   min-height: 0;
-  height: 100vh;
   overflow: hidden;
 }
 
@@ -173,6 +173,7 @@ body {
 /* 右侧主区域 */
 .main {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -189,6 +190,67 @@ body {
 
 .page.active {
   display: flex;
+}
+
+/* 乳腺 MRI 页面 */
+#pageBreastMRI {
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+#pageBreastMRI.active {
+  display: flex;
+}
+
+#pageBreastMRI iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+.breast-mri-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  gap: 12px;
+}
+
+.breast-mri-loading-icon {
+  font-size: 48px;
+  animation: breast-mri-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes breast-mri-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.breast-mri-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  gap: 12px;
+}
+
+.breast-mri-error-icon {
+  font-size: 48px;
+}
+
+.breast-mri-error p {
+  font-size: 14px;
 }
 
 /* Agent 页面两栏布局 */
@@ -472,7 +534,9 @@ body {
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .kb-chip-item:has(input:checked) {
@@ -669,8 +733,14 @@ body {
 }
 
 @keyframes assistant-cursor {
-  0%, 45% { opacity: 1; }
-  46%, 100% { opacity: 0; }
+  0%,
+  45% {
+    opacity: 1;
+  }
+  46%,
+  100% {
+    opacity: 0;
+  }
 }
 
 .assistant-stream-content {
@@ -1460,10 +1530,22 @@ body {
   white-space: nowrap;
 }
 
-.kb-status-uploaded { background: #eef3f8; color: #63778b; }
-.kb-status-processing { background: #fff5d9; color: #9a6a00; }
-.kb-status-active { background: #e4f7ea; color: #237a3b; }
-.kb-status-failed { background: #fde8e8; color: #b42318; }
+.kb-status-uploaded {
+  background: #eef3f8;
+  color: #63778b;
+}
+.kb-status-processing {
+  background: #fff5d9;
+  color: #9a6a00;
+}
+.kb-status-active {
+  background: #e4f7ea;
+  color: #237a3b;
+}
+.kb-status-failed {
+  background: #fde8e8;
+  color: #b42318;
+}
 
 .kb-manage-layout {
   display: flex;
@@ -1518,7 +1600,10 @@ body {
   outline: none;
   background: #fff;
   cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .manage-kb-card:hover,
@@ -1594,7 +1679,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .kb-manage-empty {
@@ -2116,7 +2203,9 @@ body {
   border-radius: 10px;
   background: #fff;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .api-deployment-card:hover,
@@ -2325,7 +2414,10 @@ body {
   border-radius: 8px;
   background: #fbfcfe;
   cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .api-kb-checkbox-item:hover {
@@ -3678,7 +3770,10 @@ body {
 
 .monitor-log-row {
   display: grid;
-  grid-template-columns: 165px 74px 150px minmax(260px, 1fr) minmax(220px, 0.85fr);
+  grid-template-columns: 165px 74px 150px minmax(260px, 1fr) minmax(
+      220px,
+      0.85fr
+    );
   gap: 10px;
   align-items: start;
   padding: 8px 10px;
@@ -4183,7 +4278,9 @@ body {
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
-  transition: background-color 0.16s ease, border-color 0.16s ease,
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
     color 0.16s ease;
 }
 
@@ -4415,8 +4512,11 @@ body {
   cursor: pointer;
   font-family: inherit;
   font-size: 11px;
-  transition: background-color 0.16s ease, border-color 0.16s ease,
-    color 0.16s ease, transform 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .eval-delete-case-btn:hover:not(:disabled) {
@@ -4627,7 +4727,9 @@ body {
   font-family: inherit;
   font-size: 13px;
   font-weight: 400;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .eval-case-field input:disabled {
@@ -4692,7 +4794,9 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .kb-filter-control select:hover {
@@ -4978,7 +5082,9 @@ body {
   font-weight: 600;
   opacity: 0;
   transform: translateY(-8px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
 
 .app-toast.error {

@@ -370,6 +370,7 @@ sidebarBtns.forEach((btn) => {
       eval: "pageEval",
       config: "pageConfig",
       monitor: "pageMonitor",
+      "breast-mri": "pageBreastMRI",
     };
     const target = document.getElementById(pageMap[page] || "pageAgent");
     if (target) target.classList.add("active");
@@ -381,6 +382,8 @@ sidebarBtns.forEach((btn) => {
       restoreEvaluationState();
     } else if (page === "deployments") {
       loadApiDeployments();
+    } else if (page === "breast-mri") {
+      initBreastMRI();
     }
     if (page === "config") {
       loadConfig();
@@ -391,6 +394,51 @@ sidebarBtns.forEach((btn) => {
       stopMonitorLogStream();
     }
   });
+});
+
+// ==================== 乳腺 MRI 报告工作台 ====================
+
+let breastMRILoaded = false;
+
+async function initBreastMRI() {
+  const loading = document.getElementById("breastMRILoading");
+  const error = document.getElementById("breastMRIError");
+  const iframe = document.getElementById("breastMRIIframe");
+
+  if (breastMRILoaded) return;
+
+  if (loading) loading.style.display = "flex";
+  if (error) error.style.display = "none";
+  if (iframe) iframe.style.display = "none";
+
+  try {
+    const resp = await fetch("/api/breast-mri/health");
+    const data = await resp.json();
+    if (data.status === "ok") {
+      breastMRILoaded = true;
+      if (loading) loading.style.display = "none";
+      if (iframe) {
+        iframe.src = "/breast-mri/";
+        iframe.style.display = "block";
+      }
+    } else {
+      throw new Error(data.message || "服务不可用");
+    }
+  } catch (_e) {
+    if (loading) loading.style.display = "none";
+    if (error) error.style.display = "flex";
+  }
+}
+
+function retryBreastMRI() {
+  breastMRILoaded = false;
+  initBreastMRI();
+}
+
+// 绑定重试按钮（DOM 就绪后执行）
+document.addEventListener("DOMContentLoaded", function () {
+  const btn = document.getElementById("btnBreastMRIRetry");
+  if (btn) btn.addEventListener("click", retryBreastMRI);
 });
 
 // ==================== 评测中心 ====================

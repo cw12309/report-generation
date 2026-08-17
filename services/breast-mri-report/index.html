@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="乳腺 MRI 报告生成 Agent MVP：结构化提取、确定性校验、报告草稿和医生签发门禁。"
+    />
+    <link rel="icon" href="data:," />
+    <title>乳腺 MRI 报告工作台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">MR</span>
+        <div>
+          <strong>乳腺 MRI 对话式报告工作台</strong>
+          <small>V11 · 本地即时提取 · LLM语义补全 · 病灶级证据隔离</small>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="modelStatus" class="model-status model-checking">模型连接中</span>
+        <span id="saveState" class="save-state">本地自动保存</span>
+        <button id="resetButton" class="button button-quiet" type="button">新建演示</button>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="context-panel" aria-label="检查背景">
+        <section>
+          <p class="eyebrow">检查背景</p>
+          <h1>双侧乳腺 MRI</h1>
+          <dl class="context-list">
+            <div><dt>检查号</dt><dd>DEMO-20260727-01</dd></div>
+            <div><dt>患者</dt><dd>脱敏演示病例</dd></div>
+            <div><dt>检查目的</dt><dd>诊断性检查</dd></div>
+            <div><dt>协议</dt><dd>平扫 + 动态增强</dd></div>
+          </dl>
+        </section>
+
+        <section>
+          <p class="eyebrow">流程状态</p>
+          <ol id="workflowSteps" class="workflow-steps"></ol>
+        </section>
+
+        <section class="legend">
+          <p class="eyebrow">字段状态</p>
+          <div><span class="dot dot-confirmed"></span>医生已确认</div>
+          <div><span class="dot dot-pending"></span>提取待确认</div>
+          <div><span class="dot dot-blocking"></span>阻断或冲突</div>
+          <div><span class="dot dot-system"></span>系统背景</div>
+        </section>
+
+        <section class="safety-note">
+          <strong>安全边界</strong>
+          <p>本工具不自动看图、不自动定类，也不会把空值解释为正常。</p>
+        </section>
+      </aside>
+
+      <section class="capture-panel" aria-label="观察与结构化">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">对话与模型结果</p>
+            <h2>连续描述，结构和报告同步更新</h2>
+          </div>
+          <span id="sessionBadge" class="status-badge">观察录入</span>
+        </div>
+
+        <section class="dictation-box">
+          <div id="agentConversation" class="agent-conversation" aria-live="polite"></div>
+          <div id="extractionNotice" class="notice notice-pending" hidden></div>
+          <section id="questionPanel" class="question-panel"></section>
+          <div class="composer-heading">
+            <label for="dictation">医生语音或文字输入</label>
+            <span>Ctrl / ⌘ + Enter 发送</span>
+          </div>
+          <textarea
+            id="dictation"
+            rows="4"
+            placeholder="例如：右乳10点方向、距乳头4 cm见12×8×10 mm不规则肿块，边缘毛刺……正常内容无需输入。"
+          ></textarea>
+          <div class="dictation-actions">
+            <div class="voice-actions">
+              <button id="voiceButton" class="button button-voice" type="button" aria-pressed="false">语音输入</button>
+              <span id="voiceStatus" class="voice-status">转写后可修改</span>
+            </div>
+            <div class="sample-actions" aria-label="演示输入">
+              <button id="massSampleButton" class="text-button" type="button">载入单肿块示例</button>
+              <button id="normalSampleButton" class="text-button" type="button">载入无异常示例</button>
+            </div>
+            <button id="extractButton" class="button button-primary" type="button">发送片段</button>
+          </div>
+        </section>
+
+        <details class="structured-editor" hidden aria-hidden="true">
+          <summary>查看或修正结构化明细</summary>
+        <form id="structuredForm" class="structured-form" novalidate>
+          <fieldset class="field-group">
+            <legend>基础信息（项目/RIS/DICOM/PACS）</legend>
+            <div class="field-grid field-grid-3">
+              <label>检查项目名称
+                <input data-path="exam.projectName" type="text" placeholder="由RIS检查项目带入" />
+              </label>
+              <label>检查适应证
+                <input data-path="exam.indication" type="text" placeholder="诊断、筛查、术前评估…" />
+              </label>
+              <label>临床资料
+                <input data-path="exam.clinicalHistory" type="text" placeholder="由申请单带入，必要时补充" />
+              </label>
+              <label>图像质量
+                <select data-path="acquisition.quality">
+                  <option value="">未评价</option>
+                  <option value="satisfactory">满意</option>
+                  <option value="acceptable">基本满意</option>
+                  <option value="limited">受限</option>
+                </select>
+              </label>
+              <label>既往比较
+                <select data-path="comparison.status">
+                  <option value="">未说明</option>
+                  <option value="none">无可比较资料</option>
+                  <option value="compared">已比较</option>
+                  <option value="limited">比较受限</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>乳腺背景（一次确认）</legend>
+            <p class="field-help">FGT和BPE属于本次影像所见，不使用机构正常值静默代替。</p>
+            <div class="field-grid field-grid-3">
+              <label>FGT
+                <select data-path="breastTissue.fgt">
+                  <option value="">未评价</option>
+                  <option value="A">A 类</option>
+                  <option value="B">B 类</option>
+                  <option value="C">C 类</option>
+                  <option value="D">D 类</option>
+                </select>
+              </label>
+              <label>BPE 程度
+                <select data-path="breastTissue.bpeLevel">
+                  <option value="">未评价</option>
+                  <option value="minimal">极少</option>
+                  <option value="mild">轻度</option>
+                  <option value="moderate">中度</option>
+                  <option value="marked">显著</option>
+                </select>
+              </label>
+              <label>BPE 对称性
+                <select data-path="breastTissue.bpeSymmetry">
+                  <option value="">未评价</option>
+                  <option value="symmetric">对称</option>
+                  <option value="asymmetric">不对称</option>
+                </select>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>观察范围</legend>
+            <div class="segmented-control" role="group" aria-label="报告场景">
+              <label><input type="radio" name="scenario" value="lesion" checked />存在病灶</label>
+              <label><input type="radio" name="scenario" value="normal" />无可疑病灶</label>
+            </div>
+            <div class="field-grid field-grid-2 compact-grid">
+              <label>乳头/皮肤/胸肌/胸壁
+                <select data-path="associatedStructures.status">
+                  <option value="">未评价</option>
+                  <option value="normal">未见明确受累</option>
+                  <option value="abnormal">存在异常</option>
+                  <option value="limited">评价受限</option>
+                </select>
+              </label>
+              <label>区域淋巴结
+                <select data-path="lymphNodes.status">
+                  <option value="">未评价</option>
+                  <option value="normal">未见明显异常</option>
+                  <option value="abnormal">存在异常</option>
+                  <option value="limited">评价受限</option>
+                </select>
+              </label>
+              <label>相关结构异常/受限说明
+                <input data-path="associatedStructures.detail" type="text" placeholder="异常表现、受累结构或受限原因" />
+              </label>
+              <label>淋巴结异常/受限说明
+                <input data-path="lymphNodes.detail" type="text" placeholder="分区、形态、大小及其他关键表现" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset id="lesionSection" class="field-group lesion-group">
+            <legend><span id="lesionIdLabel">M1</span> 当前病灶详细编辑</legend>
+            <div class="field-grid field-grid-3">
+              <label>病灶类型
+                <select data-path="lesion.type">
+                  <option value="">未选择</option>
+                  <option value="mass">肿块 MASS</option>
+                  <option value="nme">非肿块强化 NME</option>
+                </select>
+              </label>
+              <label>侧别
+                <select data-path="lesion.laterality">
+                  <option value="">未填写</option>
+                  <option value="left">左乳</option>
+                  <option value="right">右乳</option>
+                </select>
+              </label>
+              <label>钟点位置
+                <input data-path="lesion.clock" type="number" min="1" max="12" placeholder="1–12" />
+              </label>
+              <label>距乳头
+                <span class="input-with-unit"><input data-path="lesion.distanceCm" type="number" min="0" step="0.1" /><span>cm</span></span>
+              </label>
+              <label>深度
+                <select data-path="lesion.depth">
+                  <option value="">未填写</option>
+                  <option value="anterior">前 1/3</option>
+                  <option value="middle">中 1/3</option>
+                  <option value="posterior">后 1/3</option>
+                </select>
+              </label>
+              <label>三维尺寸
+                <span class="size-inputs">
+                  <input data-path="lesion.size.ap" aria-label="前后径" type="number" min="0" placeholder="AP" />
+                  <span>×</span>
+                  <input data-path="lesion.size.transverse" aria-label="横径" type="number" min="0" placeholder="TR" />
+                  <span>×</span>
+                  <input data-path="lesion.size.cc" aria-label="上下径" type="number" min="0" placeholder="CC" />
+                  <small>mm</small>
+                </span>
+              </label>
+              <label id="shapeField">形状
+                <select data-path="lesion.shape">
+                  <option value="">未填写</option>
+                  <option value="oval">卵圆形</option>
+                  <option value="lobulated">分叶状</option>
+                  <option value="round">圆形</option>
+                  <option value="irregular">不规则形</option>
+                </select>
+              </label>
+              <label id="marginField">边缘
+                <select data-path="lesion.margin">
+                  <option value="">未填写</option>
+                  <option value="circumscribed">清楚</option>
+                  <option value="indistinct">模糊</option>
+                  <option value="spiculated">毛刺</option>
+                </select>
+              </label>
+              <label id="distributionField" hidden>NME 分布
+                <select data-path="lesion.distribution">
+                  <option value="">未填写</option>
+                  <option value="diffuse">弥漫性</option>
+                  <option value="regional">区域性</option>
+                  <option value="focal">局灶性</option>
+                  <option value="linear">线样</option>
+                  <option value="segmental">节段性</option>
+                </select>
+              </label>
+              <label>内部强化
+                <select data-path="lesion.internalEnhancement">
+                  <option value="">未填写</option>
+                  <option value="homogeneous">均匀</option>
+                  <option value="heterogeneous">不均匀</option>
+                  <option value="rim">厚环形</option>
+                  <option value="darkSeptations">内部无强化分隔</option>
+                  <option value="clumped">簇集状</option>
+                  <option value="clusteredRing">簇状环形</option>
+                </select>
+              </label>
+              <label>T2 信号
+                <select data-path="lesion.t2">
+                  <option value="">未评价</option>
+                  <option value="high">高信号</option>
+                  <option value="notHigh">非高信号</option>
+                  <option value="limited">无法评价</option>
+                </select>
+              </label>
+              <label>早期强化
+                <select data-path="lesion.kinetics.early">
+                  <option value="">未评价</option>
+                  <option value="slow">慢速</option>
+                  <option value="medium">中速</option>
+                  <option value="fast">快速</option>
+                  <option value="limited">无法评价</option>
+                </select>
+              </label>
+              <label>延迟期强化
+                <select data-path="lesion.kinetics.delayed">
+                  <option value="">未评价</option>
+                  <option value="persistent">持续型</option>
+                  <option value="plateau">平台型</option>
+                  <option value="washout">廓清型</option>
+                  <option value="limited">无法评价</option>
+                </select>
+              </label>
+              <label>DWI
+                <select data-path="lesion.dwi.signal">
+                  <option value="">未评价</option>
+                  <option value="high">高信号</option>
+                  <option value="equal">等信号</option>
+                  <option value="low">低信号</option>
+                  <option value="limited">无法评价</option>
+                </select>
+              </label>
+              <label>ADCmin
+                <span class="input-with-unit"><input data-path="lesion.dwi.adcMin" type="number" min="0" step="0.01" /><span>×10⁻³ mm²/s</span></span>
+              </label>
+              <label>b 值
+                <span class="input-with-unit"><input data-path="lesion.dwi.bValue" type="number" min="0" /><span>s/mm²</span></span>
+              </label>
+              <label>ROI 方法
+                <input data-path="lesion.dwi.roiMethod" type="text" placeholder="如：实性强化区" />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset class="field-group assessment-group">
+            <legend>医生评估与管理</legend>
+            <p class="field-help">类别只能由医生输入或确认，系统不会根据征象自动计算。</p>
+            <div class="field-grid field-grid-3">
+              <label>左乳 BI-RADS
+                <select data-path="assessment.leftBirads">
+                  <option value="">未定类</option>
+                  <option value="0">0 类</option><option value="1">1 类</option>
+                  <option value="2">2 类</option><option value="3">3 类</option>
+                  <option value="4">4 类</option><option value="5">5 类</option>
+                  <option value="6">6 类</option>
+                </select>
+              </label>
+              <label>右乳 BI-RADS
+                <select data-path="assessment.rightBirads">
+                  <option value="">未定类</option>
+                  <option value="0">0 类</option><option value="1">1 类</option>
+                  <option value="2">2 类</option><option value="3">3 类</option>
+                  <option value="4">4 类</option><option value="5">5 类</option>
+                  <option value="6">6 类</option>
+                </select>
+              </label>
+              <label>管理建议
+                <select data-path="management.action">
+                  <option value="">未确认</option>
+                  <option value="routine">常规随访</option>
+                  <option value="shortInterval">短期随访</option>
+                  <option value="tissueDiagnosis">组织学诊断</option>
+                  <option value="surgicalOncology">乳腺外科/肿瘤科管理</option>
+                  <option value="additionalImaging">补充影像检查</option>
+                </select>
+              </label>
+              <label class="span-3">建议说明
+                <input data-path="management.detail" type="text" placeholder="例如：超声可对应时行超声引导活检，否则考虑 MRI 引导活检" />
+              </label>
+            </div>
+          </fieldset>
+        </form>
+        </details>
+      </section>
+
+      <aside class="report-panel" aria-label="质控与报告">
+        <div class="panel-heading report-heading">
+          <div>
+            <p class="eyebrow">动态报告图谱</p>
+            <h2>节点驱动 · 异常自动展开</h2>
+          </div>
+          <div class="report-heading-actions">
+            <button id="reportOutputButton" class="button button-primary report-output-button" type="button">
+              <span aria-hidden="true">▦</span>生成报告
+            </button>
+            <span id="gateCount" class="gate-count">0</span>
+          </div>
+        </div>
+
+        <section id="structureSummary" class="structure-summary"></section>
+        <section id="lesionOverview" class="lesion-overview" aria-label="病灶索引" hidden aria-hidden="true">
+          <div class="lesion-overview-heading">
+            <div>
+              <p class="eyebrow">病灶索引</p>
+              <strong>紧凑卡片</strong>
+            </div>
+            <button id="addLesionButton" class="button button-secondary button-small" type="button">＋ 新增病灶</button>
+          </div>
+          <div id="lesionCards" class="lesion-cards"></div>
+          <p class="lesion-overview-help">选中卡片后，右侧后续对话和明细编辑只更新该病灶。</p>
+        </section>
+        <section class="report-preview">
+          <div class="report-preview-heading">
+            <div>
+              <p class="eyebrow">最终报告文本</p>
+              <h2>结构同源的报告草稿</h2>
+            </div>
+            <button id="generateButton" class="button button-secondary" type="button">记录当前版本</button>
+          </div>
+          <div id="reportContent" class="report-content"></div>
+        </section>
+
+        <section class="signoff">
+          <label class="physician-confirm">
+            <input id="physicianConfirm" type="checkbox" />
+            <span>我已核对结构、定位、报告文本及仍保留的正常基线</span>
+          </label>
+          <button id="signButton" class="button button-sign" type="button" disabled>医生签发</button>
+          <p id="signHint">签发需要：无阻断项、已生成草稿、医生最终确认。</p>
+        </section>
+      </aside>
+    </main>
+
+    <dialog id="reportOutputDialog" class="report-output-dialog" aria-labelledby="reportOutputTitle">
+      <div class="report-output-shell">
+        <header class="report-output-header">
+          <div>
+            <p class="eyebrow">双版本报告输出</p>
+            <h2 id="reportOutputTitle">生成与打印报告</h2>
+            <p>结构化图文版和文本版使用同一病例数据与诊断结论。</p>
+          </div>
+          <button id="closeReportOutputButton" class="report-output-close" type="button" aria-label="关闭报告生成窗口">×</button>
+        </header>
+
+        <div class="report-format-switch" role="tablist" aria-label="报告打印版本">
+          <button class="report-format-option is-active" type="button" role="tab" aria-selected="true" data-report-format="structured">
+            <span class="report-format-mark" aria-hidden="true">图</span>
+            <span><strong>结构化图文版</strong><small>解剖定位图 · 病灶结构 · 结论与建议</small></span>
+          </button>
+          <button class="report-format-option" type="button" role="tab" aria-selected="false" data-report-format="text">
+            <span class="report-format-mark" aria-hidden="true">文</span>
+            <span><strong>文本报告版</strong><small>标准所见 · 诊断结论 · 管理建议</small></span>
+          </button>
+        </div>
+
+        <div id="reportOutputState" class="report-output-state" role="status" aria-live="polite"></div>
+        <section id="reportOutputPreview" class="report-output-preview" aria-label="报告打印预览"></section>
+
+        <footer class="report-output-footer">
+          <button id="exportTextButton" class="button button-secondary" type="button">下载文本文件</button>
+          <button id="printGeneratedReportButton" class="button button-primary" type="button">打印结构化图文版</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <section id="printStage" class="print-stage" aria-hidden="true"></section>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

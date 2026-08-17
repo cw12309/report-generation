@@ -1,0 +1,1199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<link rel="icon" href="data:,"/>
+<title>报告生成 · 单列交互原型</title>
+<style>
+:root {
+  --ink:#1a2b27; --muted:#6b7f79; --paper:#f0f2ef; --panel:#fff;
+  --line:#e2e7e3; --green:#176b58; --green-d:#0e4a3c; --green-s:#e8f3ef;
+  --amber:#a76416; --amber-s:#fff4e0; --red:#b03a2e; --red-s:#fff1ee;
+  --blue:#2d6a8a; --blue-s:#eaf4f8;
+  --r:10px; --font:"SF Pro Text","PingFang SC","Noto Sans SC",sans-serif;
+  --serif:"Noto Serif SC","Songti SC",serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font);font-size:13px;color:var(--ink);background:var(--paper);display:flex;flex-direction:column;align-items:center}
+button{cursor:pointer;font:inherit;border:none;background:none}
+button:disabled{opacity:.4;cursor:not-allowed}
+
+/* ═══ Shell: single narrow column ═══ */
+.shell{
+  width:100%;max-width:430px;height:100vh;height:100dvh;
+  display:flex;flex-direction:column;background:var(--panel);
+  box-shadow:0 0 60px rgba(20,50,40,.1);position:relative;overflow:hidden;
+}
+
+/* ═══ TOP: Status Strip ═══ */
+.status-strip{
+  flex:0 0 auto;padding:10px 14px 9px;
+  background:linear-gradient(135deg,#0c3d31 0%,#14574a 100%);
+  color:#fff;display:flex;flex-direction:column;gap:7px;
+  border-bottom:2px solid rgba(90,220,160,.3);
+}
+.ss-row1{display:flex;align-items:center;gap:8px}
+.ss-title{font-size:12px;font-weight:700;letter-spacing:.02em;flex:1}
+.ss-stage{
+  padding:2px 7px;border-radius:4px;font-size:8px;font-weight:800;letter-spacing:.06em;
+  background:rgba(255,255,255,.1);color:#8ecdb8;
+}
+.ss-badge{
+  padding:2px 8px;border-radius:10px;font-size:9px;font-weight:800;
+  background:rgba(255,255,255,.15);color:#a8d8c8;transition:all .3s;
+}
+.ss-badge.warn{background:rgba(255,180,60,.25);color:#ffd08a}
+.ss-badge.ok{background:rgba(80,220,160,.2);color:#7dffb8}
+.ss-badge.done{background:rgba(255,255,255,.9);color:var(--green-d)}
+/* structural grid */
+.ss-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
+  background:rgba(255,255,255,.08);border-radius:6px;overflow:hidden;
+}
+.ss-cell{
+  padding:5px 7px;background:rgba(14,74,60,.6);display:flex;flex-direction:column;gap:1px;
+  transition:background .22s,box-shadow .22s;
+}
+.ss-cell span{font-size:8px;color:#8fc4b2;font-weight:700;letter-spacing:.03em}
+.ss-cell strong{font-size:11px;color:#fff;font-weight:800;transition:color .3s}
+.ss-cell strong.hl{color:#ffc95c}
+.ss-cell strong.ok{color:#5ce0a5}
+.ss-cell.following{background:rgba(28,111,88,.82)}
+.ss-cell.is-current-side{box-shadow:inset 0 -2px 0 #ffc95c;background:rgba(20,91,73,.88)}
+.ss-cell.sync{animation:structureSync .42s cubic-bezier(.22,1,.36,1)}
+/* workflow + blocker row */
+.ss-row3{display:flex;align-items:center;gap:8px}
+.wf-dots{display:flex;gap:4px;align-items:center}
+.wf-dots i{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.2);transition:all .3s}
+.wf-dots i.done{background:#5ce0a5}
+.wf-dots i.cur{background:#ffc95c;box-shadow:0 0 0 3px rgba(255,200,80,.3)}
+.wf-label{font-size:8px;color:#8ecdb8;font-weight:600}
+.ss-blocker{
+  display:none;margin-left:auto;padding:3px 8px;background:rgba(255,100,60,.2);border-radius:5px;
+  font-size:9px;color:#ffb08a;font-weight:700;animation:fadeIn .3s ease;max-width:60%;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.ss-blocker.show{display:block}
+
+/* ═══ SYSTEM CONTEXT: RIS / DICOM / PACS ═══ */
+.exam-context{
+  flex:0 0 auto;background:#fbfcfb;border-bottom:1px solid var(--line);
+}
+.ec-head{
+  width:100%;min-height:34px;padding:6px 13px;display:grid;
+  grid-template-columns:auto 1fr auto;align-items:center;gap:8px;text-align:left;
+}
+.ec-head > span{font-size:9px;color:var(--muted);font-weight:800;letter-spacing:.05em}
+.ec-head strong{
+  overflow:hidden;color:var(--ink);font-size:10px;font-weight:700;
+  text-overflow:ellipsis;white-space:nowrap;
+}
+.ec-head i{color:var(--muted);font-size:10px;font-style:normal;transition:transform .2s}
+.exam-context.collapsed .ec-head i{transform:rotate(180deg)}
+.ec-body{
+  max-height:138px;padding:0 13px 9px;display:grid;gap:5px;overflow:hidden;
+  transition:max-height .25s ease,padding .25s ease,opacity .2s;
+}
+.exam-context.collapsed .ec-body{max-height:0;padding-top:0;padding-bottom:0;opacity:0}
+.ec-row{
+  display:grid;grid-template-columns:52px 1fr auto;gap:7px;align-items:start;
+  font-size:9px;line-height:1.45;
+}
+.ec-row > span{color:var(--muted);font-weight:700}
+.ec-row > strong{color:var(--ink);font-weight:650;min-width:0}
+.source-tag{
+  padding:1px 5px;border-radius:3px;background:var(--blue-s);color:var(--blue);
+  font-size:7px;font-weight:800;white-space:nowrap;
+}
+.source-tag.pending{background:var(--amber-s);color:var(--amber)}
+
+/* ═══ CONTEXT: anatomy + active finding ═══ */
+.anatomy-context{
+  flex:0 0 auto;background:#f7faf8;border-bottom:1px solid var(--line);
+  box-shadow:0 5px 16px rgba(20,50,40,.05);position:relative;z-index:4;
+}
+.ac-head{
+  width:100%;min-height:34px;padding:6px 13px;display:grid;
+  grid-template-columns:auto 1fr auto;align-items:center;gap:8px;text-align:left;
+}
+.ac-head > span{font-size:9px;color:var(--muted);font-weight:800;letter-spacing:.05em}
+.ac-head strong{overflow:hidden;color:var(--green-d);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.ac-head i{color:var(--muted);font-size:10px;font-style:normal;transition:transform .2s}
+.anatomy-context.collapsed .ac-head i{transform:rotate(180deg)}
+.ac-body{
+  max-height:124px;display:grid;grid-template-columns:150px 1fr;gap:10px;
+  padding:0 13px 10px;overflow:hidden;transition:max-height .25s ease,padding .25s ease,opacity .2s;
+}
+.anatomy-context.collapsed .ac-body{max-height:0;padding-top:0;padding-bottom:0;opacity:0}
+.breast-map{
+  height:104px;position:relative;
+}
+.mri-frame{
+  width:100%;height:100%;position:relative;overflow:hidden;border:1px solid #63726d;
+  border-radius:7px;background:#07100e;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);
+}
+.mri-frame::after{
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:repeating-linear-gradient(180deg,transparent 0 3px,rgba(255,255,255,.025) 3px 4px);
+}
+.mri-image{width:100%;height:100%;display:block;object-fit:cover;filter:contrast(1.08)}
+.mri-series,.mri-note,.mri-side{
+  position:absolute;z-index:2;color:#d7e1dd;text-shadow:0 1px 2px #000;font-size:6px;font-weight:800;
+}
+.mri-series{left:5px;top:4px;letter-spacing:.08em}
+.mri-note{right:5px;bottom:4px;padding:1px 4px;border-radius:3px;background:rgba(0,0,0,.54);color:#aebdb7}
+.mri-side.right{left:5px;top:50%;transform:translateY(-50%)}
+.mri-side.left{right:5px;top:50%;transform:translateY(-50%)}
+.image-marker{
+  position:absolute;z-index:4;min-width:18px;height:18px;padding:0 3px;display:grid;place-items:center;
+  transform:translate(-50%,-50%);border:2px solid #fff;border-radius:9px;
+  color:#fff;background:var(--amber);box-shadow:0 1px 6px rgba(0,0,0,.65);
+  font-size:7px;font-weight:900;transition:transform .2s,background .2s,box-shadow .2s;
+}
+.image-marker.nme{border-radius:4px;border-style:dashed}
+.image-marker.node{border-radius:8px;background:#8a5b20}
+.image-marker.confirmed{background:var(--green)}
+.image-marker.active{
+  transform:translate(-50%,-50%) scale(1.24);
+  box-shadow:0 0 0 3px rgba(255,201,92,.4),0 2px 8px rgba(0,0,0,.7);
+}
+.image-marker:focus-visible{outline:2px solid #ffc95c;outline-offset:2px}
+.active-finding{
+  min-width:0;align-self:stretch;padding:8px 9px;background:#fff;border:1px solid var(--line);
+  border-left:3px solid var(--green);border-radius:7px;
+}
+.af-top{display:flex;align-items:center;gap:6px}
+.af-id{
+  min-width:24px;height:20px;display:grid;place-items:center;padding:0 5px;
+  color:#fff;background:var(--green-d);border-radius:4px;font-size:9px;font-weight:900;
+}
+.af-top strong{min-width:0;flex:1;overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.af-status{font-size:7px;color:var(--amber);font-style:normal;font-weight:800}
+.af-status.confirmed{color:var(--green)}
+.af-loc{margin-top:6px;color:var(--green-d);font-size:10px;font-weight:800}
+.af-detail{margin-top:3px;color:var(--muted);font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.af-tags{display:flex;gap:3px;margin-top:6px;overflow:hidden}
+.af-tags i{flex:0 0 auto;padding:2px 5px;color:#48645b;background:var(--green-s);border-radius:3px;font-size:7px;font-style:normal}
+.af-empty{height:100%;display:grid;align-content:center;gap:3px}
+.af-empty strong{color:var(--green-d);font-size:10px}
+.af-empty span{color:var(--muted);font-size:8px;line-height:1.5}
+
+/* ═══ MIDDLE: Report Zone ═══ */
+.report-zone{
+  flex:1;overflow-y:auto;padding:12px 14px;scroll-behavior:smooth;
+  background:#fdfefd;
+}
+.rz-sec{margin-bottom:10px;animation:fadeIn .4s ease both}
+.rz-sec-head{
+  display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--line);margin-bottom:5px;
+}
+.rz-sec-head h3{font-size:10px;font-weight:800;color:var(--green-d);letter-spacing:.04em}
+.rz-origin{
+  margin-left:auto;font-size:8px;font-weight:800;padding:1px 6px;border-radius:3px;
+  background:#eef1ee;color:#8a958f;transition:all .4s;
+}
+.rz-origin.upd{background:var(--green);color:#fff}
+.rz-line{
+  font-family:var(--serif);font-size:12px;line-height:1.75;color:var(--ink);
+  padding:1px 0;transition:background .5s;
+}
+.rz-line.flash{background:linear-gradient(90deg,rgba(23,107,88,.12),transparent 80%);border-radius:3px}
+.rz-line.pending{color:var(--amber);font-style:italic}
+.rz-line.context-active{
+  margin-left:-6px;padding-left:6px;background:linear-gradient(90deg,rgba(23,107,88,.13),transparent 84%);
+  border-left:2px solid var(--green);border-radius:2px;
+}
+.rz-line[data-finding]{cursor:pointer}
+.rz-line[data-finding]:focus-visible{outline:2px solid var(--green);outline-offset:2px;border-radius:3px}
+
+/* required case-specific breast background */
+.background-card{
+  margin:3px 0 7px;padding:7px 8px;background:#f7faf8;border:1px solid #dce7e2;
+  border-left:3px solid var(--amber);border-radius:6px;display:grid;
+  grid-template-columns:1fr auto;gap:7px;align-items:center;
+}
+.background-card.confirmed{border-left-color:var(--green);background:var(--green-s)}
+.bg-copy{min-width:0}
+.bg-copy span{
+  display:block;margin-bottom:2px;font-size:8px;font-weight:800;color:var(--muted);
+  letter-spacing:.05em;
+}
+.bg-copy strong{display:block;font-size:9px;color:var(--amber);line-height:1.45}
+.background-card.confirmed .bg-copy strong{color:var(--green-d)}
+.bg-action{
+  height:26px;padding:0 8px;border-radius:5px;background:var(--amber-s);color:var(--amber);
+  border:1px solid #e8c68e;font-size:8px;font-weight:800;white-space:nowrap;
+}
+.background-card.confirmed .bg-action{background:#fff;color:var(--green);border-color:#b9d6cc}
+.bg-picker{display:grid;gap:8px}
+.bg-picker-row{display:grid;grid-template-columns:50px 1fr;gap:7px;align-items:start}
+.bg-picker-row > span{padding-top:6px;font-size:8px;font-weight:800;color:var(--muted)}
+.bg-options{display:flex;gap:4px;flex-wrap:wrap}
+.bg-options button{
+  min-width:31px;height:27px;padding:0 7px;border:1px solid var(--line);border-radius:5px;
+  background:#fff;color:var(--muted);font-size:9px;font-weight:800;
+}
+.bg-options button.picked{background:var(--green);border-color:var(--green);color:#fff}
+.bg-save{
+  height:31px;border-radius:6px;background:var(--green-d);color:#fff;
+  font-size:9px;font-weight:800;
+}
+
+/* inline BI-RADS picker */
+.inline-picker{
+  margin:8px 0;padding:10px 12px;background:#fff;border:1.5px solid var(--line);
+  border-left:3px solid var(--green);border-radius:8px;
+  display:none;animation:slideUp .35s cubic-bezier(.22,1,.36,1) both;
+  box-shadow:0 4px 16px rgba(20,50,40,.06);
+}
+.inline-picker.show{display:block}
+.ip-label{font-size:9px;font-weight:800;color:var(--green-d);margin-bottom:7px}
+.ip-row{display:flex;gap:5px;flex-wrap:wrap}
+.ip-row button{
+  min-width:34px;height:30px;border:1.5px solid var(--line);border-radius:6px;
+  font-weight:800;font-size:12px;color:var(--muted);background:#fff;transition:all .15s;
+}
+.ip-row button:hover{border-color:var(--green);color:var(--green);transform:translateY(-1px)}
+.ip-row button.picked{background:var(--green);border-color:var(--green);color:#fff;box-shadow:0 2px 8px rgba(23,107,88,.3)}
+.ip-row button.suggest{border:1.5px dashed var(--amber);color:var(--amber);background:var(--amber-s)}
+.ip-basis{margin-top:6px;font-size:9px;color:var(--muted);display:none}
+.ip-basis.show{display:block}
+.ip-mgmt{display:none;gap:5px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.ip-mgmt.show{display:flex}
+.ip-mgmt button{
+  padding:5px 10px;border:1px solid #e8cfa0;border-radius:14px;background:var(--amber-s);
+  color:#71470e;font-size:10px;font-weight:700;transition:all .15s;
+}
+.ip-mgmt button:hover{border-color:var(--amber);transform:translateY(-1px)}
+.ip-mgmt button.picked{background:var(--amber);border-color:var(--amber);color:#fff}
+.candidate-review{display:grid;gap:7px}
+.cr-top{display:flex;align-items:center;gap:7px}
+.cr-count{
+  min-width:28px;height:24px;display:grid;place-items:center;border-radius:5px;
+  color:#fff;background:var(--amber);font-size:10px;font-weight:900;
+}
+.cr-top strong{font-size:10px;color:var(--green-d)}
+.cr-top span{display:block;color:var(--muted);font-size:8px}
+.cr-detail{display:none;padding:6px 8px;color:#5f706a;background:#f6f8f6;border-radius:5px;font-size:8px;line-height:1.55}
+.cr-detail.show{display:block}
+.cr-actions{display:flex;gap:6px}
+.cr-actions button{height:29px;padding:0 10px;border-radius:6px;font-size:9px;font-weight:800}
+.cr-confirm{flex:1;color:#fff;background:var(--green)}
+.cr-inspect{color:var(--green-d);background:var(--green-s);border:1px solid #c6ddd5}
+
+/* lesion mini-cards */
+.lesion-strip{display:flex;gap:6px;margin:8px 0;overflow-x:auto;padding-bottom:3px}
+.lm-card{
+  flex:0 0 auto;padding:6px 9px;background:#fff;border:1.5px solid var(--line);border-radius:7px;
+  font-size:9px;min-width:100px;text-align:left;transition:all .2s;opacity:0;transform:translateY(8px);
+}
+.lm-card.in{opacity:1;transform:none}
+.lm-card.active{border-color:var(--green);box-shadow:0 0 0 2px rgba(23,107,88,.1)}
+.lm-card .lm-id{font-weight:800;color:var(--green-d);font-size:10px}
+.lm-card .lm-info{color:var(--muted);margin-top:2px}
+.lm-card .lm-b{margin-top:3px;font-weight:800;color:var(--amber);font-size:9px}
+.lm-card .lm-b.set{color:var(--green-d)}
+
+/* signoff inline */
+.signoff-zone{
+  margin:8px 0 2px;display:none;animation:slideUp .28s ease both;
+}
+.signoff-zone.show{display:block}
+.sz-btn{
+  width:100%;height:34px;border-radius:6px;background:var(--green-d);color:#fff;
+  font-weight:800;font-size:10px;letter-spacing:.05em;transition:background .15s,transform .15s;
+  box-shadow:0 2px 7px rgba(14,74,60,.16);
+}
+.sz-btn:hover:not(:disabled){background:var(--green);transform:translateY(-1px)}
+.sz-btn:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.signed-compact{
+  min-height:32px;padding:6px 10px;display:flex;align-items:center;justify-content:center;
+  border:1px solid #b9d6cc;border-radius:6px;color:var(--green-d);background:var(--green-s);
+  font-size:9px;font-weight:800;letter-spacing:.03em;
+}
+
+/* ═══ BOTTOM: Dialog Zone ═══ */
+.dialog-zone{
+  flex:0 0 auto;border-top:2px solid rgba(23,107,88,.15);
+  background:linear-gradient(180deg,#f2f5f3 0%,#eaeeeb 100%);
+  display:flex;flex-direction:column;padding:8px 12px 12px;
+}
+.dz-msgs{
+  max-height:88px;overflow-y:auto;margin-bottom:8px;display:flex;flex-direction:column;gap:5px;
+}
+.dz-msg{
+  max-width:92%;padding:6px 10px;border-radius:8px;font-size:11px;line-height:1.5;
+  animation:fadeIn .3s ease both;white-space:pre-wrap;word-break:break-all;
+}
+.dz-msg.user{align-self:flex-end;background:var(--green);color:#fff;border-bottom-right-radius:3px}
+.dz-msg.agent{align-self:flex-start;background:#f3f5f3;color:var(--ink);border:1px solid var(--line);border-bottom-left-radius:3px}
+.dz-msg .meta{display:block;font-size:8px;opacity:.6;margin-top:3px}
+.dz-empty{font-size:10px;color:var(--muted);padding:6px 0;text-align:center}
+.dz-input-row{display:flex;gap:7px;align-items:flex-end}
+.dz-input{
+  flex:1;min-height:36px;max-height:72px;resize:none;padding:8px 11px;
+  border:1.5px solid var(--line);border-radius:8px;font:inherit;font-size:12px;
+  outline:none;background:#fafbfa;transition:border-color .2s,box-shadow .2s;
+}
+.dz-input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(23,107,88,.08)}
+.dz-voice{
+  width:36px;height:36px;border-radius:50%;background:var(--green-s);color:var(--green);
+  display:grid;place-items:center;font-size:15px;transition:all .15s;flex:0 0 auto;
+}
+.dz-voice:hover{background:var(--green);color:#fff}
+.dz-voice.recording{background:var(--red);color:#fff;animation:pulse 1s infinite}
+.dz-send{
+  width:36px;height:36px;border-radius:50%;background:var(--green);color:#fff;
+  display:grid;place-items:center;font-size:14px;transition:all .15s;flex:0 0 auto;
+}
+.dz-send:hover{background:var(--green-d);transform:scale(1.05)}
+/* fragment buffer mini */
+.frag-mini{
+  display:none;margin-bottom:6px;padding:5px 9px;background:#f6f8f6;
+  border:1px dashed var(--line);border-radius:6px;font-size:9px;color:var(--muted);
+}
+.frag-mini.show{display:flex;align-items:center;gap:6px;flex-wrap:wrap;animation:fadeIn .2s ease}
+.frag-mini .ftag{padding:2px 6px;background:#fff;border:1px solid var(--line);border-radius:4px;font-size:9px;font-weight:600}
+.frag-mini .ftag.noise{text-decoration:line-through;opacity:.5;color:var(--amber)}
+.frag-mini .fmerge{color:var(--green);font-weight:800;font-size:8px}
+
+/* ═══ Demo Controls ═══ */
+.demo-toolbar{
+  flex:0 0 auto;min-height:31px;padding:4px 8px;display:flex;align-items:center;justify-content:space-between;
+  background:#183f35;border-bottom:1px solid rgba(255,255,255,.1);
+}
+.demo-ctrl{
+  display:flex;gap:4px;
+}
+.demo-ctrl button{
+  width:23px;height:23px;border-radius:5px;background:rgba(255,255,255,.1);color:#fff;
+  font-size:9px;display:grid;place-items:center;transition:all .15s;
+}
+.demo-ctrl button:hover{background:rgba(255,255,255,.2)}
+.scenario-switch{
+  display:flex;gap:3px;
+}
+.scenario-switch button{
+  padding:3px 7px;border-radius:5px;background:rgba(255,255,255,.08);color:#b9d2c9;
+  font-size:8px;font-weight:700;transition:all .15s;
+}
+.scenario-switch button.active{background:rgba(255,255,255,.9);color:var(--green-d)}
+.scenario-switch button:hover{color:#fff}
+
+/* toast */
+.toast{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) scale(.9);
+  padding:10px 18px;background:rgba(14,74,60,.92);color:#fff;border-radius:8px;
+  font-size:11px;font-weight:700;z-index:200;opacity:0;pointer-events:none;
+  transition:all .3s cubic-bezier(.22,1,.36,1);backdrop-filter:blur(6px);
+}
+.toast.show{opacity:1;transform:translate(-50%,-50%) scale(1)}
+
+/* animations */
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes structureSync{0%{background:rgba(255,201,92,.34)}100%{background:rgba(28,111,88,.82)}}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(176,58,46,.3)}50%{box-shadow:0 0 0 6px rgba(176,58,46,0)}}
+@media (max-height:760px){
+  .ec-body{max-height:112px}
+  .ac-body{max-height:102px;grid-template-columns:136px 1fr;padding-bottom:7px}
+  .breast-map{height:84px}
+  .af-tags{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="shell" id="shell">
+  <!-- ═══ TOP: Status Strip ═══ -->
+  <div class="status-strip">
+    <div class="ss-row1">
+      <span class="ss-title">乳腺MRI · 报告生成</span>
+      <span class="ss-stage" id="ssStage">基线已加载</span>
+      <span class="ss-badge" id="ssBadge">正常基线</span>
+    </div>
+    <div class="ss-grid">
+      <div class="ss-cell"><span>场景</span><strong id="gScenario">正常</strong></div>
+      <div class="ss-cell" id="gLesionCell"><span>当前结构</span><strong id="gLesion">无</strong></div>
+      <div class="ss-cell" id="gLeftCell"><span>左乳 BI-RADS</span><strong id="gLeft" class="ok">1类</strong></div>
+      <div class="ss-cell" id="gRightCell"><span>右乳 BI-RADS</span><strong id="gRight" class="ok">1类</strong></div>
+      <div class="ss-cell"><span>待确认字段</span><strong id="gPending">0</strong></div>
+      <div class="ss-cell"><span>基线保留</span><strong id="gBaseline">12项</strong></div>
+      <div class="ss-cell"><span>异常更新</span><strong id="gUpdated">0段</strong></div>
+      <div class="ss-cell"><span>签发状态</span><strong id="gSign">未签发</strong></div>
+    </div>
+    <div class="ss-row3">
+      <div class="wf-dots" id="wfDots"><i class="done"></i><i></i><i></i><i></i><i></i></div>
+      <span class="wf-label" id="wfLabel">基线就绪</span>
+      <div class="ss-blocker" id="ssBlocker"></div>
+    </div>
+  </div>
+
+  <!-- Demo controls -->
+  <div class="demo-toolbar" aria-label="演示控制">
+    <div class="scenario-switch" id="scenarioSwitch">
+      <button data-s="A" class="active">A 正常</button>
+      <button data-s="B">B 单灶</button>
+      <button data-s="C">C 多灶</button>
+      <button data-s="D">D 碎片</button>
+    </div>
+    <div class="demo-ctrl">
+      <button id="playBtn" title="播放">▶</button>
+      <button id="restartBtn" title="重置">↺</button>
+      <button id="speedBtn" title="速度">1×</button>
+    </div>
+  </div>
+
+  <!-- System-sourced header, not report interpretation -->
+  <section class="exam-context collapsed" id="examContext" aria-label="基础信息">
+    <button class="ec-head" id="examToggle" type="button" aria-expanded="false">
+      <span>基础信息</span>
+      <strong>乳腺MRI增强 · 示例RIS / DICOM / PACS</strong>
+      <i aria-hidden="true">⌃</i>
+    </button>
+    <div class="ec-body" aria-hidden="true">
+      <div class="ec-row"><span>检查项目</span><strong>乳腺MRI平扫＋动态增强</strong><em class="source-tag">示例RIS</em></div>
+      <div class="ec-row"><span>扫描序列</span><strong>T1WI · T2WI-FS · DWI · DCE · 减影</strong><em class="source-tag">示例DICOM</em></div>
+      <div class="ec-row"><span>对比剂</span><strong>名称、剂量及速率尚未接入</strong><em class="source-tag pending">待接入</em></div>
+      <div class="ec-row"><span>临床资料</span><strong>申请单未提供</strong><em class="source-tag">示例RIS</em></div>
+      <div class="ec-row"><span>既往对比</span><strong>无可供比较的既往乳腺影像</strong><em class="source-tag">示例PACS</em></div>
+    </div>
+  </section>
+
+  <!-- ═══ CONTEXT: anatomy and current attributes ═══ -->
+  <section class="anatomy-context" id="anatomyContext" aria-label="影像定位与当前结构属性">
+    <button class="ac-head" id="anatomyToggle" type="button" aria-expanded="true">
+      <span>影像/结构</span>
+      <strong id="anatomyCurrent">正常基线 · 无异常定位</strong>
+      <i aria-hidden="true">⌃</i>
+    </button>
+    <div class="ac-body" aria-hidden="false">
+      <div class="breast-map" id="breastMap" aria-label="乳腺MRI轴位定位示意图"></div>
+      <div class="active-finding" id="activeFinding"></div>
+    </div>
+  </section>
+
+  <!-- ═══ MIDDLE: Report Zone ═══ -->
+  <div class="report-zone" id="reportZone">
+    <div id="reportSecs"></div>
+    <div class="lesion-strip" id="lesionStrip"></div>
+    <div class="inline-picker" id="inlinePicker"></div>
+    <div class="signoff-zone" id="signoffZone"></div>
+  </div>
+
+  <!-- ═══ BOTTOM: Dialog Zone ═══ -->
+  <div class="dialog-zone">
+    <div class="frag-mini" id="fragMini"></div>
+    <div class="dz-msgs" id="dzMsgs"><div class="dz-empty">Agent 就绪 · 描述异常即可；乳腺背景集中确认一次</div></div>
+    <div class="dz-input-row">
+      <button class="dz-voice" id="voiceBtn" title="语音输入">🎙</button>
+      <textarea class="dz-input" id="inputBox" rows="1" placeholder="描述异常发现…" readonly></textarea>
+      <button class="dz-send" id="sendBtn" title="发送">↑</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* ═══════════════ Engine ═══════════════ */
+const $=s=>document.querySelector(s);
+const $$=s=>[...document.querySelectorAll(s)];
+const state={scenario:"A",playing:false,speed:1,runId:0};
+const sleep=ms=>{
+  const runId=state.runId;
+  return new Promise((resolve,reject)=>setTimeout(
+    ()=>runId===state.runId?resolve():reject(new Error("DEMO_ABORT")),
+    ms/state.speed
+  ));
+};
+
+/* ── Report Data ── */
+const BASELINE={
+  finding:["双侧乳腺未见可疑肿块或非肿块强化。","乳头、皮肤、胸肌及胸壁未见明确受累征象；区域淋巴结未见明确异常。"],
+  conclusion:["双侧乳腺MRI未见可疑异常。","左乳BI-RADS 1类；右乳BI-RADS 1类。"],
+  mgmt:["按相应风险分层及筛查指南常规随访。"]
+};
+const SECS=[
+  {key:"finding",title:"报告所见"},{key:"conclusion",title:"诊断结论"},{key:"mgmt",title:"管理建议"}
+];
+let report={},origin={};
+let breastBackground={fgt:"",bpe:"",symmetry:""};
+let backgroundWaiters=[];
+let anatomyFindings=[];
+let activeFindingId="";
+const CLOCK_POS={
+  12:[50,14],1:[68,19],2:[81,33],3:[86,50],4:[80,68],5:[66,81],
+  6:[50,86],7:[34,81],8:[20,68],9:[14,50],10:[20,31],11:[34,19]
+};
+function resetReport(){
+  report=JSON.parse(JSON.stringify(BASELINE));
+  origin={finding:"base",conclusion:"base",mgmt:"base"};
+  breastBackground={fgt:"",bpe:"",symmetry:""};
+  backgroundWaiters=[];
+}
+const backgroundComplete=()=>Boolean(breastBackground.fgt&&breastBackground.bpe&&breastBackground.symmetry);
+const BACKGROUND_LABELS={
+  bpe:{minimal:"极少",mild:"轻度",moderate:"中度",marked:"显著"},
+  symmetry:{symmetric:"对称",asymmetric:"不对称"}
+};
+function backgroundMarkup(){
+  const complete=backgroundComplete();
+  const text=complete
+    ? `FGT ${breastBackground.fgt}类 · BPE ${BACKGROUND_LABELS.bpe[breastBackground.bpe]} · ${BACKGROUND_LABELS.symmetry[breastBackground.symmetry]}`
+    : "FGT 待评价 · BPE 待评价 · 对称性待评价";
+  return `<div class="background-card${complete?" confirmed":""}">
+    <div class="bg-copy"><span>乳腺背景 · 本次影像观察</span><strong>${text}</strong></div>
+    <button class="bg-action" id="backgroundAction" type="button">${complete?"修改":"一次确认"}</button>
+  </div>`;
+}
+function renderReport(flash=[]){
+  $("#reportSecs").innerHTML=SECS.map(s=>{
+    const upd=origin[s.key]==="upd";
+    const lines=report[s.key].map((l,i)=>{
+      const idMatch=l.match(/[（(]((?:LN|M|N)\d+)[）)]/)||l.match(/^((?:LN|M|N)\d+)[：:]/);
+      const findingId=idMatch?.[1]||"";
+      const cls="rz-line"+(flash.includes(s.key)?" flash":"")+(l.includes("待医生确认")||l.includes("待补充")?" pending":"");
+      return `<p class="${cls}" ${findingId?`data-finding="${findingId}" role="button" tabindex="0"`:""} style="animation-delay:${i*60}ms">${l}</p>`;
+    }).join("");
+    const background=s.key==="finding"?backgroundMarkup():"";
+    return `<div class="rz-sec"><div class="rz-sec-head"><h3>${s.title}</h3><span class="rz-origin${upd?" upd":""}">${upd?"已更新":"基线"}</span></div>${background}${lines}</div>`;
+  }).join("");
+  $("#backgroundAction").onclick=showBackgroundPicker;
+  $$("[data-finding]").forEach(line=>{
+    const activate=()=>setActiveLesion(line.dataset.finding,true);
+    line.onclick=activate;
+    line.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();activate()}};
+  });
+  syncReportHighlight();
+}
+
+/* ── Image locator + active anatomy attributes ── */
+function imageMarkerPosition(item){
+  if(item.kind==="node"){
+    return item.side==="left"?[94,24]:[6,24];
+  }
+  const [clockLeft,clockTop]=CLOCK_POS[item.clock]||[50,50];
+  // 轴位按放射学显示方向：患者右侧位于画面左侧。
+  const breastStart=item.side==="left"?54:3;
+  return [breastStart+clockLeft*.43,14+clockTop*.7];
+}
+function imageLocatorMarkup(){
+  const markers=anatomyFindings.map(item=>{
+    const [left,top]=imageMarkerPosition(item);
+    const classes=[
+      "image-marker",item.kind,item.status==="confirmed"?"confirmed":"",
+      item.id===activeFindingId?"active":""
+    ].filter(Boolean).join(" ");
+    const location=item.kind==="node"
+      ? item.region||`${item.side==="left"?"左":"右"}侧区域淋巴结`
+      : `${item.side==="left"?"左":"右"}乳${item.clock?`${item.clock}点`:""}`;
+    return `<button class="${classes}" type="button" data-anatomy-id="${item.id}" style="left:${left}%;top:${top}%" aria-label="${item.id} ${location}">${item.id}</button>`;
+  }).join("");
+  return `
+    <div class="mri-frame">
+      <img class="mri-image" src="./assets/breast-mri-axial-demo.svg" alt="乳腺MRI轴位演示定位底图">
+      <span class="mri-series">DCE · AX</span>
+      <span class="mri-side right">R</span><span class="mri-side left">L</span>
+      ${markers}
+      <span class="mri-note">定位示意 · 非诊断影像</span>
+    </div>`;
+}
+function renderAnatomy(){
+  $("#breastMap").innerHTML=imageLocatorMarkup();
+  const active=anatomyFindings.find(item=>item.id===activeFindingId);
+  if(!active){
+    $("#anatomyCurrent").textContent="正常基线 · 无异常定位";
+    $("#activeFinding").innerHTML=`
+      <div class="af-empty"><strong>双侧乳腺 · 正常基线</strong>
+      <span>发现异常后，将在钟点图标记位置，并同步显示当前病灶关键属性。</span></div>`;
+    $("#inputBox").placeholder="描述异常发现…";
+  }else{
+    const typeLabel={mass:"MASS",nme:"NME",node:"淋巴结"}[active.kind]||"异常";
+    const location=active.kind==="node"
+      ? active.region
+      : `${active.side==="left"?"左":"右"}乳${active.clock?`${active.clock}点`:""}${active.depth?` · ${active.depth}`:""}`;
+    const detail=[
+      active.distance?`距乳头${active.distance}`:"",
+      active.size||"",
+      active.kind==="node"&&active.region?active.region:""
+    ].filter(Boolean).join(" · ");
+    $("#anatomyCurrent").textContent=`当前 ${active.id} · ${location}`;
+    $("#activeFinding").innerHTML=`
+      <div class="af-top">
+        <span class="af-id">${active.id}</span><strong>${typeLabel} · ${location}</strong>
+        <em class="af-status ${active.status==="confirmed"?"confirmed":""}">${active.status==="confirmed"?"已确认":"待确认"}</em>
+      </div>
+      <div class="af-loc">${detail||"定位属性待补充"}</div>
+      <div class="af-detail">${active.birads?`所在乳腺 BI-RADS ${active.birads}类`:"BI-RADS待医生确认"}</div>
+      <div class="af-tags">${(active.tags||[]).slice(0,3).map(tag=>`<i>${tag}</i>`).join("")}</div>`;
+    $("#inputBox").placeholder=`当前更新 ${active.id} · 继续描述异常…`;
+  }
+  $$("[data-anatomy-id]").forEach(marker=>marker.onclick=()=>setActiveLesion(marker.dataset.anatomyId,true));
+  syncStructureSummary();
+  syncReportHighlight();
+}
+function setAnatomyFindings(findings,activeId=""){
+  anatomyFindings=findings.map(item=>({...item}));
+  activeFindingId=activeId||findings[0]?.id||"";
+  setAnatomyExpanded(true);
+  renderAnatomy();
+}
+function updateAnatomyFinding(id,patch){
+  const finding=anatomyFindings.find(item=>item.id===id);
+  if(finding)Object.assign(finding,patch);
+  renderAnatomy();
+}
+function syncReportHighlight(){
+  $$("[data-finding]").forEach(line=>line.classList.toggle("context-active",line.dataset.finding===activeFindingId));
+}
+
+/* ── Status helpers ── */
+function syncStructureSummary(){
+  const active=anatomyFindings.find(item=>item.id===activeFindingId);
+  const lesion=$("#gLesion");
+  const lesionCell=$("#gLesionCell");
+  $("#gLeftCell").classList.toggle("is-current-side",active?.side==="left");
+  $("#gRightCell").classList.toggle("is-current-side",active?.side==="right");
+  lesionCell.classList.toggle("following",Boolean(active));
+
+  let value="无";
+  let title="当前无异常结构";
+  let className="";
+  if(active){
+    const index=anatomyFindings.findIndex(item=>item.id===active.id);
+    const typeLabel={mass:"MASS",nme:"NME",node:"淋巴结"}[active.kind]||"异常";
+    value=active.kind==="node"
+      ? `${active.id} · LN`
+      : `${active.id} · ${active.birads?`${active.birads}类`:"待定"}`;
+    title=`当前 ${index+1}/${anatomyFindings.length}：${active.id} ${typeLabel}`;
+    className=active.kind!=="node"&&!active.birads?"hl":"ok";
+  }
+  const changed=lesion.dataset.liveValue!==value;
+  lesion.dataset.liveValue=value;
+  lesion.textContent=value;
+  lesion.className=className;
+  lesion.title=title;
+  if(changed){
+    lesionCell.classList.remove("sync");
+    void lesionCell.offsetWidth;
+    lesionCell.classList.add("sync");
+  }
+}
+
+const WF_LABELS=["基线就绪","异常采集","关键确认","报告就绪","已签发"];
+function setWf(done,cur){
+  $$("#wfDots i").forEach((d,i)=>{d.className=i<done?"done":(i===cur?"cur":"")});
+  const idx=cur>=0?cur:Math.min(done,4);
+  $("#wfLabel").textContent=WF_LABELS[idx]||"";
+  $("#ssStage").textContent=["基线已加载","观察采集中","确认判断中","可签发","已锁定"][idx]||"";
+}
+function setGrid(opts={}){
+  if(opts.scenario!=null){$("#gScenario").textContent=opts.scenario;$("#gScenario").className=opts.scenario==="正常"?"ok":"hl"}
+  if(opts.lesion!=null)$("#gLesion").dataset.all=opts.lesion;
+  if(opts.left!=null){$("#gLeft").textContent=opts.left;$("#gLeft").className=opts.left.includes("待")?"hl":"ok"}
+  if(opts.right!=null){$("#gRight").textContent=opts.right;$("#gRight").className=opts.right.includes("待")?"hl":"ok"}
+  if(opts.pending!=null){$("#gPending").textContent=opts.pending;$("#gPending").className=opts.pending==="0"?"ok":"hl"}
+  if(opts.baseline!=null)$("#gBaseline").textContent=opts.baseline;
+  if(opts.updated!=null){$("#gUpdated").textContent=opts.updated;$("#gUpdated").className=opts.updated==="0段"?"":"hl"}
+  if(opts.sign!=null){$("#gSign").textContent=opts.sign;$("#gSign").className=opts.sign==="未签发"?"":"ok"}
+  syncStructureSummary();
+}
+
+function setAnatomyExpanded(expanded){
+  $("#anatomyContext").classList.toggle("collapsed",!expanded);
+  $("#anatomyToggle").setAttribute("aria-expanded",String(expanded));
+  $("#anatomyContext .ac-body").setAttribute("aria-hidden",String(!expanded));
+}
+
+function setBaselineGrid(){
+  setGrid({
+    scenario:"正常",lesion:"无",left:"1类",right:"1类",
+    pending:backgroundComplete()?"0":"1组",baseline:"9项",updated:"0段",sign:"未签发"
+  });
+}
+
+function showBackgroundPicker(){
+  const picker=$("#inlinePicker");
+  const selection={...breastBackground};
+  picker.innerHTML=`
+    <div class="bg-picker">
+      <div class="ip-label">一次确认乳腺背景 · 不进入对话追问</div>
+      <div class="bg-picker-row"><span>FGT</span><div class="bg-options" data-bg-group="fgt">
+        ${["A","B","C","D"].map(v=>`<button type="button" data-value="${v}">${v}</button>`).join("")}
+      </div></div>
+      <div class="bg-picker-row"><span>BPE程度</span><div class="bg-options" data-bg-group="bpe">
+        ${Object.entries(BACKGROUND_LABELS.bpe).map(([v,label])=>`<button type="button" data-value="${v}">${label}</button>`).join("")}
+      </div></div>
+      <div class="bg-picker-row"><span>分布</span><div class="bg-options" data-bg-group="symmetry">
+        ${Object.entries(BACKGROUND_LABELS.symmetry).map(([v,label])=>`<button type="button" data-value="${v}">${label}</button>`).join("")}
+      </div></div>
+      <button class="bg-save" id="backgroundSave" type="button" disabled>保存乳腺背景</button>
+    </div>`;
+  picker.classList.add("show");
+  picker.scrollIntoView({behavior:"smooth",block:"center"});
+  Object.entries(selection).forEach(([group,value])=>{
+    if(value)picker.querySelector(`[data-bg-group="${group}"] [data-value="${value}"]`)?.classList.add("picked");
+  });
+  const save=$("#backgroundSave");
+  const updateSave=()=>{save.disabled=!(selection.fgt&&selection.bpe&&selection.symmetry)};
+  updateSave();
+  picker.querySelectorAll("[data-bg-group] button").forEach(button=>button.onclick=()=>{
+    const group=button.closest("[data-bg-group]").dataset.bgGroup;
+    picker.querySelectorAll(`[data-bg-group="${group}"] button`).forEach(item=>item.classList.remove("picked"));
+    button.classList.add("picked");
+    selection[group]=button.dataset.value;
+    updateSave();
+  });
+  save.onclick=()=>{
+    breastBackground={...selection};
+    picker.classList.remove("show");
+    setGrid({pending:"0"});
+    setBlocker(null);
+    setBadge("背景已确认","ok");
+    renderReport();
+    const waiters=[...backgroundWaiters];backgroundWaiters=[];
+    waiters.forEach(resolve=>resolve());
+    toast("乳腺背景已确认");
+  };
+}
+
+function requireBackground(){
+  if(backgroundComplete())return Promise.resolve();
+  setBadge("背景待确认","warn");
+  setBlocker("请一次确认乳腺背景");
+  showBackgroundPicker();
+  return new Promise(resolve=>backgroundWaiters.push(resolve));
+}
+function setBadge(text,cls){
+  const b=$("#ssBadge");b.textContent=text;b.className="ss-badge"+(cls?" "+cls:"");
+}
+function setBlocker(text){
+  const b=$("#ssBlocker");
+  if(text){b.textContent="⚠ "+text;b.classList.add("show")}else{b.classList.remove("show")}
+}
+function toast(text,ms=1800){
+  const t=$("#toast");t.textContent=text;t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"),ms/state.speed);
+}
+
+/* ── Dialog helpers ── */
+function clearMsgs(){$("#dzMsgs").innerHTML=`<div class="dz-empty">Agent 就绪 · 描述异常即可；乳腺背景集中确认一次</div>`}
+function addMsg(role,text,meta){
+  const empty=$("#dzMsgs .dz-empty");if(empty)empty.remove();
+  const d=document.createElement("div");
+  d.className="dz-msg "+role;
+  d.innerHTML=text+(meta?`<span class="meta">${meta}</span>`:"");
+  $("#dzMsgs").appendChild(d);
+  $("#dzMsgs").scrollTop=$("#dzMsgs").scrollHeight;
+  // keep max 4 messages visible
+  while($("#dzMsgs").children.length>4)$("#dzMsgs").firstChild.remove();
+}
+async function typeInput(text){
+  const ta=$("#inputBox");ta.value="";
+  for(const ch of text){ta.value+=ch;await sleep(22)}
+}
+
+/* ── Candidate confirmation ── */
+function showCandidateReview(count,target,detail){
+  const picker=$("#inlinePicker");
+  picker.innerHTML=`
+    <div class="candidate-review">
+      <div class="cr-top"><span class="cr-count">${count}</span><div>
+        <strong>确认本轮提取 · ${target}</strong><span>仅确认医生本轮明确描述的内容</span>
+      </div></div>
+      <div class="cr-detail" id="candidateDetail">${detail}</div>
+      <div class="cr-actions">
+        <button class="cr-inspect" id="inspectCandidate" type="button">查看字段</button>
+        <button class="cr-confirm" id="confirmCandidate" type="button">确认本轮候选</button>
+      </div>
+    </div>`;
+  picker.classList.add("show");
+  picker.scrollIntoView({behavior:"smooth",block:"center"});
+  $("#inspectCandidate").onclick=()=>$("#candidateDetail").classList.toggle("show");
+  return new Promise(resolve=>{
+    $("#confirmCandidate").onclick=()=>{
+      picker.classList.remove("show");
+      anatomyFindings.forEach(item=>{item.status="confirmed"});
+      anatomyFindings.filter(item=>item.kind==="node").forEach(item=>{
+        const label=$(`.lm-card[data-id="${item.id}"] .lm-b`);
+        if(label){label.textContent="相关发现 · 已确认";label.classList.add("set")}
+      });
+      renderAnatomy();
+      setTimeout(resolve,250);
+    };
+  });
+}
+
+/* ── BI-RADS Picker (inline in report zone) ── */
+function showPicker(side,opts={}){
+  const picker=$("#inlinePicker");
+  picker.innerHTML=`
+    <div class="ip-label">需要您决定 · ${side}乳 BI-RADS</div>
+    <div class="ip-row">${["0","1","2","3","4","5","6"].map(v=>`<button data-v="${v}">${v}</button>`).join("")}</div>
+    <div class="ip-basis${opts.basis?" show":""}">${opts.basis||""}</div>
+    <div class="ip-mgmt" id="ipMgmt">${["超声引导活检","MRI引导活检","钼靶引导","外科定位"].map(c=>`<button data-c="${c}">${c}</button>`).join("")}</div>`;
+  picker.classList.add("show");
+  picker.scrollIntoView({behavior:"smooth",block:"center"});
+  return new Promise(resolve=>{
+    picker.querySelectorAll(".ip-row button").forEach(b=>b.onclick=()=>{
+      picker.querySelectorAll(".ip-row button").forEach(x=>x.classList.remove("picked"));
+      b.classList.add("picked");
+      const v=b.dataset.v;
+      if(v==="4"||v==="5"){
+        const mgmt=$("#ipMgmt");mgmt.classList.add("show");
+        mgmt.querySelectorAll("button").forEach(c=>c.onclick=()=>{
+          mgmt.querySelectorAll("button").forEach(x=>x.classList.remove("picked"));
+          c.classList.add("picked");
+          setTimeout(()=>{picker.classList.remove("show");resolve({birads:v,mgmt:c.dataset.c})},400);
+        });
+      }else{setTimeout(()=>{picker.classList.remove("show");resolve({birads:v,mgmt:null})},350)}
+    });
+  });
+}
+
+/* ── Lesion strip ── */
+function buildLesions(data){
+  const strip=$("#lesionStrip");
+  strip.innerHTML=data.map(c=>`<button class="lm-card" type="button" data-id="${c.id}"><span class="lm-id">${c.id}</span><div class="lm-info">${c.info}</div><div class="lm-b${c.kind==="node"?" set":""}">${c.kind==="node"?"相关发现 · 待确认":"BI-RADS 待定"}</div></button>`).join("");
+  [...strip.children].forEach((c,i)=>setTimeout(()=>c.classList.add("in"),i*180));
+  $$(".lm-card").forEach(card=>card.onclick=()=>setActiveLesion(card.dataset.id,true));
+}
+function setActiveLesion(id,scroll=false){
+  activeFindingId=id;
+  $$(".lm-card").forEach(c=>c.classList.toggle("active",c.dataset.id===id));
+  renderAnatomy();
+  if(scroll){
+    document.querySelector(`[data-finding="${id}"]`)?.scrollIntoView({behavior:"smooth",block:"center"});
+  }
+}
+function setLesionBirads(id,v){
+  const el=$(`.lm-card[data-id="${id}"] .lm-b`);
+  if(el){el.textContent="BI-RADS "+v+"类";el.classList.add("set")}
+  updateAnatomyFinding(id,{birads:v,status:"confirmed"});
+}
+
+/* ── Signoff ── */
+function showSignoff(){
+  const zone=$("#signoffZone");
+  zone.innerHTML='<button class="sz-btn" id="szBtn" type="button">签发报告</button>';
+  zone.classList.add("show");
+  zone.scrollIntoView({behavior:"smooth",block:"center"});
+}
+function waitSign(){
+  return new Promise(resolve=>{
+    $("#szBtn").onclick=resolve;
+  });
+}
+function doSign(){
+  const zone=$("#signoffZone");
+  zone.innerHTML='<div class="signed-compact" role="status" aria-live="polite">✓ 已签发 · 报告锁定</div>';
+  setBadge("已签发","done");setWf(5,-1);setBlocker(null);
+  setGrid({sign:"已签发"});
+}
+
+/* ── Fragment buffer ── */
+function showFrags(frags){
+  const fm=$("#fragMini");
+  fm.innerHTML=`<span style="font-weight:800">缓冲:</span>`+frags.map(f=>`<span class="ftag${f.noise?" noise":""}">${f.text}</span>`).join("");
+  fm.classList.add("show");
+}
+function mergeFrags(result){
+  const fm=$("#fragMini");
+  fm.innerHTML+=`<span class="fmerge">→ 聚合: ${result}</span>`;
+}
+function hideFrags(){$("#fragMini").classList.remove("show");$("#fragMini").innerHTML=""}
+
+/* ═══════════════ Scenarios ═══════════════ */
+async function scenarioA(){
+  renderReport();setWf(1,1);setBadge("背景待确认","warn");
+  setBaselineGrid();
+  toast("正常结构基线已加载");
+  await sleep(700);
+  await requireBackground();
+  setBadge("正常报告","ok");
+  await sleep(900);
+  setWf(3,3);setGrid({sign:"可签发"});
+  showSignoff();
+  await waitSign();doSign();
+  setGrid({sign:"已签发"});
+  await sleep(1500);
+}
+
+async function scenarioB(){
+  const input="右乳10点、距乳头4cm、12×8×10mm不规则肿块，毛刺，不均匀强化，早期快速，延迟廓清，DWI高信号，ADC 0.92";
+  renderReport();setWf(1,1);setBadge("背景待确认","warn");
+  setBaselineGrid();
+  await sleep(700);
+  await requireBackground();
+  setBadge("正常基线");
+  await sleep(700);
+
+  // doctor speaks
+  await typeInput(input);await sleep(500);
+  $("#inputBox").value="";
+  addMsg("user",input);
+  setWf(1,2);
+  await sleep(800);
+
+  // agent extracts
+  addMsg("agent","已提取14个字段 → 报告已更新","qwen36-27b · 0.94");
+  report.finding=[
+    "右乳10点方向，距乳头约4 cm，见一肿块（M1），大小约12×8×10 mm。",
+    "形状不规则，边缘毛刺，内部不均匀强化，早期快速强化，延迟期廓清型。DWI高信号，ADCmin≈0.92×10⁻³ mm²/s。",
+    "左乳未见可疑肿块或非肿块强化。乳头、皮肤、胸肌及胸壁未见明确受累征象。"
+  ];
+  report.conclusion=["M1：右乳肿块，BI-RADS 待医生确认。","左乳BI-RADS 1类。"];
+  report.mgmt=["管理建议待医生确认。"];
+  origin.finding="upd";origin.conclusion="upd";origin.mgmt="upd";
+  renderReport(["finding","conclusion","mgmt"]);
+  setAnatomyFindings([{
+    id:"M1",kind:"mass",side:"right",clock:10,distance:"4 cm",depth:"中1/3",
+    size:"12×8×10 mm",tags:["不规则","毛刺","快进-廓清"],status:"pending"
+  }],"M1");
+  buildLesions([{id:"M1",kind:"mass",info:"右乳10点·12×8×10mm"}]);
+  setActiveLesion("M1");
+  setGrid({scenario:"异常/单灶",lesion:"M1",right:"待确认",pending:"14",baseline:"9项",updated:"3段"});
+  setBadge("待确认","warn");setWf(2,2);
+  setBlocker("请确认M1本轮提取内容");
+  toast("报告与解剖定位已同步更新");
+  await sleep(1800);
+
+  await showCandidateReview(14,"M1 右乳肿块","侧别、钟点、距乳头、三维尺寸、形状、边缘、内部强化、动力学及DWI/ADC。");
+  setGrid({pending:"1"});setBlocker("M1 右乳 BI-RADS 未确认");
+
+  // BI-RADS pick
+  const pick=await showPicker("右",{basis:"类别由医生结合全部影像与临床资料确认；系统不自动定类。"});
+  report.conclusion=[`M1：右乳肿块，BI-RADS ${pick.birads}类。`,"左乳BI-RADS 1类。"];
+  report.mgmt=[pick.mgmt?`建议${pick.mgmt}。`:"按相应风险分层及筛查指南常规随访。"];
+  setLesionBirads("M1",pick.birads);
+  renderReport(["conclusion","mgmt"]);
+  setGrid({right:pick.birads+"类",pending:"0",sign:"可签发"});
+  setBadge("就绪","ok");setWf(3,3);setBlocker(null);
+  addMsg("agent",`BI-RADS ${pick.birads}类已记录${pick.mgmt?"，建议"+pick.mgmt:""}`);
+  await sleep(1200);
+
+  // signoff
+  showSignoff();
+  await waitSign();doSign();
+  setGrid({sign:"已签发"});
+  await sleep(1500);
+}
+
+async function scenarioC(){
+  const r1="右乳10点肿块12mm毛刺廓清；左乳2点NME节段性簇状环形强化15mm；右腋窝LN皮质增厚12×8mm";
+  const r2="补充：右乳DWI高信号，ADC 0.88";
+  renderReport();setWf(1,1);setBadge("背景待确认","warn");
+  setBaselineGrid();
+  await sleep(700);
+  await requireBackground();
+  setBadge("正常基线");
+  await sleep(700);
+
+  await typeInput(r1);await sleep(400);
+  $("#inputBox").value="";addMsg("user",r1);setWf(1,2);
+  await sleep(800);
+
+  addMsg("agent","已识别3个记录：M1(右乳MASS) N1(左乳NME) LN1(右腋窝)","qwen36-27b · 21字段");
+  report.finding=[
+    "右乳10点方向见一肿块（M1），约12 mm，边缘毛刺，延迟期廓清型。",
+    "左乳2点方向见非肿块强化（N1），约15 mm，节段性分布，簇状环形强化。",
+    "右腋窝见异常淋巴结（LN1），约12×8 mm，皮质不对称增厚。",
+    "乳头、皮肤、胸肌及胸壁未见明确受累征象。"
+  ];
+  report.conclusion=["M1：右乳肿块，BI-RADS 待医生确认。","N1：左乳NME，BI-RADS 待医生确认。"];
+  report.mgmt=["管理建议待医生确认。"];
+  origin.finding="upd";origin.conclusion="upd";origin.mgmt="upd";
+  renderReport(["finding","conclusion","mgmt"]);
+  buildLesions([
+    {id:"M1",kind:"mass",info:"右乳10点·12mm·毛刺"},
+    {id:"N1",kind:"nme",info:"左乳2点·15mm·NME"},
+    {id:"LN1",kind:"node",info:"右腋窝·12×8mm"}
+  ]);
+  setAnatomyFindings([
+    {id:"M1",kind:"mass",side:"right",clock:10,size:"12 mm",tags:["毛刺","廓清"],status:"pending"},
+    {id:"N1",kind:"nme",side:"left",clock:2,size:"15 mm",tags:["节段性","簇状环形"],status:"pending"},
+    {id:"LN1",kind:"node",side:"right",region:"右腋窝",size:"12×8 mm",tags:["皮质不对称增厚"],status:"pending"}
+  ],"M1");
+  setActiveLesion("M1");
+  setGrid({scenario:"异常/多灶",lesion:"M1+N1+LN1",left:"待确认",right:"待确认",pending:"21",baseline:"7项",updated:"3段"});
+  setBadge("待确认","warn");setWf(2,2);
+  setBlocker("请确认本轮21个候选字段");
+  await sleep(1800);
+
+  await showCandidateReview(21,"M1 + N1 + LN1","M1和N1的定位、尺寸与形态，以及LN1的区域、大小和皮质表现。");
+  setGrid({pending:"2"});setBlocker("M1 右乳 BI-RADS 未确认");
+
+  // M1 picker
+  setActiveLesion("M1");
+  const p1=await showPicker("右",{basis:"类别由医生结合全部影像与临床资料确认；系统不自动定类。"});
+  report.conclusion[0]=`M1：右乳肿块，BI-RADS ${p1.birads}类。`;
+  report.mgmt=p1.mgmt?[`M1 建议${p1.mgmt}。`]:[];
+  setLesionBirads("M1",p1.birads);
+  renderReport(["conclusion","mgmt"]);
+  setGrid({right:p1.birads+"类",pending:"1"});
+  setBlocker("N1 左乳 BI-RADS 未确认");
+  await sleep(1000);
+
+  // supplement
+  setActiveLesion("M1");
+  await typeInput(r2);await sleep(300);
+  $("#inputBox").value="";addMsg("user",r2);
+  addMsg("agent","M1 补充：DWI高信号、ADC 0.88","增量+2字段");
+  report.finding[0]="右乳10点方向见一肿块（M1），约12 mm，边缘毛刺，延迟期廓清型。DWI高信号，ADCmin≈0.88×10⁻³ mm²/s。";
+  updateAnatomyFinding("M1",{tags:["毛刺","廓清","DWI+ · ADC 0.88"]});
+  renderReport(["finding"]);
+  await sleep(1200);
+  setGrid({pending:"3"});setBlocker("请确认M1增量补充的2个候选字段");
+  await showCandidateReview(2,"M1 增量补充","DWI高信号、ADCmin 0.88×10⁻³ mm²/s。");
+  setGrid({pending:"1"});setBlocker("N1 左乳 BI-RADS 未确认");
+
+  // N1 picker
+  setActiveLesion("N1");
+  const p2=await showPicker("左",{basis:"类别由医生结合全部影像与临床资料确认；系统不自动定类。"});
+  report.conclusion[1]=`N1：左乳NME，BI-RADS ${p2.birads}类。`;
+  if(p2.mgmt)report.mgmt.push(`N1 建议${p2.mgmt}。`);
+  if(!report.mgmt.length)report.mgmt=["按相应风险分层及筛查指南常规随访。"];
+  setLesionBirads("N1",p2.birads);
+  renderReport(["conclusion","mgmt"]);
+  setGrid({left:p2.birads+"类",pending:"0",sign:"可签发"});
+  setBadge("就绪","ok");setWf(3,3);setBlocker(null);
+  await sleep(1200);
+
+  showSignoff();
+  await waitSign();doSign();
+  setGrid({sign:"已签发"});
+  await sleep(1500);
+}
+
+async function scenarioD(){
+  const frags=[
+    {text:"右乳…嗯…那个",noise:true},{text:"10点",noise:false},
+    {text:"肿块",noise:false},{text:"毛刺",noise:false},
+    {text:"12乘8",noise:false},{text:"廓清",noise:false}
+  ];
+  renderReport();setWf(1,1);setBadge("背景待确认","warn");
+  setBaselineGrid();
+  toast("碎片输入模式 · 边看边说");
+  await sleep(700);
+  await requireBackground();
+  setBadge("正常基线");
+  await sleep(700);
+
+  // fragments in
+  setWf(1,2);
+  for(const f of frags){
+    await typeInput(f.text);await sleep(300);
+    $("#inputBox").value="";
+    addMsg("user",f.text);
+    showFrags(frags.slice(0,frags.indexOf(f)+1));
+    await sleep(450);
+  }
+  await sleep(800);
+
+  // merge
+  mergeFrags("右乳 10点 肿块 毛刺 12×8 廓清");
+  await sleep(1200);
+  hideFrags();
+
+  addMsg("agent","已提取6字段（碎片输入·置信度0.72）\n未描述字段保持为空，不推断","qwen36-27b");
+  report.finding=[
+    "右乳10点方向见一肿块（M1），大小约12×8 mm，边缘毛刺，延迟期廓清型。",
+    "（形状、内部强化特征未描述，待补充。）",
+    "左乳未见可疑肿块或非肿块强化。"
+  ];
+  report.conclusion=["M1：右乳肿块，BI-RADS 待医生确认。","左乳BI-RADS 1类。"];
+  report.mgmt=["管理建议待医生确认。"];
+  origin.finding="upd";origin.conclusion="upd";origin.mgmt="upd";
+  renderReport(["finding","conclusion","mgmt"]);
+  setAnatomyFindings([{
+    id:"M1",kind:"mass",side:"right",clock:10,size:"12×8 mm",
+    tags:["毛刺","廓清","部分属性缺失"],status:"pending"
+  }],"M1");
+  buildLesions([{id:"M1",kind:"mass",info:"右乳10点·12×8mm"}]);
+  setActiveLesion("M1");
+  setGrid({scenario:"异常/碎片",lesion:"M1",right:"待确认",pending:"6",baseline:"9项",updated:"3段"});
+  setBadge("待确认","warn");setWf(2,2);
+  setBlocker("请确认M1碎片聚合的6个候选字段");
+  await sleep(1800);
+
+  await showCandidateReview(6,"M1 碎片聚合","右乳、10点、肿块、12×8 mm、毛刺、廓清；未描述字段保持为空。");
+  setGrid({pending:"1"});setBlocker("M1 右乳 BI-RADS 未确认（碎片输入）");
+  const pick=await showPicker("右",{basis:"碎片候选已由医生确认；类别仍须医生结合完整影像决定。"});
+  report.conclusion=[`M1：右乳肿块，BI-RADS ${pick.birads}类。`,"左乳BI-RADS 1类。"];
+  report.mgmt=[pick.mgmt?`建议${pick.mgmt}。`:"按相应风险分层及筛查指南常规随访。"];
+  setLesionBirads("M1",pick.birads);
+  renderReport(["conclusion","mgmt"]);
+  setGrid({right:pick.birads+"类",pending:"0",sign:"可签发"});
+  setBadge("就绪","ok");setWf(3,3);setBlocker(null);
+  addMsg("agent",`BI-RADS ${pick.birads}类 · 碎片输入已完整确认`);
+  await sleep(1200);
+
+  showSignoff();
+  await waitSign();doSign();
+  setGrid({sign:"已签发"});
+  await sleep(1500);
+}
+
+/* ═══════════════ Runner ═══════════════ */
+const SCENARIOS={A:scenarioA,B:scenarioB,C:scenarioC,D:scenarioD};
+function resetAll(){
+  state.runId+=1;state.playing=false;
+  $("#playBtn").textContent="▶";
+  resetReport();setAnatomyFindings([]);renderReport();clearMsgs();hideFrags();
+  $("#inputBox").value="";
+  $("#inlinePicker").classList.remove("show");$("#inlinePicker").innerHTML="";
+  $("#lesionStrip").innerHTML="";
+  $("#signoffZone").classList.remove("show");$("#signoffZone").innerHTML="";
+  setWf(0,0);setBadge("背景待确认","warn");setBlocker(null);
+  setBaselineGrid();
+}
+$("#playBtn").onclick=()=>{
+  if(state.playing)return;
+  state.playing=true;
+  const runId=++state.runId;
+  $("#playBtn").textContent="⏸";
+  SCENARIOS[state.scenario]().then(()=>{
+    if(runId!==state.runId)return;
+    state.playing=false;$("#playBtn").textContent="▶";
+    toast("演示完成 · 可切换场景");
+  }).catch(error=>{
+    if(error.message==="DEMO_ABORT")return;
+    console.error(error);
+    if(runId===state.runId){
+      state.playing=false;$("#playBtn").textContent="▶";
+      toast("演示中断，请重试");
+    }
+  });
+};
+$("#restartBtn").onclick=resetAll;
+$("#speedBtn").onclick=()=>{
+  state.speed=state.speed===1?2:state.speed===2?4:1;
+  $("#speedBtn").textContent=state.speed+"×";
+};
+$$("#scenarioSwitch button").forEach(b=>b.onclick=()=>{
+  $$("#scenarioSwitch button").forEach(x=>x.classList.remove("active"));
+  b.classList.add("active");state.scenario=b.dataset.s;resetAll();
+});
+$("#anatomyToggle").onclick=()=>{
+  setAnatomyExpanded($("#anatomyContext").classList.contains("collapsed"));
+};
+$("#examToggle").onclick=()=>{
+  const collapsed=$("#examContext").classList.toggle("collapsed");
+  $("#examToggle").setAttribute("aria-expanded",String(!collapsed));
+  $("#examContext .ec-body").setAttribute("aria-hidden",String(collapsed));
+};
+
+/* voice btn demo */
+$("#voiceBtn").onclick=function(){
+  this.classList.toggle("recording");
+  if(this.classList.contains("recording"))toast("语音录制中…（演示）",1200);
+};
+
+/* init */
+resetAll();
+</script>
+</body>
+</html>

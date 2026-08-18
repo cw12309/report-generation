@@ -18,11 +18,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-try:
-    from config import get_breast_mri_base_url
-    DEFAULT_BASE_URL = get_breast_mri_base_url()
-except ImportError:
-    DEFAULT_BASE_URL = "http://127.0.0.1:4173"
+from config import get_breast_mri_base_url
 
 DEFAULT_TIMEOUT = 10.0
 AGENT_TIMEOUT = 90.0
@@ -31,7 +27,9 @@ AGENT_TIMEOUT = 90.0
 class BreastMRIClient:
     """breast-mri-report Node 服务的 Python 客户端。"""
 
-    def __init__(self, base_url: str = DEFAULT_BASE_URL):
+    def __init__(self, base_url: str = None):
+        if base_url is None:
+            base_url = get_breast_mri_base_url()
         self._base_url = base_url.rstrip("/")
 
     # ------------------------------------------------------------------

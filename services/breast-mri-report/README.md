@@ -22,15 +22,17 @@ python start.py --open
 
 ## 环境变量
 
-| 变量                  | 说明                                             | 默认值      |
-| --------------------- | ------------------------------------------------ | ----------- |
-| `PORT`                | 服务端口                                         | `4173`      |
-| `HOST`                | 监听地址                                         | `127.0.0.1` |
-| `VLLM_BASE_URL`       | LLM API 地址（自动从主项目 config.py 读取）      | —           |
-| `VLLM_MODEL`          | LLM 模型名（自动从主项目 config.py 读取）        | —           |
-| `VLLM_API_KEY`        | LLM API Key（可选，自动从主项目 config.py 读取） | —           |
-| `BASIC_AUTH_USER`     | Basic Auth 用户名（可选，不配则无认证）          | —           |
-| `BASIC_AUTH_PASSWORD` | Basic Auth 密码（配了 USER 必须同时配）          | —           |
+| 变量                  | 说明                                             | 默认值                                       |
+| --------------------- | ------------------------------------------------ | -------------------------------------------- |
+| `PORT`                | 服务端口，由启动器注入                           | 来自主项目 `config.yml` 的 `breast_mri.port` |
+| `HOST`                | 监听地址，由启动器注入                           | 来自主项目 `config.yml` 的 `breast_mri.host` |
+| `VLLM_BASE_URL`       | LLM API 地址（自动从主项目 config.py 读取）      | —                                            |
+| `VLLM_MODEL`          | LLM 模型名（自动从主项目 config.py 读取）        | —                                            |
+| `VLLM_API_KEY`        | LLM API Key（可选，自动从主项目 config.py 读取） | —                                            |
+| `BASIC_AUTH_USER`     | Basic Auth 用户名（可选，不配则无认证）          | —                                            |
+| `BASIC_AUTH_PASSWORD` | Basic Auth 密码（配了 USER 必须同时配）          | —                                            |
+
+> **注意：** 不要直接运行 `serve.mjs`。`PORT` 和 `HOST` 由启动器（`launcher.py` 或 `start.py`）从主项目配置注入，直接运行会因缺少环境变量而报错退出。
 
 ## 依赖
 

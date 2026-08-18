@@ -37,19 +37,29 @@ scripts/serve.mjs          ← HTTP 入口，路由分发
 ## 配置来源
 
 ```
+主项目 config.yml
+  └── breast_mri:
+        host: "127.0.0.1"
+        port: 4173
+              │
+              ▼
 主项目 config.py
-  ├── get_breast_mri_llm_base_url()  → VLLM_BASE_URL（已规范化为 /v1 格式）
-  ├── get_breast_mri_llm_model()     → VLLM_MODEL
-  └── get_breast_mri_llm_api_key()   → VLLM_API_KEY
+  ├── _env_or_config()              ← 优先级：.env 非空 → config.yml → 报错
+  ├── get_breast_mri_host()         → HOST
+  ├── get_breast_mri_port()         → PORT（校验 1-65535）
+  ├── get_breast_mri_llm_base_url() → VLLM_BASE_URL（已规范化为 /v1 格式）
+  ├── get_breast_mri_llm_model()    → VLLM_MODEL
+  └── get_breast_mri_llm_api_key()  → VLLM_API_KEY
          │
          ▼
     start.py / launcher.py（注入环境变量）
          │
          ▼
-    Node process.env.VLLM_BASE_URL / VLLM_MODEL / VLLM_API_KEY
+    Node process.env.PORT / HOST / VLLM_BASE_URL / VLLM_MODEL / VLLM_API_KEY
          │
          ▼
-    agentService.mjs（无硬编码默认值，配置缺失时抛错）
+    serve.mjs（无硬编码默认值，PORT/HOST 缺失时直接报错退出）
+    agentService.mjs（无硬编码默认值，LLM 配置缺失时 Agent 功能不可用）
 ```
 
 ## 启动方式
@@ -58,8 +68,9 @@ scripts/serve.mjs          ← HTTP 入口，路由分发
 | ------------ | -------------------------------------------------- | -------------------------------------- |
 | 自动（推荐） | 启动主项目 FastAPI                                 | server.py startup 自动拉起 Node 子进程 |
 | 手动         | `cd services/breast-mri-report && python start.py` | 独立调试用                             |
-| Node         | `cd services/breast-mri-report && npm start`       | 直接 Node 启动                         |
 | Docker       | `docker compose -f compose.production.yml up`      | 容器化部署                             |
+
+> **注意：** 不要直接运行 `npm start` 或 `node scripts/serve.mjs`。`PORT` 和 `HOST` 由启动器从主项目配置注入，直接运行会因缺少环境变量而报错退出。
 
 ## 与主项目的关系
 
@@ -76,4 +87,6 @@ scripts/serve.mjs          ← HTTP 入口，路由分发
 - 纯 Node.js 原生模块，无 npm 依赖
 - 前端为原生 JS + ES Module，无框架依赖
 - `src/domain/` 可被 Node 和浏览器直接 import
-- 配置缺失时 Agent 功能不可用，但服务本身仍可启动（健康检查正常）
+- PORT/HOST 由启动器注入，`serve.mjs` 无硬编码默认值，缺失时直接退出
+- LLM 配置缺失时 Agent 功能不可用，但服务本身仍可启动（健康检查正常）
+- 端口被未知程序占用时抛出 `BREAST_MRI_PORT_CONFLICT`，不会自动 kill 进程

@@ -31,8 +31,6 @@ logger = logging.getLogger(__name__)
 SERVICE_DIR = Path(__file__).resolve().parent
 MAIN_PROJECT_ROOT = SERVICE_DIR.parent.parent
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 4173
 STARTUP_TIMEOUT_SEC = 15
 READY_POLL_INTERVAL_SEC = 0.5
 
@@ -41,8 +39,16 @@ class BreastMRILauncher:
     """管理 breast-mri-report Node 服务的启动、就绪检测和停止。"""
 
     def __init__(self, host=None, port=None):
-        self._host = host or os.environ.get("BREAST_MRI_HOST", DEFAULT_HOST)
-        self._port = port or int(os.environ.get("BREAST_MRI_PORT", str(DEFAULT_PORT)))
+        try:
+            sys.path.insert(0, str(MAIN_PROJECT_ROOT))
+            from app.config import get_breast_mri_host, get_breast_mri_port
+        except ImportError as e:
+            raise RuntimeError(
+                "无法加载主项目配置模块，请确保在项目根目录下运行"
+            ) from e
+
+        self._host = host or get_breast_mri_host()
+        self._port = port or get_breast_mri_port()
         self._proc = None
         self._stdout_thread = None
         self._running = False

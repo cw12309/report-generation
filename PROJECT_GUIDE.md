@@ -29,22 +29,24 @@
 ## 3. 整体系统架构
 
 ```text
-                          ┌──────────────────────────┐
-                          │ Frontend                 │
-                          │ HTML + CSS + browser JS  │
-                          └────────────┬─────────────┘
-                                       │ same-origin /api/* + SSE
-                                       ▼
-External Client ── global/deployment Bearer ──► ┌──────────────────────┐
-                              │ Gateway              │
-                              │ auth + stream proxy  │
-                              └──────────┬───────────┘
-                                         │ HTTP to :8001
-                                         ▼
-                              ┌──────────────────────┐
-                              │ Worker / FastAPI     │
-                              │ routes + runtime hub │
-                              └───────┬──────┬───────┘
+                          ┌──────────────────────────────────────────────────┐
+                          │ Frontend                                         │
+                          │ HTML + CSS + browser JS                         │
+                          │ Workspace: Agent Chat Tab │ Breast MRI Tab      │
+                          │           (F12 /api/*)    │ (iframe → Node)     │
+                          └────────┬─────────────────┬──────────────────────┘
+                                   │ SSE + /api/*    │ same-origin /breast-mri/*
+                                   ▼                 ▼
+External Client ── global/deployment Bearer ──► ┌──────────────────────┐  ┌──────────────────────┐
+                              │ Gateway              │  │ Worker FastAPI        │
+                              │ auth + stream proxy  │  │ /breast-mri/* proxy   │
+                              └──────────┬───────────┘  └───────────┬──────────┘
+                                         │ HTTP to :8001             │ HTTP to Node port
+                                         ▼                           ▼
+                              ┌──────────────────────┐  ┌──────────────────────┐
+                              │ Worker / FastAPI     │  │ Breast MRI Node.js   │
+                              │ routes + runtime hub │  │ Express + AI SDK     │
+                              └───────┬──────┬───────┘  └──────────────────────┘
                                       │      │
       Browser/Deployment Stateful Chat ─┘      └─ KB / Eval / Config APIs
                                       │
@@ -87,7 +89,9 @@ External model services: Chat LLM / Rewrite-Planning LLM / Embedding / Rerank
 
 `edit_report` 分支内部还有一条独立安全链：`Session Last Report → Edit LLM → Canonical Schema → 关键事实检查 → LLM Judge → Final`。任一校验失败时只允许一次 Edit Repair，然后从 Schema 开始重新检查；它不经过 RAG，也不把成功结果交回 Main LLM 改写。
 
-各层存在的理由：Gateway 隔离公开鉴权与业务运行时；Worker 统一管理 HTTP、SSE 和共享资源；Pipeline 负责一轮 Agent 编排；Tools 把业务动作变成明确边界；RAG 只解决知识库参考选择；Memory 只解决当前会话上下文；SQLite 保存关系型状态与原文；Milvus 保存在线向量检索数据；Data Pipeline 保证两类存储和人类可读中间态一致；Eval 用稳定 Chunk ID 衡量检索结果。
+各层存在的理由：Gateway 隔离公开鉴权与业务运行时；Worker 统一管理 HTTP、SSE 和共享资源，并通过 `/breast-mri/*` 代理路由将请求转发到后端 Node.js 服务；Pipeline 负责一轮 Agent 编排；Tools 把业务动作变成明确边界；RAG 只解决知识库参考选择；Memory 只解决当前会话上下文；SQLite 保存关系型状态与原文；Milvus 保存在线向量检索数据；Data Pipeline 保证两类存储和人类可读中间态一致；Eval 用稳定 Chunk ID 衡量检索结果。
+
+Breast MRI 报告工作台是一个独立的 Node.js (Express + AI SDK) 微服务，位于 `services/breast-mri-report/`。它通过 iframe 嵌入前端 Workspace 的"乳腺 MRI"Tab，由 FastAPI 的 `/breast-mri/*` 代理路由转发请求。服务由 `launcher.py` 管理生命周期（启动/复用/健康检查），配置统一来自 `config.yml` 的 `breast_mri` 块，端口通过 `.env` 的 `BREAST_MRI_PORT` 覆盖。该服务与 Agent Pipeline 完全解耦，不访问 RAG、Memory、SQLite 或 Milvus。
 
 ## 4. 从用户输入到最终结果：完整生命周期
 
@@ -193,20 +197,20 @@ Worker 把 `front/` 挂载到 `/static`，`/` 返回 `index.html`。静态资源
 
 ### 6.2 页面结构
 
-| 页面           | DOM 容器          | 真实职责                                                            |
-| -------------- | ----------------- | ------------------------------------------------------------------- |
-| Agent          | `pageAgent`       | KB 选择、聊天、思考步骤、参考切片、Memory 面板和本地历史            |
-| Knowledge Base | `pageKB`          | 上传、构建、轮询进度、切片详情、删除                                |
-| API 上线       | `pageDeployments` | Deployment 创建/详情/编辑/启停/删除、Key 轮换、健康度与外部接入示例 |
-| Eval           | `pageEval`        | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测                 |
-| Monitor        | `pageMonitor`     | 后端会话列表、Memory 查看和 Session 删除                            |
-| Config         | `pageConfig`      | 模型/检索/系统配置和模型连通性测试                                  |
+| 页面           | DOM 容器          | 真实职责                                                                                                                                  |
+| -------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Workspace      | `pageWorkspace`   | 通用 Agent 对话（KB 选择、聊天、思考步骤、参考切片、Memory 面板、本地历史）和乳腺 MRI 工作台（iframe 嵌入 Node.js 微服务），通过 Tab 切换 |
+| Knowledge Base | `pageKB`          | 上传、构建、轮询进度、切片详情、删除                                                                                                      |
+| API 上线       | `pageDeployments` | Deployment 创建/详情/编辑/启停/删除、Key 轮换、健康度与外部接入示例                                                                       |
+| Eval           | `pageEval`        | 数据集 CRUD、级联筛选、自动生成、运行/取消/恢复评测                                                                                       |
+| Monitor        | `pageMonitor`     | 后端会话列表、Memory 查看和 Session 删除                                                                                                  |
+| Config         | `pageConfig`      | 模型/检索/系统配置和模型连通性测试                                                                                                        |
 
-页面切换依赖 `data-page` 与 DOM class，不改变 URL，没有前进/后退路由语义。
+页面切换依赖 `data-page` 与 DOM class，不改变 URL，没有前进/后退路由语义。Workspace 内部的 Tab 切换使用 `workspace-tabs` 按钮组，不涉及页面级切换。
 
 ```text
 Sidebar
-  ├─ Agent            → pageAgent
+  ├─ Workspace        → pageWorkspace
   ├─ Knowledge Base   → pageKB
   ├─ API 上线         → pageDeployments
   ├─ Eval             → pageEval
@@ -264,6 +268,7 @@ API 上线 UI 不把明文 Deployment Key 写入 LocalStorage、SessionStorage�
 ### 6.7 修改前端时去哪里
 
 - 页面结构、表单、ID：`front/index.html`。
+- Workspace Tab 切换（Agent Chat / 乳腺 MRI）：`front/app.js` 中 `workspace-tabs` 事件绑定和 `breast-mri-panel` iframe 管理。
 - Chat/SSE/API/LocalStorage：`front/app.js`。
 - 布局、状态和响应式：`front/style.css`。
 - Deployment 页面与密钥安全：`pageDeployments`、`bindApiDeploymentInteractions()`、一次性 Key 弹窗和 API Usage 示例。
@@ -284,7 +289,7 @@ Gateway 与 Worker 分离让公开进程不导入模型或数据库代码，也�
 
 ## 8. Worker：整个后端运行中心
 
-`app/chat/server.py` 是高连接度运行中心。它创建 FastAPI、SessionStore、评测锁和 Deployment conversation 锁，启动时校验 Milvus Schema，挂载前端，并注册 Chat、Deployment、Session、KB、Config、Eval 和 Internal API。
+`app/chat/server.py` 是高连接度运行中心。它创建 FastAPI、SessionStore、评测锁和 Deployment conversation 锁，启动时校验 Milvus Schema，挂载前端，并注册 Chat、Deployment、Session、KB、Config、Eval 和 Internal API。此外，它还负责任启动 Breast MRI 微服务（`start_breast_mri_service()`），并注册 `/breast-mri/*` 代理路由，将请求转发到独立的 Node.js 服务。
 
 它的合理职责是 HTTP/SSE 边界和资源生命周期；当前它还直接编排知识库后台构建、模型连通性测试、评测后台 task 和 Session 重建，所以任何跨模块契约变化都容易汇聚到这里。修改它时通常要联查 Pydantic Schema、Frontend、SessionStore 和实际业务模块。
 
@@ -892,7 +897,19 @@ URI/token/collection 决定在线与离线向量存储。`server.DB_PATH/COLLECT
 
 `API_SECRET_KEY` 控制 Public Bearer；`WORKER_BASE_URL/TIMEOUT` 控制上游；`ALLOW_LEGACY_PUBLIC_PROXY` 控制 Legacy 来源限制。这些在 Gateway 进程启动时读取。
 
-`POST /api/config` 会写 YAML 并 `reload_config()`，但多个模块已经缓存常量，所以“保存并生效”不是全量热重载保证。修改 active model、collection、top-k 后应重启 Worker；Gateway 环境变化需要重启 Gateway。
+`POST /api/config` 会写 YAML 并 `reload_config()`，但多个模块已经缓存常量，所以"保存并生效"不是全量热重载保证。修改 active model、collection、top-k 后应重启 Worker；Gateway 环境变化需要重启 Gateway。
+
+### Breast MRI 服务
+
+`config.yml` 的 `breast_mri` 块是 host/port 的唯一默认值来源：
+
+```yaml
+breast_mri:
+  host: "127.0.0.1"
+  port: 4173
+```
+
+优先级：`.env` 非空值（`BREAST_MRI_HOST`、`BREAST_MRI_PORT`）→ `config.yml` → 配置缺失错误。Python 业务模块不自行维护默认值，统一通过 `get_breast_mri_host()` / `get_breast_mri_port()` / `get_breast_mri_base_url()` 读取。端口必须为 1-65535 的整数，非法值直接报错，不静默 fallback。Breast MRI 配置错误不会拖垮主项目：启动失败时该服务标记为 unavailable，Agent/KB/Eval/Deployment 等其他模块继续工作。
 
 ## 46. Online Data Flow
 
@@ -997,7 +1014,8 @@ front/* ─HTTP/SSE─► gateway.py ─HTTP─► chat/server.py
                                          │
                                          ├─► memory/session_store.py ─► SQLite
                                          ├─► data_pipeline/ ─► Markdown/SQLite/Milvus
-                                         └─► eval/ ─► rag/retrieval + llm_client + SQLite
+                                         ├─► eval/ ─► rag/retrieval + llm_client + SQLite
+                                         └─► /breast-mri/* proxy ─► services/breast-mri-report/ (Node.js)
 
 tools/rag_tool.py ─► pipeline.search_reports ─► rag/planner/navigation/retrieval
                                              ├─► Embedding
@@ -1007,95 +1025,101 @@ data_pipeline/build_vector_db.py ─► rag/sparse_vector.py
 eval/run_retrieval_eval.py ─► rag/retrieval.py + chat/llm_client.py
 
 config.py ◄──────── almost every backend module
+config.py ◄──────── services/breast-mri-report/launcher.py (host/port)
 external services ◄─ llm_client + query_rewrite + query_planner + rerank + build pipeline
 ```
 
-架构方向应保持：Gateway 不 import Worker；RAG 不依赖 Session；离线和在线只通过 schema/config/shared sparse function 耦合；Frontend 不直接访问 SQLite/Milvus。
+架构方向应保持：Gateway 不 import Worker；RAG 不依赖 Session；离线和在线只通过 schema/config/shared sparse function 耦合；Frontend 不直接访问 SQLite/Milvus；Breast MRI 服务与 Agent Pipeline 完全解耦，不共享 RAG/Memory/SQLite/Milvus。
 
 ## 50. 核心文件地图
 
-| 文件                                     | 为什么重要                                                          | 什么时候打开                      |
-| ---------------------------------------- | ------------------------------------------------------------------- | --------------------------------- |
-| `README.md`                              | 运行与集成入口                                                      | 启动、部署、API 示例              |
-| `AGENTS.md`                              | 全局代码导航规则                                                    | 任何代码任务开始时                |
-| `python_start.py`                        | 本地 Worker/Gateway 启动拓扑                                        | 本地启动问题                      |
-| `compose.yaml`                           | Docker 网络、端口和 volume                                          | 部署与数据持久化                  |
-| `config.yml`                             | Active 模型、检索和 Milvus 默认值                                   | 行为/环境配置                     |
-| `front/index.html`                       | 六个页面和所有固定 DOM ID                                           | 页面结构/表单                     |
-| `front/app.js`                           | Frontend 状态、API、SSE、LocalStorage                               | 所有前端行为                      |
-| `front/style.css`                        | 全部视觉和状态 class                                                | 样式/响应式                       |
-| `app/gateway.py`                         | Public auth 与 stream proxy                                         | 外部 API、安全边界                |
-| `app/config.py`                          | 配置解析、getter、client factory                                    | 新配置或热重载                    |
-| `app/chat/server.py`                     | Worker 路由、共享 Stateful 执行、Deployment、Session、SSE、KB、Eval | 后端入口/跨模块问题               |
-| `app/chat/deployments.py`                | Key 摘要、KB scope、公开 SSE 与 conversation lock                   | API 上线安全/契约                 |
-| `app/chat/pipeline.py`                   | 一轮 Agent 主编排                                                   | Tool 决策和请求生命周期           |
-| `app/chat/llm_client.py`                 | Chat/Embedding/Rerank 上层调用                                      | 模型调用、streaming               |
-| `app/chat/schemas.py`                    | Worker Pydantic contract                                            | Stateful/管理 API 字段            |
-| `app/chat/report_schema.py`              | Canonical Report、旧格式归一化、校验/repair、事实保护与 Public 脱敏 | 任何正式报告结构/边界变更         |
-| `app/chat/utils.py`                      | Canonical 报告到 Markdown 展示                                      | 报告渲染格式                      |
-| `app/tools/registry.py`                  | Tool 注册、执行、Final 语义                                         | 新 Tool/执行机制                  |
-| `app/tools/rag_tool.py`                  | 新报告、歧义、Report LLM                                            | 报告生成主业务                    |
-| `app/tools/edit_tool.py`                 | Last Report 编辑、Judge 编排与单次 Repair                           | 编辑行为、Judge、Repair           |
-| `app/tools/refine_tool.py`               | 风格重写 Last Report                                                | 润色行为/Schema                   |
-| `app/rag/query_rewrite.py`               | 标准化与有条件改写                                                  | Stateful Query 预处理             |
-| `app/rag/query_planner.py`               | 自然语言到合法 QueryPlan                                            | Filter/Query 拆分                 |
-| `app/rag/metadata_navigator.py`          | 合并/验证 Metadata Tree                                             | 目录候选与约束                    |
-| `app/rag/retrieval.py`                   | Channels、Dense/Sparse、RRF、Dedup                                  | 第一阶段检索                      |
-| `app/rag/sparse_vector.py`               | 离线/在线共享词面向量                                               | Sparse 算法变更                   |
-| `app/rag/rerank.py`                      | Cross-Encoder API                                                   | 第二阶段排序                      |
-| `app/prompt/builder.py`                  | Entity/Template/Report 拼装                                         | Prompt 上下文顺序                 |
-| `app/prompt/tool_orchestrator.md`        | Main Agent 决策规则                                                 | Tool 选择错误                     |
-| `app/prompt/structure.md`                | 当前报告 Schema 和生成规则                                          | 报告结构/内容                     |
-| `app/prompt/edit.md` / `refine.md`       | 编辑与润色约束                                                      | Last Report 变换                  |
-| `app/memory/short_term.py`               | STM window 与摘要                                                   | 多轮历史问题                      |
-| `app/memory/entity_tracker.py`           | Slots、Intent、Context Resolution                                   | 实体和指代问题                    |
-| `app/memory/retriever.py`                | STM semantic selection                                              | 历史相关性/Embedding              |
-| `app/memory/session_store.py`            | SQLite 所有共享表                                                   | Session/KB/Eval/Deployment 持久化 |
-| `app/data_pipeline/process_reports.py`   | Excel → Chunk/Markdown                                              | Excel schema/切片                 |
-| `app/data_pipeline/build_vector_db.py`   | Milvus schema 与写入                                                | Embedding/schema/rebuild          |
-| `app/data_pipeline/extract_metadata.py`  | Markdown → Metadata Tree                                            | Planner 候选来源                  |
-| `app/data_pipeline/chunk_id.py`          | 全生命周期稳定 ID                                                   | 任何 identity 变更                |
-| `app/eval/run_retrieval_eval.py`         | Dataset、Runner、SSE、结果                                          | Retrieval 评测                    |
-| `app/eval/metrics.py`                    | Hit@K 定义                                                          | 新指标/聚合                       |
-| `app/test/test_rag_planning.py`          | Planner/Channels 的纯测试                                           | RAG 逻辑回归                      |
-| `app/test/test_knowledge_base_chunks.py` | SQLite Chunk/Excel parser 测试                                      | 建库数据变更                      |
-| `app/test/test_api_deployments.py`       | Deployment 纯逻辑、存储、安全和锁                                   | API 上线底层变更                  |
-| `app/test/test_api_deployment_routes.py` | 管理 API、公开 SSE、多轮和原接口回归                                | API 上线端到端契约                |
+| 文件                                           | 为什么重要                                                                                 | 什么时候打开                      |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------ | --------------------------------- |
+| `README.md`                                    | 运行与集成入口                                                                             | 启动、部署、API 示例              |
+| `AGENTS.md`                                    | 全局代码导航规则                                                                           | 任何代码任务开始时                |
+| `python_start.py`                              | 本地 Worker/Gateway 启动拓扑                                                               | 本地启动问题                      |
+| `compose.yaml`                                 | Docker 网络、端口和 volume                                                                 | 部署与数据持久化                  |
+| `config.yml`                                   | Active 模型、检索和 Milvus 默认值                                                          | 行为/环境配置                     |
+| `front/index.html`                             | 六个页面（含 Workspace Tab 结构）和所有固定 DOM ID                                         | 页面结构/表单                     |
+| `front/app.js`                                 | Frontend 状态、API、SSE、LocalStorage                                                      | 所有前端行为                      |
+| `front/style.css`                              | 全部视觉和状态 class                                                                       | 样式/响应式                       |
+| `app/gateway.py`                               | Public auth 与 stream proxy                                                                | 外部 API、安全边界                |
+| `app/config.py`                                | 配置解析、getter、client factory                                                           | 新配置或热重载                    |
+| `app/chat/server.py`                           | Worker 路由、共享 Stateful 执行、Deployment、Session、SSE、KB、Eval                        | 后端入口/跨模块问题               |
+| `app/chat/deployments.py`                      | Key 摘要、KB scope、公开 SSE 与 conversation lock                                          | API 上线安全/契约                 |
+| `app/chat/pipeline.py`                         | 一轮 Agent 主编排                                                                          | Tool 决策和请求生命周期           |
+| `app/chat/llm_client.py`                       | Chat/Embedding/Rerank 上层调用                                                             | 模型调用、streaming               |
+| `app/chat/schemas.py`                          | Worker Pydantic contract                                                                   | Stateful/管理 API 字段            |
+| `app/chat/report_schema.py`                    | Canonical Report、旧格式归一化、校验/repair、事实保护与 Public 脱敏                        | 任何正式报告结构/边界变更         |
+| `app/chat/utils.py`                            | Canonical 报告到 Markdown 展示                                                             | 报告渲染格式                      |
+| `app/tools/registry.py`                        | Tool 注册、执行、Final 语义                                                                | 新 Tool/执行机制                  |
+| `app/tools/rag_tool.py`                        | 新报告、歧义、Report LLM                                                                   | 报告生成主业务                    |
+| `app/tools/edit_tool.py`                       | Last Report 编辑、Judge 编排与单次 Repair                                                  | 编辑行为、Judge、Repair           |
+| `app/tools/refine_tool.py`                     | 风格重写 Last Report                                                                       | 润色行为/Schema                   |
+| `app/rag/query_rewrite.py`                     | 标准化与有条件改写                                                                         | Stateful Query 预处理             |
+| `app/rag/query_planner.py`                     | 自然语言到合法 QueryPlan                                                                   | Filter/Query 拆分                 |
+| `app/rag/metadata_navigator.py`                | 合并/验证 Metadata Tree                                                                    | 目录候选与约束                    |
+| `app/rag/retrieval.py`                         | Channels、Dense/Sparse、RRF、Dedup                                                         | 第一阶段检索                      |
+| `app/rag/sparse_vector.py`                     | 离线/在线共享词面向量                                                                      | Sparse 算法变更                   |
+| `app/rag/rerank.py`                            | Cross-Encoder API                                                                          | 第二阶段排序                      |
+| `app/prompt/builder.py`                        | Entity/Template/Report 拼装                                                                | Prompt 上下文顺序                 |
+| `app/prompt/tool_orchestrator.md`              | Main Agent 决策规则                                                                        | Tool 选择错误                     |
+| `app/prompt/structure.md`                      | 当前报告 Schema 和生成规则                                                                 | 报告结构/内容                     |
+| `app/prompt/edit.md` / `refine.md`             | 编辑与润色约束                                                                             | Last Report 变换                  |
+| `app/memory/short_term.py`                     | STM window 与摘要                                                                          | 多轮历史问题                      |
+| `app/memory/entity_tracker.py`                 | Slots、Intent、Context Resolution                                                          | 实体和指代问题                    |
+| `app/memory/retriever.py`                      | STM semantic selection                                                                     | 历史相关性/Embedding              |
+| `app/memory/session_store.py`                  | SQLite 所有共享表                                                                          | Session/KB/Eval/Deployment 持久化 |
+| `app/data_pipeline/process_reports.py`         | Excel → Chunk/Markdown                                                                     | Excel schema/切片                 |
+| `app/data_pipeline/build_vector_db.py`         | Milvus schema 与写入                                                                       | Embedding/schema/rebuild          |
+| `app/data_pipeline/extract_metadata.py`        | Markdown → Metadata Tree                                                                   | Planner 候选来源                  |
+| `app/data_pipeline/chunk_id.py`                | 全生命周期稳定 ID                                                                          | 任何 identity 变更                |
+| `app/eval/run_retrieval_eval.py`               | Dataset、Runner、SSE、结果                                                                 | Retrieval 评测                    |
+| `app/eval/metrics.py`                          | Hit@K 定义                                                                                 | 新指标/聚合                       |
+| `app/test/test_rag_planning.py`                | Planner/Channels 的纯测试                                                                  | RAG 逻辑回归                      |
+| `app/test/test_knowledge_base_chunks.py`       | SQLite Chunk/Excel parser 测试                                                             | 建库数据变更                      |
+| `app/test/test_api_deployments.py`             | Deployment 纯逻辑、存储、安全和锁                                                          | API 上线底层变更                  |
+| `app/test/test_api_deployment_routes.py`       | 管理 API、公开 SSE、多轮和原接口回归                                                       | API 上线端到端契约                |
+| `services/breast-mri-report/launcher.py`       | 管理 Node.js 服务生命周期（启动/复用/健康检查/端口冲突），从 config.py 读取 host/port      | Breast MRI 启动问题               |
+| `services/breast-mri-report/start.py`          | 独立启动脚本，适用开发/调试场景，同样从统一配置读取 host/port                              | 独立调试 Breast MRI 服务          |
+| `services/breast-mri-report/scripts/serve.mjs` | Node.js Express 服务入口，读取 PORT/HOST 环境变量（由 launcher/start.py 注入），缺失即报错 | Node 服务启停/调试                |
+| `app/chat/breast_mri_client.py`                | Python 客户端，封装对 Breast MRI 服务的 HTTP 请求                                          | 服务间通信调试                    |
 
 ## 51. 修改入口：我想改 X 应该去哪
 
-| 目标                | 先看这些文件（由近到远）                                                                                                                          |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agent 决策/调用次数 | `chat/pipeline.py`、`prompt/tool_orchestrator.md`、`tools/registry.py`                                                                            |
-| Tool 选择规则       | `prompt/tool_orchestrator.md`、三个 Tool Schema、`pipeline.py`                                                                                    |
-| 新增 Tool           | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt                                                      |
-| 报告结构            | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE            |
-| 报告生成 Prompt     | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py`                                                                                   |
-| 报告编辑            | `tools/edit_tool.py`、`chat/report_schema.py`、`prompt/edit.md`、`test/test_report_pipeline.py`、Last Report 保存逻辑                             |
-| 报告润色            | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context                                                                                        |
-| Query Rewrite       | `rag/query_rewrite.py`、`prompt/rewrite.md`、rewrite config                                                                                       |
-| Query Planning      | `rag/query_planner.py`、`metadata_navigator.py`、planning tests                                                                                   |
-| Metadata Filter     | `metadata_navigator.py`、`query_planner.py`、`retrieval.build_filter_expression()`                                                                |
-| Dense Retrieval     | `chat/llm_client.py`、`rag/retrieval.py`、`data_pipeline/build_vector_db.py`、config                                                              |
-| Sparse Retrieval    | `rag/sparse_vector.py`、`rag/retrieval.py`、`build_vector_db.py`；然后全量重建                                                                    |
-| Recall Channel      | `rag/retrieval.py`、`pipeline.search_reports()` SSE、planning tests                                                                               |
-| RRF                 | `rag/retrieval.py` 中两处 `RRFRanker()` 和候选限制                                                                                                |
-| Rerank              | `rag/rerank.py`、`llm_client.rerank_with_retry()`、`pipeline.search_reports()`、Eval                                                              |
-| Memory/STM          | `memory/short_term.py`、`memory/retriever.py`、`pipeline.py`                                                                                      |
-| Entity/Intent       | `memory/entity_tracker.py`、`prompt/entity_extraction.md`、Pipeline gates                                                                         |
-| Session             | `memory/session_store.py`、`server._get_or_create_session()`、Chat persist block                                                                  |
-| SSE                 | Backend emit site、`server.event_stream()`、`front/app.js::handleStreamEvent()`                                                                   |
-| Gateway API         | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes                                                                               |
-| Stateful API        | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage`                                                                    |
-| Stateless API       | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers                                                                       |
-| Deployment/API 上线 | `front/index.html`、`front/app.js`、`front/style.css`、`chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、部署测试 |
-| Excel Schema        | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README                                                             |
-| Chunk 组成/ID       | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval                                                                                    |
-| Milvus Schema       | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config                                                                       |
-| Eval Dataset/流程   | `eval/run_retrieval_eval.py`、`generate_test_cases.py`、`metrics.py`、Eval UI                                                                     |
-| Frontend Chat       | `front/index.html` Agent DOM、`front/app.js` send/parser/render、`front/style.css`                                                                |
-| KB UI               | `front/app.js` KB functions、`index.html` KB page、Worker KB routes                                                                               |
-| Eval UI             | `front/app.js` Eval functions/SSE、`index.html` Eval page、Worker Eval routes                                                                     |
+| 目标                | 先看这些文件（由近到远）                                                                                                                                                                           |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent 决策/调用次数 | `chat/pipeline.py`、`prompt/tool_orchestrator.md`、`tools/registry.py`                                                                                                                             |
+| Tool 选择规则       | `prompt/tool_orchestrator.md`、三个 Tool Schema、`pipeline.py`                                                                                                                                     |
+| 新增 Tool           | 新 `tools/*.py`、`tools/__init__.py`、`pipeline._build_tool_registry()`、orchestrator prompt                                                                                                       |
+| 报告结构            | `chat/report_schema.py`、三个 Report Tool、`prompt/structure.md` / `edit.md` / `refine.md`、`pipeline.py`、`chat/utils.py`、Public SSE                                                             |
+| 报告生成 Prompt     | `prompt/structure.md`、`prompt/builder.py`、`tools/rag_tool.py`                                                                                                                                    |
+| 报告编辑            | `tools/edit_tool.py`、`chat/report_schema.py`、`prompt/edit.md`、`test/test_report_pipeline.py`、Last Report 保存逻辑                                                                              |
+| 报告润色            | `tools/refine_tool.py`、`prompt/refine.md`、Entity Context                                                                                                                                         |
+| Query Rewrite       | `rag/query_rewrite.py`、`prompt/rewrite.md`、rewrite config                                                                                                                                        |
+| Query Planning      | `rag/query_planner.py`、`metadata_navigator.py`、planning tests                                                                                                                                    |
+| Metadata Filter     | `metadata_navigator.py`、`query_planner.py`、`retrieval.build_filter_expression()`                                                                                                                 |
+| Dense Retrieval     | `chat/llm_client.py`、`rag/retrieval.py`、`data_pipeline/build_vector_db.py`、config                                                                                                               |
+| Sparse Retrieval    | `rag/sparse_vector.py`、`rag/retrieval.py`、`build_vector_db.py`；然后全量重建                                                                                                                     |
+| Recall Channel      | `rag/retrieval.py`、`pipeline.search_reports()` SSE、planning tests                                                                                                                                |
+| RRF                 | `rag/retrieval.py` 中两处 `RRFRanker()` 和候选限制                                                                                                                                                 |
+| Rerank              | `rag/rerank.py`、`llm_client.rerank_with_retry()`、`pipeline.search_reports()`、Eval                                                                                                               |
+| Memory/STM          | `memory/short_term.py`、`memory/retriever.py`、`pipeline.py`                                                                                                                                       |
+| Entity/Intent       | `memory/entity_tracker.py`、`prompt/entity_extraction.md`、Pipeline gates                                                                                                                          |
+| Session             | `memory/session_store.py`、`server._get_or_create_session()`、Chat persist block                                                                                                                   |
+| SSE                 | Backend emit site、`server.event_stream()`、`front/app.js::handleStreamEvent()`                                                                                                                    |
+| Gateway API         | `gateway.py` payload/auth/proxy、Worker `/internal/*` models/routes                                                                                                                                |
+| Stateful API        | `chat/schemas.py::ChatRequest`、`server.py::chat`、`front/app.js::sendMessage`                                                                                                                     |
+| Stateless API       | `gateway.py` models、`server.py` 的 RAG/Report request 与 internal handlers                                                                                                                        |
+| Deployment/API 上线 | `front/index.html`、`front/app.js`、`front/style.css`、`chat/deployments.py`、`chat/server.py`、`memory/session_store.py`、`gateway.py`、部署测试                                                  |
+| Excel Schema        | `process_reports.FIELD_MAPPING/CONTENT_FIELDS`、Markdown parser、Data Pipeline README                                                                                                              |
+| Chunk 组成/ID       | `process_reports.py`、`chunk_id.py`、SessionStore、Milvus/Eval                                                                                                                                     |
+| Milvus Schema       | `build_vector_db.py`、migration/rebuild scripts、`rag/retrieval.py`、config                                                                                                                        |
+| Eval Dataset/流程   | `eval/run_retrieval_eval.py`、`generate_test_cases.py`、`metrics.py`、Eval UI                                                                                                                      |
+| Frontend Chat       | `front/index.html` Agent DOM、`front/app.js` send/parser/render、`front/style.css`                                                                                                                 |
+| KB UI               | `front/app.js` KB functions、`index.html` KB page、Worker KB routes                                                                                                                                |
+| Eval UI             | `front/app.js` Eval functions/SSE、`index.html` Eval page、Worker Eval routes                                                                                                                      |
+| Breast MRI 工作台   | `services/breast-mri-report/` 整个目录、`front/index.html` workspace-tabs DOM、`front/app.js` Tab 切换、`front/style.css` 布局、`app/chat/server.py` proxy 路由、`app/config.py` Breast MRI getter |
 
 完成代码修改后，再按最近的 `AGENTS.md` 检查依赖、Public API、Testing 和导航是否失效。
 
@@ -1251,6 +1275,10 @@ python -m app.test.test_memory
 ### Metadata Filter 错误
 
 从 SQLite `knowledge_bases.metadata_tree` 和 Markdown Front Matter 开始，检查 Navigator candidates、Planner slots/source，再检查 `build_filter_expression()`。不要先手改全局 metadata JSON。
+
+### 乳腺 MRI 不工作
+
+先区分"Tab 未显示"（检查 `workspace-tabs` 和 `breast-mri-panel` DOM）和"Tab 显示但空白"（检查 Node.js 服务是否启动）。然后确认 Node 服务 healthy：`GET /breast-mri/api/health` 返回 200。若端口被占用：检查日志是否出现 `BREAST_MRI_PORT_CONFLICT`，释放端口后重启主项目。若配置错误：检查 `config.yml` 的 `breast_mri` 块和 `.env` 的 `BREAST_MRI_HOST`/`BREAST_MRI_PORT`。Breast MRI 故障不影响 Agent/KB/Eval 等其他模块。
 
 ### Rerank 排序异常
 

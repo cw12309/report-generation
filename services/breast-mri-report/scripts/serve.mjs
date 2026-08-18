@@ -6,8 +6,18 @@ import { createBasicAuth, securityHeaders } from "../src/server/httpSecurity.mjs
 import { resolveStaticFile } from "../src/server/staticFiles.mjs";
 
 const root = process.cwd();
-const port = Number(process.env.PORT || 4173);
-const host = process.env.HOST || "127.0.0.1";
+
+if (!process.env.PORT) {
+  console.error("[FATAL] 缺少 PORT 环境变量，请通过启动器（launcher.py 或 start.py）启动服务，不要直接运行 serve.mjs");
+  process.exit(1);
+}
+if (!process.env.HOST) {
+  console.error("[FATAL] 缺少 HOST 环境变量，请通过启动器（launcher.py 或 start.py）启动服务，不要直接运行 serve.mjs");
+  process.exit(1);
+}
+
+const port = Number(process.env.PORT);
+const host = process.env.HOST;
 const release = process.env.RELEASE_TAG || "development";
 const agentService = createAgentService();
 const basicAuth = createBasicAuth();

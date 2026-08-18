@@ -248,18 +248,52 @@ def get_breast_mri_llm_api_key() -> str:
     return get_llm_api_key()
 
 
+def _env_or_config(env_key: str, config_path: str) -> str:
+    """从环境变量或 config.yml 读取配置。
+
+    优先级：.env 非空值 → config.yml → 配置缺失错误。
+    """
+    env_value = os.environ.get(env_key, "").strip()
+    if env_value:
+        return env_value
+
+    value = _resolve(config_path, "")
+    if not str(value).strip():
+        raise ValueError(f"配置缺失: {config_path}（环境变量 {env_key} 未设置或为空）")
+
+    return str(value).strip()
+
+
 def get_breast_mri_port() -> int:
-    return int(os.environ.get("BREAST_MRI_PORT", "4173"))
+    """返回乳腺 MRI 报告服务端口。
+
+    优先级：BREAST_MRI_PORT 环境变量非空值 → config.yml breast_mri.port → 配置缺失错误。
+    合法范围：1-65535。
+    """
+    raw = _env_or_config("BREAST_MRI_PORT", "breast_mri.port")
+    try:
+        port = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"BREAST_MRI_PORT 配置无效: {raw!r}，必须是 1-65535 的整数")
+
+    if not 1 <= port <= 65535:
+        raise ValueError(f"BREAST_MRI_PORT 配置无效: {port}，必须是 1-65535 的整数")
+
+    return port
 
 
 def get_breast_mri_host() -> str:
-    return os.environ.get("BREAST_MRI_HOST", "127.0.0.1")
+    """返回乳腺 MRI 报告服务主机地址。
+
+    优先级：BREAST_MRI_HOST 环境变量非空值 → config.yml breast_mri.host → 配置缺失错误。
+    """
+    return _env_or_config("BREAST_MRI_HOST", "breast_mri.host")
 
 
 def get_breast_mri_base_url() -> str:
     """返回乳腺 MRI 报告服务的 base URL，不含尾部斜杠。
 
-    统一配置来源：环境变量 → 默认值 127.0.0.1:4173。
+    基于 get_breast_mri_host() 和 get_breast_mri_port() 生成，
     调用方使用 f"{base_url}/api/..." 拼接，不会出现双斜杠。
     """
     host = get_breast_mri_host()

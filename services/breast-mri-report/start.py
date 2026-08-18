@@ -16,8 +16,6 @@ import webbrowser
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent
-DEFAULT_PORT = 4173
-DEFAULT_HOST = "127.0.0.1"
 MAX_PORT_ATTEMPTS = 50
 
 
@@ -45,6 +43,18 @@ def _load_main_config():
         return "", "", ""
 
 
+def _load_breast_mri_config():
+    """从主项目 config.py 读取 Breast MRI host/port 配置。"""
+    MAIN_PROJECT_ROOT = PROJECT_DIR.parent.parent
+    sys.path.insert(0, str(MAIN_PROJECT_ROOT))
+    try:
+        from app.config import get_breast_mri_host, get_breast_mri_port
+        return get_breast_mri_host(), get_breast_mri_port()
+    except ImportError:
+        print("[ERROR] 无法加载主项目 Breast MRI 配置，请确保在项目根目录下运行")
+        return None, None
+
+
 def check_node():
     try:
         result = subprocess.run(
@@ -62,22 +72,26 @@ def check_node():
     return False
 
 
-def find_next_port(start_port):
+def find_next_port(host, start_port):
     for offset in range(MAX_PORT_ATTEMPTS):
         port = start_port + offset
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             sock.settimeout(0.5)
-            if sock.connect_ex((DEFAULT_HOST, port)) != 0:
+            if sock.connect_ex((host, port)) != 0:
                 return port
     print(f"[ERROR] 端口 {start_port}-{start_port + MAX_PORT_ATTEMPTS} 均被占用")
     return None
 
 
 def main():
+    default_host, default_port = _load_breast_mri_config()
+    if default_host is None or default_port is None:
+        sys.exit(1)
+
     import argparse
     parser = argparse.ArgumentParser(description="乳腺 MRI 报告服务启动器")
-    parser.add_argument("--port", "-p", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
-    parser.add_argument("--host", type=str, default=os.environ.get("HOST", DEFAULT_HOST))
+    parser.add_argument("--port", "-p", type=int, default=int(os.environ.get("PORT", default_port)))
+    parser.add_argument("--host", type=str, default=os.environ.get("HOST", default_host))
     parser.add_argument("--open", "-o", action="store_true", help="启动后自动打开浏览器")
     args = parser.parse_args()
 
@@ -86,7 +100,7 @@ def main():
     if not check_node():
         sys.exit(1)
 
-    port = find_next_port(args.port)
+    port = find_next_port(args.host, args.port)
     if port is None:
         sys.exit(1)
 

@@ -25,7 +25,10 @@ from typing import Any, Optional
 from data_pipeline.chunk_id import generate_chunk_id
 
 logger = logging.getLogger(__name__)
-KNOWLEDGE_BASE_STATUSES = {"uploaded", "processing", "active", "failed", "disabled"}
+KNOWLEDGE_BASE_STATUSES = {
+    "uploaded", "processing", "active", "failed", "disabled",
+    "recovered", "degraded",
+}
 
 
 class SessionStore:
@@ -108,11 +111,16 @@ class SessionStore:
                     status        VARCHAR(32) NOT NULL DEFAULT 'active',
                     progress      INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
                     source_path   TEXT NOT NULL DEFAULT '',
+                    source_name   TEXT NOT NULL DEFAULT '',
+                    source_hash   TEXT NOT NULL DEFAULT '',
                     metadata_tree TEXT NOT NULL DEFAULT '{}'
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_knowledge_bases_status
                     ON knowledge_bases(status, created_at);
+
+                CREATE INDEX IF NOT EXISTS idx_knowledge_bases_source_hash
+                    ON knowledge_bases(source_hash);
 
                 CREATE TABLE IF NOT EXISTS api_deployments (
                     deployment_id TEXT PRIMARY KEY,
@@ -223,6 +231,20 @@ class SessionStore:
                     "INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100)"
                 )
                 logger.info("已迁移 knowledge_bases 表：添加 progress 字段")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE knowledge_bases ADD COLUMN source_name TEXT NOT NULL DEFAULT ''"
+                )
+                logger.info("已迁移 knowledge_bases 表：添加 source_name 字段")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute(
+                    "ALTER TABLE knowledge_bases ADD COLUMN source_hash TEXT NOT NULL DEFAULT ''"
+                )
+                logger.info("已迁移 knowledge_bases 表：添加 source_hash 字段")
             except sqlite3.OperationalError:
                 pass
 
@@ -537,19 +559,25 @@ class SessionStore:
     def create_knowledge_base(self, kb_id: str, kb_name: str,
                               status: str = "uploaded",
                               metadata_tree: Optional[dict] = None,
-                              source_path: str = "") -> dict:
+                              source_path: str = "",
+                              source_name: str = "",
+                              source_hash: str = "") -> dict:
         if status not in KNOWLEDGE_BASE_STATUSES:
             raise ValueError(f"不支持的知识库状态: {status}")
         with self._get_conn() as conn:
             conn.execute(
-                "INSERT INTO knowledge_bases (kb_id, kb_name, status, source_path, metadata_tree) VALUES (?, ?, ?, ?, ?)",
-                (kb_id, kb_name, status, source_path, json.dumps(metadata_tree or {}, ensure_ascii=False)),
+                "INSERT INTO knowledge_bases (kb_id, kb_name, status, source_path, "
+                "source_name, source_hash, metadata_tree) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (kb_id, kb_name, status, source_path, source_name, source_hash,
+                 json.dumps(metadata_tree or {}, ensure_ascii=False)),
             )
         return self.get_knowledge_base(kb_id)
 
     def update_knowledge_base(self, kb_id: str, *, status: Optional[str] = None,
                               metadata_tree: Optional[dict] = None,
-                              progress: Optional[int] = None) -> None:
+                              progress: Optional[int] = None,
+                              source_hash: Optional[str] = None,
+                              source_name: Optional[str] = None) -> None:
         assignments, values = [], []
         if status is not None:
             if status not in KNOWLEDGE_BASE_STATUSES:
@@ -565,6 +593,12 @@ class SessionStore:
                 raise ValueError("知识库构建进度必须在 0-100 之间")
             assignments.append("progress = ?")
             values.append(progress)
+        if source_hash is not None:
+            assignments.append("source_hash = ?")
+            values.append(source_hash)
+        if source_name is not None:
+            assignments.append("source_name = ?")
+            values.append(source_name)
         if assignments:
             values.append(kb_id)
             with self._get_conn() as conn:
@@ -590,7 +624,8 @@ class SessionStore:
     def get_knowledge_base(self, kb_id: str) -> Optional[dict]:
         with self._get_conn() as conn:
             row = conn.execute(
-                "SELECT kb_id, kb_name, created_at, status, progress, source_path, metadata_tree "
+                "SELECT kb_id, kb_name, created_at, status, progress, source_path, "
+                "source_name, source_hash, metadata_tree "
                 "FROM knowledge_bases WHERE kb_id = ?", (kb_id,),
             ).fetchone()
         return self._knowledge_base_row(row) if row else None
@@ -599,13 +634,15 @@ class SessionStore:
         with self._get_conn() as conn:
             if status:
                 rows = conn.execute(
-                    "SELECT kb_id, kb_name, created_at, status, progress, source_path, metadata_tree "
+                    "SELECT kb_id, kb_name, created_at, status, progress, source_path, "
+                    "source_name, source_hash, metadata_tree "
                     "FROM knowledge_bases WHERE status = ? ORDER BY created_at DESC",
                     (status,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT kb_id, kb_name, created_at, status, progress, source_path, metadata_tree "
+                    "SELECT kb_id, kb_name, created_at, status, progress, source_path, "
+                    "source_name, source_hash, metadata_tree "
                     "FROM knowledge_bases ORDER BY created_at DESC"
                 ).fetchall()
         return [self._knowledge_base_row(row) for row in rows]
@@ -614,6 +651,34 @@ class SessionStore:
         with self._get_conn() as conn:
             cursor = conn.execute("DELETE FROM knowledge_bases WHERE kb_id = ?", (kb_id,))
         return cursor.rowcount > 0
+
+    def upsert_knowledge_base_from_catalog(
+        self,
+        kb_id: str,
+        kb_name: str,
+        source_name: str,
+        source_hash: str,
+    ) -> dict:
+        existing = self.get_knowledge_base(kb_id)
+        if existing is not None:
+            return existing
+        with self._get_conn() as conn:
+            conn.execute(
+                "INSERT INTO knowledge_bases (kb_id, kb_name, status, source_name, "
+                "source_hash, metadata_tree) VALUES (?, ?, 'recovered', ?, ?, '{}')",
+                (kb_id, kb_name, source_name, source_hash),
+            )
+        return self.get_knowledge_base(kb_id)
+
+    def find_knowledge_base_by_hash(self, source_hash: str) -> Optional[dict]:
+        if not source_hash:
+            return None
+        with self._get_conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM knowledge_bases WHERE source_hash = ? ORDER BY created_at DESC LIMIT 1",
+                (source_hash,),
+            ).fetchone()
+        return self._knowledge_base_row(row) if row else None
 
     # ── API Deployments ─────────────────────────────────────
 

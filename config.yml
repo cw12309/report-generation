@@ -1,30 +1,30 @@
 llms:
-  - name: qwen36-27b
-    base_url: http://14.22.86.97:11001/v1
-    model: qwen36-27b
-    api_key: ${CHAT_API_KEY}
-    temperature: 0.3
-  - name: qwen36_27b_lora
-    base_url: http://14.22.86.97:11001/v1
-    model: qwen36_27b_lora
-    api_key: ${CHAT_API_KEY}
-    max_tokens: 2048
-    temperature: 0.3
+- name: qwen36-27b
+  base_url: http://14.22.86.97:11001/v1
+  model: qwen36-27b
+  api_key: ${CHAT_API_KEY}
+  temperature: 0.3
+- name: qwen36_27b_lora
+  base_url: http://14.22.86.97:11001/v1
+  model: qwen36_27b_lora
+  api_key: ${CHAT_API_KEY}
+  max_tokens: 2048
+  temperature: 0.3
 embeddings:
-  - name: bge-m3
-    base_url: http://14.22.83.225:11002/v1
-    model: bge-m3
-    api_key: ${EMBED_API_KEY}
-    dimension: 1024
+- name: bge-m3
+  base_url: http://14.22.83.225:11002/v1
+  model: bge-m3
+  api_key: ${EMBED_API_KEY}
+  dimension: 1024
 reranks:
-  - name: Qwen-Qwen3-VL-Reranker-8B
-    base_url: https://api.siliconflow.cn/v1/rerank
-    model: Qwen/Qwen3-VL-Reranker-8B
-    api_key: ${SILICONFLOW_API_KEY}
-  - name: bge-reranker-v2-m3
-    base_url: http://14.22.83.225:11002/v1/rerank
-    model: bge-reranker-v2-m3
-    api_key: ${SILICONFLOW_API_KEY}
+- name: Qwen-Qwen3-VL-Reranker-8B
+  base_url: https://api.siliconflow.cn/v1/rerank
+  model: Qwen/Qwen3-VL-Reranker-8B
+  api_key: ${SILICONFLOW_API_KEY}
+- name: bge-reranker-v2-m3
+  base_url: http://14.22.83.225:11002/v1/rerank
+  model: bge-reranker-v2-m3
+  api_key: ${SILICONFLOW_API_KEY}
 retrieval:
   rag_top_k: 50
   rerank_top_k: 10
@@ -39,7 +39,6 @@ active_models:
   chat_llm: qwen36-27b
   embedding: bge-m3
   rerank: Qwen-Qwen3-VL-Reranker-8B
-
 breast_mri:
-  host: "127.0.0.1"
+  host: 127.0.0.1
   port: 4173

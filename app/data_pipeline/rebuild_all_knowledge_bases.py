@@ -1,6 +1,7 @@
 """One-time full rebuild of SQLite chunks, Markdown, and the Milvus Collection."""
 
 import argparse
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -11,12 +12,25 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from config import get_collection_name, get_markdown_dir  # noqa: E402
-from data_pipeline.build_vector_db import _client, build_db, create_collection  # noqa: E402
+from data_pipeline.build_vector_db import (  # noqa: E402
+    _client,
+    build_db,
+    create_collection,
+    upsert_catalog_entry,
+)
 from data_pipeline.extract_metadata import extract_all  # noqa: E402
 from data_pipeline.process_reports import process_uploaded_excels  # noqa: E402
 from memory.session_store import SessionStore  # noqa: E402
 
 MD5_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _compute_file_sha256(file_path: Path) -> str:
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
 
 
 def rebuild_local_artifacts(store: SessionStore) -> tuple[list[str], int]:
@@ -36,6 +50,17 @@ def rebuild_local_artifacts(store: SessionStore) -> tuple[list[str], int]:
             raise FileNotFoundError(f"知识库 {kb_id} 的原始 Excel 不存在: {source_path}")
 
         print(f"[本地重建] {kb_id} <- {source_path.name}", flush=True)
+        new_hash = _compute_file_sha256(source_path)
+        old_hash = str(kb.get("source_hash") or "")
+        if old_hash and new_hash == old_hash:
+            print(f"[本地重建] {kb_id} 内容未变化，跳过重建", flush=True)
+            store.update_knowledge_base(kb_id, status="active", progress=100)
+            kb_ids.append(kb_id)
+            continue
+        if old_hash:
+            print(f"[本地重建] {kb_id} 内容已变化，更新 source_hash", flush=True)
+        store.update_knowledge_base(kb_id, source_hash=new_hash)
+
         result = process_uploaded_excels([str(source_path)], markdown_root, kb_id)
         if result["errors"]:
             raise RuntimeError(
@@ -107,6 +132,22 @@ def main() -> int:
         for kb_id in kb_ids:
             store.update_knowledge_base(kb_id, status="active", progress=100)
         print(f"[完成] Milvus 写入 {milvus_count} 条，所有知识库已恢复 active", flush=True)
+        # 同步更新 Catalog
+        catalog_client = _client()
+        try:
+            for kb_id in kb_ids:
+                kb = store.get_knowledge_base(kb_id)
+                if kb:
+                    upsert_catalog_entry(
+                        catalog_client,
+                        kb_id,
+                        str(kb.get("kb_name") or ""),
+                        str(kb.get("source_name") or ""),
+                        str(kb.get("source_hash") or ""),
+                    )
+            print(f"[Catalog] 已同步 {len(kb_ids)} 个知识库", flush=True)
+        finally:
+            catalog_client.close()
         return 0
     except Exception:
         for kb_id in kb_ids:

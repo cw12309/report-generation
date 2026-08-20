@@ -1,6 +1,7 @@
 """FastAPI Web 服务层"""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -42,7 +43,16 @@ from config import (
     sync_milvus_uri,
     get_breast_mri_base_url,
 )
-from data_pipeline.build_vector_db import build_db, ensure_collection_schema
+from data_pipeline.build_vector_db import (
+    build_db,
+    ensure_collection_schema,
+    ensure_catalog_collection,
+    upsert_catalog_entry,
+    delete_catalog_entry,
+    list_catalog_entries,
+    list_distinct_kb_ids,
+    find_catalog_by_hash,
+)
 from data_pipeline.extract_metadata import extract_all
 from data_pipeline.process_reports import process_uploaded_excels
 from milvus_compat import create_milvus_client
@@ -69,6 +79,7 @@ from eval.run_retrieval_eval import (
 from .schemas import (
     ChatRequest, ConfigSaveRequest, TestModelRequest,
     KBBuildRequest, ClearSessionRequest, KBUploadResponse, KBBuildResponse,
+    DuplicateKBResponse, KBUploadAction,
     EvalCaseRequest, EvalAutoGenerateRequest,
     DeploymentChatRequest, DeploymentCreateRequest, DeploymentUpdateRequest,
 )
@@ -98,6 +109,15 @@ logger = logging.getLogger(__name__)
 COLLECTION_NAME = get_collection_name()
 CHAT_MODEL = get_llm_model()
 EMBED_MODEL = get_embed_model()
+
+
+def _compute_file_sha256(file_path: Path) -> str:
+    """计算文件二进制内容的 SHA-256 哈希值。"""
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
 
 
 class RAGSearchRequest(BaseModel):
@@ -223,12 +243,79 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         finally:
             client.close()
 
+    @app.on_event("startup")
+    async def consistency_check_on_startup():
+        """Compare SQLite, Milvus Catalog, and Milvus Chunks for consistency."""
+        client = _new_milvus_client()
+        try:
+            ensure_catalog_collection(client)
+
+            sqlite_kbs = {kb["kb_id"]: kb for kb in store.list_knowledge_bases()}
+            catalog_entries = list_catalog_entries(client)
+            catalog_ids = {entry["kb_id"]: entry for entry in catalog_entries}
+            chunk_ids = set(list_distinct_kb_ids(client))
+
+            recovered: list[str] = []
+            degraded: list[str] = []
+            orphan: list[str] = []
+
+            all_ids = set(sqlite_kbs.keys()) | set(catalog_ids.keys()) | chunk_ids
+
+            for kb_id in sorted(all_ids):
+                in_sqlite = kb_id in sqlite_kbs
+                in_catalog = kb_id in catalog_ids
+                in_chunks = kb_id in chunk_ids
+
+                if in_sqlite and in_catalog and in_chunks:
+                    continue
+                elif not in_sqlite and in_catalog and in_chunks:
+                    entry = catalog_ids[kb_id]
+                    store.upsert_knowledge_base_from_catalog(
+                        kb_id,
+                        str(entry["kb_name"]),
+                        str(entry["source_name"]),
+                        str(entry["source_hash"]),
+                    )
+                    recovered.append(kb_id)
+                    logger.info("一致性恢复: kb_id=%s 从 Catalog 恢复到 SQLite", kb_id)
+                elif in_sqlite and in_catalog and not in_chunks:
+                    store.update_knowledge_base(kb_id, status="degraded")
+                    degraded.append(kb_id)
+                    logger.warning("一致性警告: kb_id=%s 缺少 Milvus chunks，已标记 degraded", kb_id)
+                elif in_sqlite and not in_catalog and not in_chunks:
+                    pass
+                elif not in_sqlite and not in_catalog and in_chunks:
+                    orphan.append(kb_id)
+                    logger.warning("一致性警告: kb_id=%s 仅存在于 Milvus chunks，无 Catalog/SQLite 记录", kb_id)
+                elif not in_sqlite and in_catalog and not in_chunks:
+                    degraded.append(kb_id)
+                    logger.warning("一致性警告: kb_id=%s 在 Catalog 中但缺少 chunks，已标记 degraded", kb_id)
+
+            logger.info(
+                "启动一致性检查完成: SQLite=%d, Catalog=%d, Chunks(kb_id)=%d | "
+                "recovered=%d, degraded=%d, orphan=%d",
+                len(sqlite_kbs), len(catalog_ids), len(chunk_ids),
+                len(recovered), len(degraded), len(orphan),
+            )
+            if recovered:
+                logger.info("恢复列表: %s", recovered)
+            if degraded:
+                logger.warning("降级列表: %s", degraded)
+            if orphan:
+                logger.warning("孤儿数据列表: %s", orphan)
+        finally:
+            client.close()
+
     _breast_mri_launcher = None
 
     @app.on_event("startup")
     async def start_breast_mri_service():
         """自动启动乳腺 MRI 报告工作台 Node 服务，失败不阻塞主项目。"""
         global _breast_mri_launcher
+        try:
+            await consistency_check_on_startup()
+        except Exception as exc:
+            logger.warning("启动一致性检查失败（不影响主项目其他功能）: %s", exc)
         try:
             import importlib.util
             launcher_path = os.path.join(
@@ -1461,9 +1548,10 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     async def kb_upload(
         files: List[UploadFile] = File(default=[]),
         file: Optional[UploadFile] = File(default=None),
+        action: str = Query(default="", description="当文件重复时的处理: use_existing / rebuild / create_copy"),
+        existing_kb_id: str = Query(default="", description="当 action=use_existing/rebuild 时指定已有 kb_id"),
     ):
         uploads = list(files)
-        # 兼容旧版前端/客户端使用单数 file 字段。
         if file is not None:
             uploads.append(file)
         if not uploads:
@@ -1477,20 +1565,61 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         report_root.mkdir(parents=True, exist_ok=True)
         knowledge_bases = []
         for upload in uploads:
-            kb_id = uuid.uuid4().hex
-            kb_name = Path(upload.filename).stem[:255]
+            contents = await upload.read()
+            source_hash = hashlib.sha256(contents).hexdigest()
             safe_name = Path(upload.filename).name
+            kb_name = Path(upload.filename).stem[:255]
+
+            client = _new_milvus_client()
+            try:
+                existing_catalog = find_catalog_by_hash(client, source_hash)
+            finally:
+                client.close()
+            existing_sqlite = store.find_knowledge_base_by_hash(source_hash)
+
+            existing = existing_catalog or existing_sqlite
+            if existing and action not in ("rebuild", "create_copy"):
+                existing_id = existing.get("kb_id", "")
+                existing_name = existing.get("kb_name", "")
+                existing_source = existing.get("source_name", "")
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "duplicate": True,
+                        "existing_kb_id": existing_id,
+                        "existing_kb_name": existing_name,
+                        "existing_source_name": existing_source,
+                        "message": f"该文件内容已存在于知识库「{existing_name}」({existing_id})",
+                    },
+                )
+
+            if action == "rebuild" and existing_kb_id:
+                kb_id = existing_kb_id
+            elif action == "create_copy":
+                kb_id = uuid.uuid4().hex
+            else:
+                kb_id = uuid.uuid4().hex
+
             filepath = report_root / kb_id / safe_name
             filepath.parent.mkdir(parents=True, exist_ok=True)
-            contents = await upload.read()
             filepath.write_bytes(contents)
             record = store.create_knowledge_base(
-                kb_id, kb_name, status="uploaded", source_path=str(filepath),
+                kb_id, kb_name, status="uploaded",
+                source_path=str(filepath),
+                source_name=safe_name,
+                source_hash=source_hash,
             )
+            client = _new_milvus_client()
+            try:
+                upsert_catalog_entry(
+                    client, kb_id, kb_name, safe_name, source_hash,
+                )
+            finally:
+                client.close()
             knowledge_bases.append(record)
         return {"knowledge_bases": knowledge_bases}
 
-    def _build_knowledge_base_task(kb_id: str) -> None:
+    def _build_knowledge_base_task(kb_id: str, force_rebuild: bool = False) -> None:
         """Background worker for one KB; all failures are persisted as failed."""
         last_persisted_progress = 0
 
@@ -1513,6 +1642,26 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             source_path = Path(kb.get("source_path") or "")
             if not source_path.is_file():
                 raise FileNotFoundError(f"原始 Excel 不存在: {source_path}")
+            new_hash = _compute_file_sha256(source_path)
+            old_hash = str(kb.get("source_hash") or "")
+            if not force_rebuild and old_hash and new_hash == old_hash:
+                logger.info(
+                    "知识库 [%s] 内容未变化 (source_hash=%s)，跳过重建",
+                    kb_id, new_hash[:16],
+                )
+                store.update_knowledge_base(kb_id, status="active", progress=100)
+                return
+            if force_rebuild:
+                logger.info(
+                    "知识库 [%s] 强制重建 (force_rebuild=True, source_hash=%s)",
+                    kb_id, new_hash[:16],
+                )
+            elif old_hash and new_hash != old_hash:
+                logger.info(
+                    "知识库 [%s] 内容已变化，更新 source_hash 并重建",
+                    kb_id,
+                )
+            store.update_knowledge_base(kb_id, source_hash=new_hash)
             markdown_root = Path(get_markdown_dir())
             parse_result = process_uploaded_excels(
                 [str(source_path)], markdown_root, kb_id,
@@ -1537,6 +1686,20 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 build_progress_callback=persist_progress,
             )
             store.update_knowledge_base(kb_id, status="active", progress=100)
+            # 同步更新 Catalog
+            kb = store.get_knowledge_base(kb_id)
+            if kb:
+                catalog_client = _new_milvus_client()
+                try:
+                    upsert_catalog_entry(
+                        catalog_client,
+                        kb_id,
+                        str(kb.get("kb_name") or ""),
+                        str(kb.get("source_name") or ""),
+                        str(kb.get("source_hash") or new_hash),
+                    )
+                finally:
+                    catalog_client.close()
         except Exception:
             logger.exception("知识库构建失败: %s", kb_id)
             # 不覆盖 progress，保留失败前最后一次成功持久化的进度。
@@ -1551,7 +1714,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         if kb["status"] == "processing":
             raise HTTPException(status_code=409, detail="知识库正在构建")
         store.update_knowledge_base(kb_id, status="processing", progress=0)
-        background_tasks.add_task(_build_knowledge_base_task, kb_id)
+        background_tasks.add_task(_build_knowledge_base_task, kb_id, True)
         return {"kb_id": kb_id, "status": "processing", "progress": 0}
 
     @app.delete("/api/kb/{kb_id}", summary="删除知识库")
@@ -1568,6 +1731,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     filter=f'kb_id == "{safe_kb_id}"',
                 )
                 client.flush(COLLECTION_NAME)
+            delete_catalog_entry(client, kb_id)
         finally:
             client.close()
         store.delete_knowledge_base(kb_id)

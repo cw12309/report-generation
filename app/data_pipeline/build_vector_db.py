@@ -104,6 +104,137 @@ def _ensure_scalar_indexes(
     return missing
 
 
+# ── knowledge_base_catalog Collection ──────────────────────
+
+CATALOG_COLLECTION_NAME = "knowledge_base_catalog"
+
+
+def create_catalog_collection(client: MilvusClient) -> None:
+    schema = CollectionSchema(fields=[
+        FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+        FieldSchema(name="kb_id", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="kb_name", dtype=DataType.VARCHAR, max_length=255),
+        FieldSchema(name="source_name", dtype=DataType.VARCHAR, max_length=255),
+        FieldSchema(name="source_hash", dtype=DataType.VARCHAR, max_length=64),
+        FieldSchema(name="dummy_vector", dtype=DataType.FLOAT_VECTOR, dim=2),
+    ])
+    client.create_collection(
+        collection_name=CATALOG_COLLECTION_NAME,
+        schema=schema,
+    )
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name="dummy_vector",
+        index_type="FLAT",
+        metric_type="COSINE",
+    )
+    client.create_index(
+        collection_name=CATALOG_COLLECTION_NAME,
+        index_params=index_params,
+    )
+    _ensure_scalar_indexes(client, CATALOG_COLLECTION_NAME, ("kb_id",))
+
+
+def ensure_catalog_collection(client: MilvusClient) -> dict:
+    if not client.has_collection(CATALOG_COLLECTION_NAME):
+        create_catalog_collection(client)
+        return {"created": True, "valid": True}
+    return {"created": False, "valid": True}
+
+
+def upsert_catalog_entry(
+    client: MilvusClient,
+    kb_id: str,
+    kb_name: str,
+    source_name: str,
+    source_hash: str,
+) -> None:
+    ensure_catalog_collection(client)
+    client.load_collection(CATALOG_COLLECTION_NAME)
+    escaped_kb = kb_id.replace("\\", "").replace('"', "")
+    client.delete(
+        collection_name=CATALOG_COLLECTION_NAME,
+        filter=f'kb_id == "{escaped_kb}"',
+    )
+    client.insert(
+        collection_name=CATALOG_COLLECTION_NAME,
+        data=[{
+            "kb_id": kb_id,
+            "kb_name": kb_name,
+            "source_name": source_name,
+            "source_hash": source_hash,
+            "dummy_vector": [0.0, 0.0],
+        }],
+    )
+    client.flush(CATALOG_COLLECTION_NAME)
+
+
+def delete_catalog_entry(client: MilvusClient, kb_id: str) -> None:
+    if not client.has_collection(CATALOG_COLLECTION_NAME):
+        return
+    client.load_collection(CATALOG_COLLECTION_NAME)
+    escaped_kb = kb_id.replace("\\", "").replace('"', "")
+    client.delete(
+        collection_name=CATALOG_COLLECTION_NAME,
+        filter=f'kb_id == "{escaped_kb}"',
+    )
+    client.flush(CATALOG_COLLECTION_NAME)
+
+
+def list_catalog_entries(client: MilvusClient) -> list[dict]:
+    if not client.has_collection(CATALOG_COLLECTION_NAME):
+        return []
+    client.load_collection(CATALOG_COLLECTION_NAME)
+    results = client.query(
+        collection_name=CATALOG_COLLECTION_NAME,
+        filter="kb_id != ''",
+        output_fields=["kb_id", "kb_name", "source_name", "source_hash"],
+        limit=10000,
+    )
+    return results
+
+
+def find_catalog_by_hash(client: MilvusClient, source_hash: str) -> Optional[dict]:
+    if not source_hash:
+        return None
+    if not client.has_collection(CATALOG_COLLECTION_NAME):
+        return None
+    client.load_collection(CATALOG_COLLECTION_NAME)
+    results = client.query(
+        collection_name=CATALOG_COLLECTION_NAME,
+        filter=f'source_hash == "{source_hash}"',
+        output_fields=["kb_id", "kb_name", "source_name", "source_hash"],
+        limit=1,
+    )
+    return results[0] if results else None
+
+
+def list_distinct_kb_ids(client: MilvusClient) -> list[str]:
+    collection_name = get_collection_name()
+    if not client.has_collection(collection_name):
+        return []
+    client.load_collection(collection_name)
+    kb_ids: set[str] = set()
+    PAGE_SIZE = 10000
+    offset = 0
+    while True:
+        results = client.query(
+            collection_name=collection_name,
+            filter="kb_id != ''",
+            output_fields=["kb_id"],
+            limit=PAGE_SIZE,
+            offset=offset,
+        )
+        if not results:
+            break
+        for row in results:
+            kb_ids.add(row["kb_id"])
+        if len(results) < PAGE_SIZE:
+            break
+        offset += PAGE_SIZE
+    return sorted(kb_ids)
+
+
 def _section(content: str, heading: str) -> str:
     marker = f"### {heading}"
     if marker not in content:

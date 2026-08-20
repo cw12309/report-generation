@@ -83,6 +83,8 @@ class KnowledgeBaseInfo(BaseModel):
     created_at: Optional[str] = None
     status: str
     progress: int = Field(default=0, ge=0, le=100)
+    source_name: Optional[str] = None
+    source_hash: Optional[str] = None
 
 
 class KBUploadResponse(BaseModel):
@@ -93,6 +95,19 @@ class KBBuildResponse(BaseModel):
     kb_id: str
     status: str
     progress: int = Field(default=0, ge=0, le=100)
+
+
+class DuplicateKBResponse(BaseModel):
+    duplicate: bool = Field(default=True)
+    existing_kb_id: str
+    existing_kb_name: str
+    existing_source_name: str
+    message: str = "该文件内容已存在于知识库中"
+
+
+class KBUploadAction(BaseModel):
+    action: str = Field(default="", description="use_existing / rebuild / create_copy")
+    existing_kb_id: Optional[str] = None
 
 
 class SessionTitleUpdate(BaseModel):

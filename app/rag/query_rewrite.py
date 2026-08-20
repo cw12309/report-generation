@@ -245,7 +245,7 @@ def get_clarification(query):
     return "请补充检查部位或诊断信息，例如：CT头颅、MR膝关节等。"
 
 
-REWRITE_SYSTEM_PROMPT = load_prompt("rewrite")
+REWRITE_SYSTEM_PROMPT = load_prompt("rag_prompt/rewrite")
 
 
 def _build_rewrite_prompt(keywords=None):

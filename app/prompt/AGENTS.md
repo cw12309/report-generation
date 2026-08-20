@@ -11,19 +11,11 @@ Prompt 模板管理。存放所有 LLM System Prompt 的 Markdown 模板文件�
 | File                   | Responsibility                                               |
 | ---------------------- | ------------------------------------------------------------ |
 | `__init__.py`          | `load_prompt(name)` 和 `reload_prompt(name)` 函数            |
-| `builder.py`           | `PromptBuilder`：统一拼装 Entity 上下文 + 模板 + Last Report |
-| `structure.md`         | 新报告生成约束：唯一 Canonical `results[]` Schema，可选内部 reasoning |
-| `report_generation.md` | 报告生成任务 Prompt（rag_search 使用）                       |
-| `multi_disease.md`     | 多疾病报告生成 Prompt                                        |
-| `entity_extraction.md` | 实体提取 Prompt（EntityTracker 使用）                        |
-| `rewrite.md`           | 查询改写 Prompt（query_rewrite 使用）                        |
-| `edit.md`              | Canonical 报告最小编辑 Prompt（edit_tool 使用）              |
-| `refine.md`            | Canonical 报告风格润色与事实不可变 Prompt（refine_tool 使用）|
-| `tool_orchestrator.md` | Tool Calling 编排器 System Prompt                            |
-| `react_system.md`      | ReAct 模式 System Prompt                                     |
-| `react_simple.md`      | 简化版 ReAct Prompt                                          |
-| `chat.md`              | 通用对话 Prompt                                              |
-| `summarize.md`         | 对话摘要 Prompt（ShortTermMemory 淘汰时使用）                |
+| `system_prompt_builder.py` | `PromptBuilder`：统一拼装 Entity 上下文 + 模板 + Last Report |
+| `report_prompt/`       | 报告相关 Prompt（structure、report_generation、edit、refine、multi_disease） |
+| `agent_prompt/`        | Agent/对话编排 Prompt（tool_orchestrator、chat、react_system、react_simple） |
+| `rag_prompt/`          | RAG/检索 Prompt（rewrite） |
+| `memory_prompt/`       | 记忆/上下文 Prompt（entity_extraction、summarize） |
 
 ## Symbol Map
 
@@ -32,7 +24,7 @@ Prompt 模板管理。存放所有 LLM System Prompt 的 Markdown 模板文件�
 - `load_prompt(name)` → str — 加载 .md 模板（带缓存）
 - `reload_prompt(name)` → str — 强制重新加载
 
-### `builder.py`
+### `system_prompt_builder.py`
 
 - `PromptBuilder.build(template_name, entity_context, last_report, last_report_label)` → str — 构建完整 System Prompt
 
@@ -41,17 +33,17 @@ Prompt 模板管理。存放所有 LLM System Prompt 的 Markdown 模板文件�
 理解本模块的推荐顺序：
 
 1. `__init__.py` — 理解加载机制
-2. `builder.py` — 理解拼装逻辑
+2. `system_prompt_builder.py` — 理解拼装逻辑
 3. 按需阅读具体 .md 模板
 
 ## Public API
 
 ```python
 from prompt import load_prompt
-from prompt.builder import PromptBuilder
+from prompt.system_prompt_builder import PromptBuilder
 
 # 加载模板
-template = load_prompt("report_generation")
+template = load_prompt("report_prompt/structure")
 
 # 构建 Prompt
 sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=...)
@@ -59,9 +51,9 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 ## File Relationships
 
-所有 .md 模板通过 `load_prompt(name)` 加载，name 为文件名去 .md 扩展名。
+所有 .md 模板通过 `load_prompt(name)` 加载，name 为子目录 + 文件名去 .md 扩展名，如 `"report_prompt/structure"`。
 
-`builder.py`:
+`system_prompt_builder.py`:
 
 - uses `prompt/` → `load_prompt`
 - uses `langsmith` → `@traceable`
@@ -74,7 +66,7 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 ### External Dependencies
 
-- `langsmith` — `@traceable` (builder.py)
+- `langsmith` — `@traceable` (system_prompt_builder.py)
 
 ## Dependents
 
@@ -94,7 +86,7 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 ### 修改 Prompt 拼装逻辑
 
-优先检查: `builder.py` → `PromptBuilder.build()`
+优先检查: `system_prompt_builder.py` → `PromptBuilder.build()`
 
 ### 添加新的 Prompt 模板
 
@@ -110,8 +102,8 @@ sys_prompt = PromptBuilder.build("structure", entity_context=..., last_report=..
 
 ## Local Rules
 
-- 所有 Prompt 模板必须是 .md 文件，放在本目录
-- 模板文件名不含 .md 扩展名即为 `load_prompt` 的 name 参数
+- 所有 Prompt 模板必须是 .md 文件，放在对应的子目录（report_prompt/、agent_prompt/、rag_prompt/、memory_prompt/）
+- 模板加载路径为 `子目录/文件名`（去 .md），如 `"report_prompt/structure"`
 - 三个报告 Prompt 只能输出 Canonical `results[{影像学表现, 诊断意见}]`；Prompt 不是校验边界，程序校验由 `chat/report_schema.py` 承担
 - `PromptBuilder` 的拼接顺序：Entity 上下文 → 模板 → Last Report（用 `---` 分隔）
 - 模板修改后，`load_prompt` 的缓存不会自动失效，需重启或调用 `reload_prompt`

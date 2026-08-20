@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 from prompt import load_prompt
 
-SUMMARIZE_PROMPT = load_prompt("summarize")
+SUMMARIZE_PROMPT = load_prompt("memory_prompt/summarize")
 
 
 class ShortTermMemory:

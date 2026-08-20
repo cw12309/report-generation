@@ -157,7 +157,7 @@ def create_edit_report_handler(
             current_report = serialize_report(old_json, include_reasoning=False)
 
             from prompt import load_prompt
-            EDIT_PROMPT = load_prompt("edit")
+            EDIT_PROMPT = load_prompt("report_prompt/edit")
 
             sys_prompt = EDIT_PROMPT
             messages = [

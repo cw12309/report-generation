@@ -36,7 +36,7 @@ except ModuleNotFoundError:
 
 from memory import EntityTracker, ShortTermMemory
 from memory.retriever import MemoryRetriever
-from prompt.builder import PromptBuilder
+from prompt.system_prompt_builder import PromptBuilder
 
 
 # ═══════════════════════════════════════════════════════════
@@ -303,7 +303,7 @@ class TestPromptBuilderEntityContext:
         entity_tracker = EntityTracker()
         entity_tracker.update_from_query("CT 肝脏")
         ctx = entity_tracker.to_context_prompt()
-        sys_prompt = PromptBuilder.build("tool_orchestrator", entity_context=ctx)
+        sys_prompt = PromptBuilder.build("agent_prompt/tool_orchestrator", entity_context=ctx)
         assert_in(ctx, sys_prompt, "Prompt 应包含本轮实体上下文")
 
     @test("MemoryRetriever 只返回当前会话 STM")

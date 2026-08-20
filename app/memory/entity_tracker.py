@@ -21,7 +21,7 @@ from prompt import load_prompt
 logger = logging.getLogger(__name__)
 
 # 加载 LLM 提取提示词
-EXTRACTION_PROMPT = load_prompt("entity_extraction")
+EXTRACTION_PROMPT = load_prompt("memory_prompt/entity_extraction")
 
 # 模态关键词（按长度降序，避免短词误匹配）
 MODALITY_PATTERNS = [

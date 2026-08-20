@@ -240,10 +240,10 @@ def create_rag_search_handler(
             if _emit_fn:
                 _emit_fn("status", {"message": "检索完成，正在生成结构化报告...", "phase": "generating"})
 
-            from prompt.builder import PromptBuilder
+            from prompt.system_prompt_builder import PromptBuilder
 
             sys_prompt = PromptBuilder.build(
-                "structure",
+                "report_prompt/structure",
                 entity_context=entity_tracker.to_context_prompt() if entity_tracker else None,
                 last_report=last_report[0] if last_report and last_report[0] else None,
             )

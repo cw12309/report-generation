@@ -91,10 +91,10 @@ def create_refine_report_handler(
             old_json = parse_report_output(last_report[0])
             current_report = serialize_report(old_json, include_reasoning=False)
 
-            from prompt.builder import PromptBuilder
+            from prompt.system_prompt_builder import PromptBuilder
 
             sys_prompt = PromptBuilder.build(
-                "refine",
+                "report_prompt/refine",
                 entity_context=entity_tracker.to_context_prompt() if entity_tracker else None,
             )
 

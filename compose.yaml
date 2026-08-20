@@ -31,7 +31,7 @@ services:
     expose:
       - "8000"
     ports:
-      - "7860:8000"
+      - "8080:8000"
     volumes:
       # Excel 切片文件
       - ./app/data_pipeline/xlsx_slices:/app/app/data_pipeline/xlsx_slices
@@ -59,7 +59,7 @@ services:
       - --port
       - "8001"
     ports:
-      - "7861:8001"
+      - "8081:8001"
     environment:
       PYTHONUNBUFFERED: "1"
       WORKER_BASE_URL: http://worker:8000

@@ -11,7 +11,7 @@ from langsmith.run_helpers import get_current_run_tree
 
 from memory.retriever import MemoryRetriever
 from tools.registry import ToolRegistry, ToolResult
-from prompt.builder import PromptBuilder
+from prompt.system_prompt_builder import PromptBuilder
 from rag.query_rewrite import needs_rewrite, rewrite_query, standardize_query
 from rag.query_planner import build_query_plan
 from rag.retrieval import retrieve_with_fallback
@@ -456,7 +456,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
 
     # 构建系统消息：仅注入 EntityTracker 的当前会话上下文
     sys_prompt = PromptBuilder.build(
-        "tool_orchestrator",
+        "agent_prompt/tool_orchestrator",
         entity_context=entity_tracker.to_context_prompt(),
     )
 

@@ -5,8 +5,6 @@ __pycache__/
 dist/
 build/
 
-milvus_lite.db/
-milvus_lite.db
 xlsx_slices/
 /app/data_pipeline/report_template/
 /app/data_pipeline/output_markdown/
@@ -32,4 +30,3 @@ venv/
 data/
 app/memory/data/
 data/sessions.db
-

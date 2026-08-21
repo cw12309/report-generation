@@ -183,7 +183,7 @@ def get_db_path() -> str:
     milvus_uri = os.environ.get("MILVUS_URI", "") or _resolve("milvus.uri", "")
     if milvus_uri:
         return normalize_milvus_uri(milvus_uri)
-    path = _resolve("retrieval.db_path", "./data_pipeline/milvus_lite.db")
+    path = _resolve("retrieval.db_path", "./data/milvus.db")
     if not os.path.isabs(path):
         path = os.path.join(_project_root, path)
     return path

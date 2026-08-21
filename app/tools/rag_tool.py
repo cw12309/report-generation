@@ -98,6 +98,28 @@ def _rebuild_search_result(reranked_entities: List[Dict]) -> str:
         parts.append(f"### 参考{i}（Rerank分数: {score:.4f}）\n{entity['text']}\n")
     return "\n".join(parts)
 
+
+def _resolve_rule_body_parts(
+    entity_tracker,
+    fallback_body_part: str | None,
+) -> list[str]:
+    """从 EntityTracker 或 Tool 参数中解析部位列表，用于规则加载。
+
+    EntityTracker 的 body_part 是 list[str]，优先使用。
+    如果 EntityTracker 不可用，则使用 Tool 参数中的 fallback_body_part。
+
+    Returns:
+        list[str]: 部位列表，每个元素是独立的部位名称
+    """
+    if entity_tracker:
+        bp_slot = entity_tracker.slots.get("body_part", [])
+        if isinstance(bp_slot, list) and bp_slot:
+            return [str(bp) for bp in bp_slot if bp]
+    if fallback_body_part and fallback_body_part.strip():
+        return [fallback_body_part.strip()]
+    return []
+
+
 RAG_SEARCH_SCHEMA = {
     "type": "function",
     "function": {
@@ -241,10 +263,26 @@ def create_rag_search_handler(
                 _emit_fn("status", {"message": "检索完成，正在生成结构化报告...", "phase": "generating"})
 
             from prompt.system_prompt_builder import PromptBuilder
+            from prompt.structure_rules_loader import StructureRulesLoader
+
+            rule_body_parts = _resolve_rule_body_parts(entity_tracker, body_part)
+
+            rules_result = StructureRulesLoader.get_rules(
+                modality=modality or None,
+                body_parts=rule_body_parts,
+            )
+            logger.info(
+                "Body-part rules resolved: modality=%s body_parts=%s matched=%s unmatched=%s",
+                rules_result.normalized_modality,
+                rule_body_parts,
+                rules_result.matched_rule_ids,
+                rules_result.unmatched_body_parts,
+            )
 
             sys_prompt = PromptBuilder.build(
                 "report_prompt/structure",
                 entity_context=entity_tracker.to_context_prompt() if entity_tracker else None,
+                body_part_rules=rules_result.content if rules_result and rules_result.content else None,
                 last_report=last_report[0] if last_report and last_report[0] else None,
             )
 

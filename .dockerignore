@@ -7,7 +7,6 @@ build/
 
 app/test/
 
-milvus_lite.db/
 xlsx_slices/
 report_template/
 

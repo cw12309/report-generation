@@ -1,0 +1,106 @@
+{
+  "description": "腰椎 MRI 报告生成 A/B 评测用例集",
+  "version": "1.0",
+  "cases": [
+    {
+      "id": "lumbar_001",
+      "input": "MR 腰椎 腰椎间盘突出",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "disc", "herniation"]
+    },
+    {
+      "id": "lumbar_002",
+      "input": "MR 腰椎 腰椎间盘膨出",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "disc", "bulge"]
+    },
+    {
+      "id": "lumbar_003",
+      "input": "MR 腰椎 椎间盘退变",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "disc", "degeneration"]
+    },
+    {
+      "id": "lumbar_004",
+      "input": "MR 腰椎 椎管狭窄",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "stenosis"]
+    },
+    {
+      "id": "lumbar_005",
+      "input": "MR 腰椎 神经根受压",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "nerve"]
+    },
+    {
+      "id": "lumbar_006",
+      "input": "MR 腰椎 椎体终板改变",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "endplate", "modic"]
+    },
+    {
+      "id": "lumbar_007",
+      "input": "MR 腰椎 腰椎滑脱",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "spondylolisthesis"]
+    },
+    {
+      "id": "lumbar_008",
+      "input": "MR 腰椎 多节段椎间盘病变",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "disc", "multi-level"]
+    },
+    {
+      "id": "lumbar_009",
+      "input": "MR 腰椎 腰痛查因",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "simple"]
+    },
+    {
+      "id": "lumbar_010",
+      "input": "MR 腰椎 术后复查",
+      "expected": {
+        "modality": "MR",
+        "body_part": ["腰椎"],
+        "expected_rule_id": "mr_lumbar_spine"
+      },
+      "tags": ["lumbar", "sparse", "post-op"]
+    }
+  ]
+}

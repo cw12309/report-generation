@@ -26,10 +26,10 @@ from memory.entity_tracker import DIAGNOSIS_TO_BODY_PART
 def _infer_part_from_diagnosis(diagnosis: str) -> str:
     """从诊断推断部位"""
     return DIAGNOSIS_TO_BODY_PART.get(diagnosis, "")
-from config import get_collection_name
+from config import get_collection_name, get_db_path
 
 COLLECTION_NAME = get_collection_name()
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data_pipeline', 'milvus_lite.db')
+DB_PATH = get_db_path()
 
 
 def load_dataset(file_path):

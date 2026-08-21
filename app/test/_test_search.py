@@ -7,9 +7,9 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
 
 from pymilvus import MilvusClient
-from config import get_embed_client, get_embed_model
+from config import get_embed_client, get_embed_model, get_db_path
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "milvus_lite.db")
+DB_PATH = get_db_path()
 COLLECTION_NAME = "report_slices"
 
 client = MilvusClient(uri=DB_PATH)

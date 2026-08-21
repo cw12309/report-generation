@@ -1019,7 +1019,17 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     store.update_title(session_id, query[:20])
             except Exception as exc:
                 logger.error("run_pipeline 执行异常", exc_info=True)
-                queue_event("error", {"code": "AGENT_ERROR", "message": str(exc)})
+                msg = str(exc)
+                try:
+                    body = getattr(exc, "body", None) or getattr(exc, "response", None)
+                    if body is not None:
+                        if hasattr(body, "json"):
+                            body = body.json()
+                        if isinstance(body, dict):
+                            msg = body.get("error", {}).get("message", msg)
+                except Exception:
+                    pass
+                queue_event("error", {"code": "AGENT_ERROR", "message": msg})
             finally:
                 if session is not None:
                     try:

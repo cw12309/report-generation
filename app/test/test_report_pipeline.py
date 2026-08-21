@@ -848,6 +848,319 @@ def test_recovery_tool_failed_user_facing_no_retry(monkeypatch):
     assert "没有可修改的报告" in result
 
 
+# =============================================================================
+# Body-Part Rules Integration 测试 (Phase 4)
+# =============================================================================
+
+class _FakeStructureRulesResult:
+    """模拟 StructureRulesResult"""
+    def __init__(self, content="", matched_ids=None, matched_files=None,
+                 unmatched=None, normalized_modality="MR", normalized_body_parts=None):
+        self.content = content
+        self.normalized_modality = normalized_modality
+        self.matched_rule_ids = matched_ids or []
+        self.matched_rule_files = matched_files or []
+        self.unmatched_body_parts = unmatched or []
+        self.normalized_body_parts = normalized_body_parts or []
+
+
+LUMBAR_RULE_CONTENT = "## 腰椎MRI标准化报告模板\n### 椎间盘评估\n应按Pfirrmann分级描述椎间盘退变程度。"
+LUMBAR_RULE_MARKER = "腰椎MRI标准化报告模板"
+THORACIC_RULE_CONTENT = "## 胸椎MRI标准化报告模板\n### 椎体评估\n应描述椎体形态及信号。"
+THORACIC_RULE_MARKER = "胸椎MRI标准化报告模板"
+
+
+def _make_rag_handler(entity_tracker=None, search_result=None, last_report=None):
+    """创建标准 rag_search handler 用于测试"""
+    calls_sys_prompt = []
+
+    async def chat_fn(messages, **kwargs):
+        calls_sys_prompt.append(messages[0]["content"])
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    if entity_tracker is None:
+        entity_tracker = EntityTracker()
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=entity_tracker,
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            search_result or "### 参考1\n右侧病灶。诊断脑出血。",
+            [{"text": "右侧病灶。", "_rerank_score": 0.9}],
+        ),
+        last_report=last_report or [""],
+    )
+    return handler, chat_fn, calls_sys_prompt
+
+
+class TestBodyPartRulesIntegration:
+    """部位规则接入 rag_tool 的集成测试"""
+
+    def test_lumbar_rules_injected_when_matched(self, monkeypatch):
+        """Case 1: 腰椎规则成功注入 System Prompt"""
+        fake_result = _FakeStructureRulesResult(
+            content=LUMBAR_RULE_CONTENT,
+            matched_ids=["mr_lumbar"],
+            matched_files=["腰椎MRI标准化报告模板.md"],
+            normalized_body_parts=["腰椎"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["腰椎"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MR 腰椎 腰椎间盘突出"}))
+
+        sys_prompt = calls_sys_prompt[0]
+        assert "## 部位特化报告标准" in sys_prompt
+        assert LUMBAR_RULE_MARKER in sys_prompt
+
+    def test_factuality_before_body_part_rules(self, monkeypatch):
+        """Case 2: 事实性硬约束在部位规则之前"""
+        fake_result = _FakeStructureRulesResult(
+            content=LUMBAR_RULE_CONTENT,
+            matched_ids=["mr_lumbar"],
+            normalized_body_parts=["腰椎"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["腰椎"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MR 腰椎"}))
+
+        sys_prompt = calls_sys_prompt[0]
+        pos_factuality = sys_prompt.index("事实性硬约束")
+        pos_rules = sys_prompt.index(LUMBAR_RULE_MARKER)
+        assert pos_factuality < pos_rules, (
+            f"事实性硬约束应在部位规则之前，"
+            f"但事实性硬约束在 {pos_factuality}，腰椎规则在 {pos_rules}"
+        )
+
+    def test_unmatched_body_part_safe_degradation(self, monkeypatch):
+        """Case 3: 未配置部位安全降级，报告生成继续"""
+        fake_result = _FakeStructureRulesResult(
+            content="",
+            unmatched_body_parts=["骶髂关节"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["骶髂关节"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        result = json.loads(asyncio.run(handler({"query": "MR 骶髂关节"})))
+
+        assert result["_is_final"] is True
+        sys_prompt = calls_sys_prompt[0]
+        assert "## 部位特化报告标准" not in sys_prompt
+        assert "输出格式" in sys_prompt
+
+    def test_ct_does_not_leak_mr_rules(self, monkeypatch):
+        """Case 4: CT 不误用 MR 腰椎规则"""
+        fake_result = _FakeStructureRulesResult(
+            content="",
+            unmatched_body_parts=["腰椎"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "CT"
+        tracker.slots["body_part"] = ["腰椎"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        result = json.loads(asyncio.run(handler({"query": "CT 腰椎", "modality": "CT", "body_part": "腰椎"})))
+
+        assert result["_is_final"] is True
+        sys_prompt = calls_sys_prompt[0]
+        assert LUMBAR_RULE_MARKER not in sys_prompt
+
+    def test_alias_routing_brain_to_颅脑(self, monkeypatch):
+        """Case 5: alias 路由 — '脑部' → 颅脑规则"""
+        BRAIN_RULE = "## 颅脑MRI标准化报告模板\n### 脑实质评估"
+        fake_result = _FakeStructureRulesResult(
+            content=BRAIN_RULE,
+            matched_ids=["mr_brain"],
+            matched_files=["颅脑MRI标准化报告模板.md"],
+            normalized_body_parts=["颅脑"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MRI"
+        tracker.slots["body_part"] = ["脑部"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MRI 脑部", "modality": "MRI", "body_part": "脑部"}))
+
+        sys_prompt = calls_sys_prompt[0]
+        assert "颅脑MRI标准化报告模板" in sys_prompt
+
+    def test_multi_body_parts_both_injected(self, monkeypatch):
+        """Case 6: 多 body_part — 腰椎和胸椎规则同时注入"""
+        combined = f"{LUMBAR_RULE_CONTENT}\n\n---\n\n{THORACIC_RULE_CONTENT}"
+        fake_result = _FakeStructureRulesResult(
+            content=combined,
+            matched_ids=["mr_lumbar", "mr_thoracic"],
+            matched_files=["腰椎MRI标准化报告模板.md", "胸椎MRI标准化报告模板.md"],
+            normalized_body_parts=["腰椎", "胸椎"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["腰椎", "胸椎"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MR 腰椎 胸椎"}))
+
+        sys_prompt = calls_sys_prompt[0]
+        assert LUMBAR_RULE_MARKER in sys_prompt
+        assert THORACIC_RULE_MARKER in sys_prompt
+        assert sys_prompt.index(LUMBAR_RULE_MARKER) < sys_prompt.index(THORACIC_RULE_MARKER)
+
+    def test_entity_tracker_list_not_joined(self, monkeypatch):
+        """Case 7: EntityTracker body_part list 不被错误 join"""
+        captured_body_parts = []
+
+        def fake_get_rules(modality, body_parts):
+            captured_body_parts.append(body_parts)
+            return _FakeStructureRulesResult(content="")
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            fake_get_rules,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["腰椎", "胸椎"]
+
+        handler, _chat_fn, _calls = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MR 腰椎 胸椎"}))
+
+        assert captured_body_parts, "get_rules 未被调用"
+        body_parts = captured_body_parts[0]
+        assert isinstance(body_parts, list)
+        assert "腰椎" in body_parts
+        assert "胸椎" in body_parts
+        assert "腰椎 胸椎" not in body_parts
+
+    def test_empty_rules_content_passed_as_none(self, monkeypatch):
+        """Case 8: Loader 返回空 content → PromptBuilder 收到 None"""
+        fake_result = _FakeStructureRulesResult(
+            content="",
+            unmatched_body_parts=["骶髂关节"],
+        )
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["骶髂关节"]
+
+        handler, _chat_fn, calls_sys_prompt = _make_rag_handler(entity_tracker=tracker)
+        asyncio.run(handler({"query": "MR 骶髂关节"}))
+
+        sys_prompt = calls_sys_prompt[0]
+        assert "## 部位特化报告标准" not in sys_prompt
+
+    def test_existing_behavior_unchanged(self, monkeypatch):
+        """Case 9: 现有报告生成行为不受影响"""
+        fake_result = _FakeStructureRulesResult(content="")
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            lambda modality, body_parts: fake_result,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "CT"
+        tracker.slots["body_part"] = ["头颅"]
+
+        handler, _chat_fn, _calls = _make_rag_handler(entity_tracker=tracker)
+        result = json.loads(asyncio.run(handler({"query": "CT头颅 脑出血"})))
+
+        assert result["_is_final"] is True
+        assert "results" in result
+        assert len(result["results"]) > 0
+        assert "影像学表现" in result["results"][0]
+        assert "诊断意见" in result["results"][0]
+
+    def test_loader_config_error_does_not_crash(self, monkeypatch):
+        """Loader 配置错误时记录日志但不中断报告生成"""
+        def failing_get_rules(modality, body_parts):
+            raise ValueError("manifest 损坏")
+
+        monkeypatch.setattr(
+            "tools.rag_tool.StructureRulesLoader.get_rules",
+            failing_get_rules,
+        )
+
+        tracker = EntityTracker()
+        tracker.slots["modality"] = "MR"
+        tracker.slots["body_part"] = ["腰椎"]
+
+        handler, _chat_fn, _calls = _make_rag_handler(entity_tracker=tracker)
+        result = json.loads(asyncio.run(handler({"query": "MR 腰椎"})))
+
+        assert result["_is_final"] is True
+        assert "results" in result
+
+    def test_resolve_rule_body_parts_from_fallback(self):
+        """_resolve_rule_body_parts: 无 EntityTracker 时使用 fallback"""
+        from tools.rag_tool import _resolve_rule_body_parts
+        result = _resolve_rule_body_parts(None, "膝关节")
+        assert result == ["膝关节"]
+
+    def test_resolve_rule_body_parts_empty_fallback(self):
+        """_resolve_rule_body_parts: 无 EntityTracker 且无 fallback 返回空列表"""
+        from tools.rag_tool import _resolve_rule_body_parts
+        result = _resolve_rule_body_parts(None, None)
+        assert result == []
+
+    def test_resolve_rule_body_parts_entity_tracker_priority(self):
+        """_resolve_rule_body_parts: EntityTracker list 优先于 fallback"""
+        from tools.rag_tool import _resolve_rule_body_parts
+        tracker = EntityTracker()
+        tracker.slots["body_part"] = ["腰椎", "颈椎"]
+        result = _resolve_rule_body_parts(tracker, "头颅")
+        assert result == ["腰椎", "颈椎"]
+
+
 def test_recovery_schema_invalid_terminal(monkeypatch):
     """REPORT_SCHEMA_INVALID: 工具返回非法 JSON → 日志记录并终止，不重试"""
     tool_result = ToolResult(

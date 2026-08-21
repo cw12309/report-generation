@@ -17,11 +17,11 @@ from dotenv import load_dotenv
 from pymilvus import MilvusClient
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from config import get_embed_client, get_embed_model
+from config import get_embed_client, get_embed_model, get_db_path
 
 load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".env"))
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data_pipeline", "milvus_lite.db")
+DB_PATH = get_db_path()
 COLLECTION_NAME = "report_slices"
 
 

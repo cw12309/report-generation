@@ -1,0 +1,80 @@
+# 部位特化 MRI 报告规则清单
+# 仅登记 body-part-specific 规则文件，通用规则不在此列。
+# 新增规则时请确保:
+#   1. rule id 唯一
+#   2. (modality, body_part) 组合唯一
+#   3. 同一 modality 下 alias 不得映射到两个不同的 canonical body_part
+#   4. file 指向真实存在的 .md 文件
+
+rules:
+  - id: mr_lumbar_spine
+    modality: MR
+    body_part: 腰椎
+    aliases:
+      - 腰椎MRI
+      - 腰椎MR
+      - L-spine
+      - lumbar spine
+    file: 腰椎MRI标准化报告模板.md
+    version: "1.0"
+
+  - id: mr_cervical_spine
+    modality: MR
+    body_part: 颈椎
+    aliases:
+      - 颈椎MRI
+      - 颈椎MR
+      - C-spine
+      - cervical spine
+    file: 颈椎MRI标准化诊断模板.md
+    version: "1.0"
+
+  - id: mr_thoracic_spine
+    modality: MR
+    body_part: 胸椎
+    aliases:
+      - 胸椎MRI
+      - 胸椎MR
+      - T-spine
+      - thoracic spine
+    file: 胸椎MRI标准化报告模板.md
+    version: "1.0"
+
+  - id: mr_brain
+    modality: MR
+    body_part: 颅脑
+    aliases:
+      - 颅脑MRI
+      - 颅脑MR
+      - 头颅MRI
+      - 头颅MR
+      - 头颅
+      - 头部
+      - 大脑
+      - 脑部
+      - brain
+      - Brain
+    file: 颅脑MRI标准化报告模板.md
+    version: "1.0"
+
+  - id: mr_cardiac
+    modality: MR
+    body_part: 心脏
+    aliases:
+      - 心脏MRI
+      - 心脏MR
+      - cardiac
+      - heart
+    file: 心脏MRI标准化报告模板.md
+    version: "1.0"
+
+  - id: mr_breast
+    modality: MR
+    body_part: 乳腺
+    aliases:
+      - 乳腺MRI
+      - 乳腺MR
+      - breast
+      - mamma
+    file: 乳腺MRI标准化报告模板.md
+    version: "1.0"

@@ -21,8 +21,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _PROMPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(_PROMPT_DIR))
-_STRUCTURE_DIR = os.path.join(_PROJECT_ROOT, "docs", "structure")
+_STRUCTURE_DIR = os.path.join(_PROMPT_DIR, "structure")
 _MANIFEST_PATH = os.path.join(_STRUCTURE_DIR, "manifest.yaml")
 
 _registry: Dict[Tuple[str, str], "RuleMetadata"] = {}
@@ -208,7 +207,8 @@ def _normalize_body_part(modality: str, raw: str) -> Optional[str]:
 
 def _load_manifest() -> None:
     if not os.path.exists(_MANIFEST_PATH):
-        raise FileNotFoundError(f"manifest 文件不存在: {_MANIFEST_PATH}")
+        logger.warning("manifest 文件不存在 (%s)，部位特化规则将不可用", _MANIFEST_PATH)
+        return
 
     with open(_MANIFEST_PATH, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)

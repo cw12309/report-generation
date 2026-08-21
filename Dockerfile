@@ -45,6 +45,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY app/ ./app/
 COPY front/ ./front/
 COPY services/ ./services/
+COPY docs/ ./docs/
 COPY python_start.py ./python_start.py
 COPY config.yml ./config.yml
 

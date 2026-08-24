@@ -28,6 +28,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 - `_new_milvus_client()` — 创建 Milvus 客户端
 - `_get_or_create_session(session_id)` — 从 SQLite 恢复或创建新会话
 - `_stateful_chat_events(...)` — 浏览器 Chat 与 Deployment Chat 复用的 Pipeline/持久化事件执行器
+- `_stateful_chat_events(...)` 的事件汇总层 — 为所有 JSON SSE 事件统一注入不可覆盖的 `request_id`
 - `observe_http_request()` — 为业务请求生成/透传 `request_id` 并写入共用请求指标与 Trace
 - `/api/observability/overview|traces|logs/stream` — Monitor 概览、Trace 查询与结构化日志 SSE
 - API 路由约 20+ 个（详见 Entry Points）

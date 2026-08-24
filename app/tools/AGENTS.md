@@ -12,7 +12,7 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 | ---------------- | ---------------------------------------------------------------- |
 | `__init__.py`    | 公共导出入口，re-export 所有 public symbols                      |
 | `registry.py`    | `ToolRegistry` 类：工具注册、Schema 生成、异步执行               |
-| `rag_tool.py`    | `rag_search` 工具：多路召回 + Rerank + 歧义检测 + 结构化报告生成 |
+| `rag_tool.py`    | `rag_search` 工具：多路召回 + Rerank + 歧义检测 + 结构化报告生成，并可发送 Report Prompt Trace |
 | `edit_tool.py`   | `edit_report` 工具：基于 Last Report 编辑、事实检查、LLM Judge 与单次 Repair |
 | `refine_tool.py` | `refine_report` 工具：调整报告风格/详细程度/语气                 |
 | `utils.py`       | 旧通用 JSON 提取 helper；正式报告解析已统一迁移到 `chat/report_schema.py` |
@@ -32,6 +32,7 @@ Tool Calling 工具系统。提供 OpenAI 兼容的 Tool Calling 机制，包括
 - `RAG_SEARCH_SCHEMA` — rag_search 工具的 OpenAI function schema
 - `create_rag_search_handler(chat_fn, entity_tracker, get_embedding_fn, search_reports_fn, _emit_fn, last_report, selected_diagnosis, last_ambiguity)` — 创建 rag_search handler 的工厂函数
 - `detect_ambiguity(reranked_entities, threshold)` — 细粒度歧义检测
+- `_build_prompt_trace(...)` — 从本轮真实 `sys_prompt`、`user_content`、RAG 与规则结果构造只读快照
 
 ### `edit_tool.py`
 

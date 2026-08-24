@@ -123,6 +123,14 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
                 {"results": [{"影像学表现": "右侧病灶", "诊断意见": "脑出血"}]},
                 ensure_ascii=False,
             )
+            emit(
+                "prompt_trace",
+                {
+                    "request_id": "spoofed-request-id",
+                    "stage": "report_generation",
+                    "prompt": {"system_prompt_chars": 10, "user_message_chars": 20},
+                },
+            )
             emit("report", {"content": "影像学表现：右侧病灶"})
             result = last_report[0]
         elif query == "ambiguous":
@@ -211,6 +219,7 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
     assert first_response.status_code == 200
     first_events = _sse_events(first_response)
     assert [event["type"] for event in first_events] == ["conversation", "report", "done"]
+    assert all(event.get("request_id") for event in first_events)
     assert "data" in first_events[1]
     conversation_id = first_events[0]["conversation_id"]
     assert pipeline_calls[-1]["selected_kbs"] == ["kb_a"]
@@ -274,6 +283,7 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
     # Existing browser Stateful Chat still uses the same extracted executor.
     browser_chat = client.post(
         "/api/chat",
+        headers={"X-Request-ID": "req_prompt_trace_sse"},
         json={
             "query": "first",
             "session_id": "browser-regression",
@@ -281,7 +291,30 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
         },
     )
     assert browser_chat.status_code == 200
-    assert "report" in [event["type"] for event in _sse_events(browser_chat)]
+    browser_events = _sse_events(browser_chat)
+    assert "prompt_trace" in [event["type"] for event in browser_events]
+    assert "report" in [event["type"] for event in browser_events]
+    assert all(
+        event["request_id"] == "req_prompt_trace_sse"
+        for event in browser_events
+    )
+
+    browser_error = client.post(
+        "/api/chat",
+        headers={"X-Request-ID": "req_prompt_trace_error"},
+        json={
+            "query": "raise",
+            "session_id": "browser-error",
+            "selected_kbs": ["kb_a"],
+        },
+    )
+    error_events = _sse_events(browser_error)
+    assert [event["type"] for event in error_events][-2:] == ["error", "done"]
+    assert all(
+        event["request_id"] == "req_prompt_trace_error"
+        for event in error_events
+    )
+    assert "data: [DONE]" in browser_error.text
 
     stateless = client.post(
         "/internal/rag/search",

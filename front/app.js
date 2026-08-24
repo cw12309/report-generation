@@ -2431,6 +2431,21 @@ async function sendMessage(selectedDiagnosis) {
 }
 
 function handleStreamEvent(event, thinking, assistantStream) {
+  if (assistantStream && event.request_id) {
+    if (
+      assistantStream.requestId &&
+      assistantStream.requestId !== event.request_id
+    ) {
+      console.warn(
+        "[Prompt Trace] 当前流收到不一致的 request_id:",
+        assistantStream.requestId,
+        event.request_id,
+      );
+    } else {
+      assistantStream.requestId = event.request_id;
+    }
+  }
+
   switch (event.type) {
     case "status":
       updateStatusText(event.message);
@@ -2481,6 +2496,12 @@ function handleStreamEvent(event, thinking, assistantStream) {
 
     case "reasoning":
       addReasoningStep(thinking, event.text);
+      break;
+
+    case "prompt_trace":
+      assistantStream.requestId = event.request_id || assistantStream.requestId;
+      assistantStream.promptTrace = event;
+      bindPromptTraceToMessage(assistantStream, event);
       break;
 
     case "report":
@@ -2935,6 +2956,9 @@ function createAssistantStreamState() {
     references: [],
     referenceKeys: new Set(),
     completed: false,
+    requestId: null,
+    promptTrace: null,
+    promptTraceActionsEl: null,
   };
 }
 
@@ -3038,6 +3062,172 @@ function renderAssistantReferences(state) {
   state.referencesEl = referencesEl;
 }
 
+function bindPromptTraceToMessage(state, trace) {
+  if (!state || !trace) return;
+  ensureStreamingAssistantBubble(state);
+  state.promptTrace = trace;
+  state.requestId = trace.request_id || state.requestId;
+  state.messageEl._promptTrace = trace;
+  renderPromptTraceAction(state.messageEl, trace);
+  state.promptTraceActionsEl = state.messageEl.querySelector(
+    ".prompt-trace-actions",
+  );
+}
+
+function renderPromptTraceAction(messageEl, trace) {
+  if (!messageEl || !trace) return;
+  const bubble = messageEl.querySelector(".bubble");
+  if (!bubble) return;
+
+  bubble.querySelector(".prompt-trace-actions")?.remove();
+  const actions = document.createElement("div");
+  actions.className = "prompt-trace-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn btn-sm btn-outline prompt-trace-open";
+  button.textContent = "查看本轮 Prompt";
+  button.addEventListener("click", () => {
+    openPromptTraceModal(messageEl._promptTrace || trace);
+  });
+  actions.appendChild(button);
+  bubble.appendChild(actions);
+}
+
+function promptTraceDisplay(value, emptyValue = "-") {
+  if (Array.isArray(value)) return value.length ? value.join("、") : emptyValue;
+  if (value === null || value === undefined || value === "") return emptyValue;
+  return String(value);
+}
+
+function addPromptTraceSection(body, title, rows) {
+  const section = document.createElement("section");
+  section.className = "prompt-trace-section";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  const grid = document.createElement("dl");
+  grid.className = "prompt-trace-grid";
+  rows.forEach(([label, value]) => {
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = promptTraceDisplay(value);
+    grid.append(term, detail);
+  });
+  section.append(heading, grid);
+  body.appendChild(section);
+}
+
+function addFullPromptTraceSection(body, title, text, copyLabel) {
+  const section = document.createElement("section");
+  section.className = "prompt-trace-section prompt-trace-full";
+  const header = document.createElement("div");
+  header.className = "prompt-trace-section-header";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "btn btn-sm btn-outline";
+  copyButton.textContent = "复制";
+  copyButton.addEventListener("click", () => copyApiText(text, copyLabel));
+  const pre = document.createElement("pre");
+  pre.textContent = text;
+  header.append(heading, copyButton);
+  section.append(header, pre);
+  body.appendChild(section);
+}
+
+function ensurePromptTraceModal() {
+  let modal = document.getElementById("promptTraceModal");
+  if (modal) return modal;
+
+  modal = document.createElement("div");
+  modal.id = "promptTraceModal";
+  modal.className = "agent-modal prompt-trace-modal";
+  modal.hidden = true;
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-labelledby", "promptTraceModalTitle");
+  modal.innerHTML = `
+    <div class="agent-modal-overlay" data-prompt-trace-close></div>
+    <div class="agent-modal-dialog prompt-trace-dialog">
+      <div class="agent-modal-header">
+        <h3 id="promptTraceModalTitle">本轮 Report Prompt</h3>
+        <button type="button" class="close-btn" data-prompt-trace-close aria-label="关闭">&times;</button>
+      </div>
+      <div class="agent-modal-body prompt-trace-body"></div>
+    </div>
+  `;
+  modal.querySelectorAll("[data-prompt-trace-close]").forEach((element) => {
+    element.addEventListener("click", () => {
+      modal.hidden = true;
+    });
+  });
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function openPromptTraceModal(trace) {
+  if (!trace) return;
+  const modal = ensurePromptTraceModal();
+  const body = modal.querySelector(".prompt-trace-body");
+  const context = trace.context || {};
+  const rag = trace.rag || {};
+  const rules = trace.rules || {};
+  const prompt = trace.prompt || {};
+  body.innerHTML = "";
+
+  addPromptTraceSection(body, "Request", [
+    ["Request ID", trace.request_id],
+    ["Stage", trace.stage],
+  ]);
+  addPromptTraceSection(body, "Context", [
+    ["Modality", context.modality],
+    ["Body Parts", context.body_parts],
+    ["Diagnosis", context.diagnosis],
+  ]);
+  addPromptTraceSection(body, "RAG", [
+    ["Has Evidence", rag.has_evidence ? "Yes" : "No"],
+    ["Result Count", rag.result_count],
+    ["Evidence Chars", rag.evidence_chars],
+  ]);
+  addPromptTraceSection(body, "Rules", [
+    ["Injected", rules.injected ? "Yes" : "No"],
+    ["Normalized Modality", rules.normalized_modality],
+    ["Normalized Body Parts", rules.normalized_body_parts],
+    ["Rule IDs", rules.matched_rule_ids],
+    ["Rule Files", rules.matched_rule_files],
+    ["Unmatched", rules.unmatched_body_parts],
+    ["Rule Chars", rules.content_chars],
+    ["Rule Hash", rules.content_hash],
+  ]);
+  addPromptTraceSection(body, "Prompt", [
+    ["System Prompt Chars", prompt.system_prompt_chars],
+    ["User Message Chars", prompt.user_message_chars],
+    ["Body-Part Rules", prompt.has_body_part_rules ? "Injected" : "Not Injected"],
+    ["Last Report", prompt.has_last_report ? "Yes" : "No"],
+  ]);
+
+  if (Object.prototype.hasOwnProperty.call(prompt, "system_prompt")) {
+    addFullPromptTraceSection(
+      body,
+      "完整 System Prompt",
+      prompt.system_prompt || "",
+      "System Prompt",
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(prompt, "user_message")) {
+    addFullPromptTraceSection(
+      body,
+      "完整 User Message / RAG Evidence",
+      prompt.user_message || "",
+      "User Message",
+    );
+  }
+
+  modal.hidden = false;
+  modal.querySelector(".close-btn")?.focus();
+}
+
 function completeAssistantStream(state, finalContent, roleLabel) {
   if (!state) return;
   if (typeof finalContent === "string") state.rawText = finalContent;
@@ -3049,6 +3239,7 @@ function completeAssistantStream(state, finalContent, roleLabel) {
   state.messageEl.classList.remove("is-streaming");
   state.completed = true;
   renderAssistantReferences(state);
+  if (state.promptTrace) bindPromptTraceToMessage(state, state.promptTrace);
   scrollToBottom();
 }
 
@@ -3057,6 +3248,7 @@ function abortAssistantStream(state) {
   state.messageEl.classList.remove("is-streaming");
   state.completed = true;
   renderAssistantReferences(state);
+  if (state.promptTrace) bindPromptTraceToMessage(state, state.promptTrace);
 }
 
 function finishThinking(container) {
@@ -3128,11 +3320,14 @@ function saveCurrentConversation() {
     const isSystem = msg.classList.contains("system");
     const bubble = msg.querySelector(".bubble");
     if (bubble) {
+      const persistedBubble = bubble.cloneNode(true);
+      persistedBubble.querySelector(".prompt-trace-actions")?.remove();
       const entry = {
         role: isUser ? "user" : isAssistant ? "assistant" : "system",
-        content: bubble.innerHTML,
+        content: persistedBubble.innerHTML,
       };
       if (isAssistant) {
+        if (msg._promptTrace) entry.promptTrace = msg._promptTrace;
         // 思考过程是 assistant 消息的前一个兄弟节点
         const prev = msg.previousElementSibling;
         console.log(
@@ -3269,6 +3464,10 @@ function loadConversation(convId) {
         el.innerHTML = `<div class="message-role">你</div><div class="bubble">${msg.content}</div>`;
       } else if (msg.role === "assistant") {
         el.innerHTML = `<div class="message-role">📝 结构化报告</div><div class="bubble">${msg.content}</div>`;
+        if (msg.promptTrace) {
+          el._promptTrace = msg.promptTrace;
+          renderPromptTraceAction(el, msg.promptTrace);
+        }
       } else {
         el.innerHTML = `<div class="bubble">${msg.content}</div>`;
       }

@@ -18,8 +18,9 @@
 | `test_observability.py`                   | pytest: Monitor 指标、Trace、结构化日志、脱敏与接口测试 |
 | `test_knowledge_base_chunks.py`           | pytest: 知识库切片 CRUD 测试                |
 | `test_api_deployments.py`                 | pytest: Deployment 安全、存储、事件和并发锁 |
-| `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成与回归 |
+| `test_api_deployment_routes.py`           | pytest: Deployment 管理/Chat 路由集成、SSE request_id 与回归 |
 | `test_report_pipeline.py`                 | pytest: Canonical Report、Edit Judge/单次 repair、Last Report、事实保护、Final Tool 与 Recovery 控制流 |
+| `test_rag_tool_structure_rules.py`        | pytest: 部位规则注入与 Report Prompt Trace 快照 |
 | `verify_chunk_id_retrieval.py`            | pytest: chunk_id 三端一致性验证             |
 | `eval_retrieval.py`                       | 手动脚本: 检索评测（旧版）                  |
 | `eval_retrieval_v2.py`                    | 手动脚本: 检索评测（新版）                  |

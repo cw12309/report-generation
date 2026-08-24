@@ -225,6 +225,24 @@ def get_server_host() -> str:
     return _resolve("server.host", "0.0.0.0")
 
 
+def _get_env_bool(key: str, default: bool = False) -> bool:
+    """Read a boolean environment flag without adding another config layer."""
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def get_prompt_trace_enabled() -> bool:
+    """Whether report-generation Prompt Trace SSE events are emitted."""
+    return _get_env_bool("PROMPT_TRACE_ENABLED", False)
+
+
+def get_prompt_trace_full() -> bool:
+    """Whether Prompt Trace events include the full LLM messages."""
+    return _get_env_bool("PROMPT_TRACE_FULL", False)
+
+
 # ============================================================
 # 乳腺 MRI 报告工作台 (services/breast-mri-report)
 # ============================================================

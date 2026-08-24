@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 import types
@@ -393,3 +394,264 @@ def test_resolve_rule_body_parts_none_entity_tracker_empty_list():
     tracker.slots["body_part"] = []
     result = _resolve_rule_body_parts(tracker, "膝关节")
     assert result == ["膝关节"]
+
+
+# =============================================================================
+# Prompt Trace / Prompt Debug
+# =============================================================================
+def _prompt_trace_events(events):
+    return [data for event_type, data in events if event_type == "prompt_trace"]
+
+
+def test_prompt_trace_disabled_emits_nothing(monkeypatch):
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "false")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "true")
+    monkeypatch.setattr(
+        "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
+        lambda modality, body_parts: _FakeStructureRulesResult(content=""),
+    )
+    events = []
+
+    async def chat_fn(messages, **_kwargs):
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=EntityTracker(),
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n右侧病灶。",
+            [{"text": "右侧病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=lambda event_type, data: events.append((event_type, data)),
+        last_report=[""],
+    )
+
+    result = json.loads(asyncio.run(handler({"query": "MR 乳腺"})))
+
+    assert result["_is_final"] is True
+    assert _prompt_trace_events(events) == []
+
+
+def test_prompt_trace_metadata_for_mr_breast(monkeypatch):
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "false")
+    rule_content = "# Body-Part Rule: 乳腺\n\n## 乳腺MRI标准化报告模板"
+    fake_result = _FakeStructureRulesResult(
+        content=rule_content,
+        matched_ids=["mr_breast"],
+        matched_files=["乳腺MRI标准化报告模板.md"],
+        normalized_body_parts=["乳腺"],
+    )
+    monkeypatch.setattr(
+        "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
+        lambda modality, body_parts: fake_result,
+    )
+    tracker = EntityTracker()
+    tracker.slots["modality"] = "MR"
+    tracker.slots["body_part"] = ["乳腺"]
+    events = []
+
+    async def chat_fn(messages, **_kwargs):
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=tracker,
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n乳腺病灶。",
+            [{"text": "乳腺病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=lambda event_type, data: events.append((event_type, data)),
+        last_report=[""],
+    )
+
+    asyncio.run(handler({"query": "MR 乳腺", "modality": "MR", "body_part": "乳腺"}))
+    trace = _prompt_trace_events(events)[0]
+
+    assert trace["stage"] == "report_generation"
+    assert trace["context"] == {
+        "modality": "MR",
+        "body_parts": ["乳腺"],
+        "diagnosis": [],
+    }
+    assert trace["rag"]["result_count"] == 1
+    assert trace["rules"]["matched_rule_ids"] == ["mr_breast"]
+    assert trace["rules"]["matched_rule_files"] == ["乳腺MRI标准化报告模板.md"]
+    assert trace["rules"]["injected"] is True
+    assert trace["rules"]["content_hash"] == hashlib.sha256(
+        rule_content.encode("utf-8")
+    ).hexdigest()[:16]
+    assert trace["prompt"]["has_body_part_rules"] is True
+    assert "system_prompt" not in trace["prompt"]
+    assert "user_message" not in trace["prompt"]
+
+
+def test_prompt_trace_full_uses_exact_messages_and_precedes_llm(monkeypatch):
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "true")
+    fake_result = _FakeStructureRulesResult(
+        content=LUMBAR_RULE_CONTENT,
+        matched_ids=["mr_lumbar"],
+        matched_files=["腰椎MRI标准化报告模板.md"],
+        normalized_body_parts=["腰椎"],
+    )
+    monkeypatch.setattr(
+        "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
+        lambda modality, body_parts: fake_result,
+    )
+    tracker = EntityTracker()
+    tracker.slots["modality"] = "MR"
+    tracker.slots["body_part"] = ["腰椎"]
+    events = []
+    order = []
+    llm_messages = []
+
+    def emit(event_type, data):
+        events.append((event_type, data))
+        if event_type == "prompt_trace":
+            order.append("prompt_trace")
+
+    async def chat_fn(messages, **_kwargs):
+        order.append("chat_fn")
+        llm_messages.extend(messages)
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=tracker,
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n腰椎病灶。",
+            [{"text": "腰椎病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=emit,
+        last_report=[""],
+    )
+
+    result = json.loads(asyncio.run(handler({"query": "MR 腰椎"})))
+    trace = _prompt_trace_events(events)[0]
+
+    assert order == ["prompt_trace", "chat_fn"]
+    assert trace["prompt"]["system_prompt"] == llm_messages[0]["content"]
+    assert trace["prompt"]["user_message"] == llm_messages[1]["content"]
+    assert trace["prompt"]["system_prompt_chars"] == len(llm_messages[0]["content"])
+    assert trace["prompt"]["user_message_chars"] == len(llm_messages[1]["content"])
+    assert result == {**BASE_REPORT, "_is_final": True}
+
+
+def test_prompt_trace_unmatched_rules_still_emits(monkeypatch):
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "false")
+    fake_result = _FakeStructureRulesResult(
+        content="",
+        unmatched=["骶髂关节"],
+        normalized_body_parts=[],
+    )
+    monkeypatch.setattr(
+        "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
+        lambda modality, body_parts: fake_result,
+    )
+    tracker = EntityTracker()
+    tracker.slots["modality"] = "MR"
+    tracker.slots["body_part"] = ["骶髂关节"]
+    events = []
+
+    async def chat_fn(messages, **_kwargs):
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=tracker,
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n骶髂关节病灶。",
+            [{"text": "骶髂关节病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=lambda event_type, data: events.append((event_type, data)),
+        last_report=[""],
+    )
+
+    asyncio.run(handler({"query": "MR 骶髂关节"}))
+    trace = _prompt_trace_events(events)[0]
+
+    assert trace["rules"] == {
+        "normalized_modality": "MR",
+        "normalized_body_parts": [],
+        "matched_rule_ids": [],
+        "matched_rule_files": [],
+        "unmatched_body_parts": ["骶髂关节"],
+        "content_chars": 0,
+        "content_hash": None,
+        "injected": False,
+    }
+    assert trace["prompt"]["has_body_part_rules"] is False
+
+
+def test_real_mr_breast_trace_contains_injected_rule(monkeypatch):
+    """Acceptance check against the real manifest/rule file and actual PromptBuilder."""
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "true")
+    tracker = EntityTracker()
+    tracker.slots["modality"] = "MR"
+    tracker.slots["body_part"] = ["乳腺"]
+    events = []
+
+    async def chat_fn(messages, **_kwargs):
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=tracker,
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n乳腺增强扫描见病灶。",
+            [{"text": "乳腺增强扫描见病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=lambda event_type, data: events.append((event_type, data)),
+        last_report=[""],
+    )
+
+    result = json.loads(asyncio.run(handler({"query": "MR 乳腺"})))
+    trace = _prompt_trace_events(events)[0]
+    system_prompt = trace["prompt"]["system_prompt"]
+
+    assert result["_is_final"] is True
+    assert trace["rules"]["matched_rule_ids"] == ["mr_breast"]
+    assert "乳腺MRI标准化报告模板.md" in trace["rules"]["matched_rule_files"]
+    assert trace["rules"]["injected"] is True
+    assert "## 部位特化报告标准" in system_prompt
+    assert "乳腺MRI标准化报告模板" in system_prompt
+
+
+def test_prompt_trace_failure_does_not_change_report_result(monkeypatch):
+    monkeypatch.setenv("PROMPT_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PROMPT_TRACE_FULL", "true")
+    monkeypatch.setattr(
+        "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
+        lambda modality, body_parts: _FakeStructureRulesResult(content=""),
+    )
+
+    def emit(event_type, _data):
+        if event_type == "prompt_trace":
+            raise RuntimeError("simulated trace transport failure")
+
+    async def chat_fn(messages, **_kwargs):
+        return json.dumps(BASE_REPORT, ensure_ascii=False)
+
+    handler = create_rag_search_handler(
+        chat_fn=chat_fn,
+        entity_tracker=EntityTracker(),
+        get_embedding_fn=lambda _text: [],
+        search_reports_fn=lambda _query, _emit=None: (
+            "### 参考1\n右侧病灶。",
+            [{"text": "右侧病灶。", "_rerank_score": 0.9}],
+        ),
+        _emit_fn=emit,
+        last_report=[""],
+    )
+
+    result = json.loads(asyncio.run(handler({"query": "CT 头颅"})))
+
+    assert result == {**BASE_REPORT, "_is_final": True}

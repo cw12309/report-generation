@@ -927,6 +927,14 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         stream_finished = object()
         trace_request_id = request_id or current_request_id() or new_request_id()
 
+        def request_event(event_type: str, data: Optional[dict] = None) -> dict:
+            payload = dict(data or {})
+            # These routing fields are owned by the SSE aggregation layer and
+            # cannot be overridden by an individual pipeline emitter.
+            payload["type"] = event_type
+            payload["request_id"] = trace_request_id
+            return payload
+
         def queue_event(event_type: str, data: dict) -> None:
             observability_store.record_pipeline_event(
                 trace_request_id,
@@ -934,7 +942,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 data,
                 session_id=session_id,
             )
-            event_queue.put_nowait({"type": event_type, **data})
+            event_queue.put_nowait(request_event(event_type, data))
 
         async def _execute_bound() -> None:
             from langsmith.run_helpers import get_current_run_tree
@@ -953,7 +961,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                             structured = None
                         if isinstance(structured, dict):
                             event_data["data"] = structured
-                    payload = {"type": event_type, **event_data}
+                    payload = request_event(event_type, event_data)
                     observability_store.record_pipeline_event(
                         trace_request_id,
                         event_type,
@@ -966,7 +974,8 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                         len(json.dumps(payload, ensure_ascii=False)),
                     )
                     event_queue.put_nowait(payload)
-                    thinking_events.append({"type": event_type, "data": event_data})
+                    if event_type != "prompt_trace":
+                        thinking_events.append({"type": event_type, "data": event_data})
                 except Exception:
                     logger.warning("SSE事件入队失败", exc_info=True)
 
@@ -1058,12 +1067,11 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             try:
                 event = await asyncio.wait_for(event_queue.get(), timeout=120)
             except asyncio.TimeoutError:
-                timeout_event = {
-                    "type": "error",
+                timeout_event = request_event("error", {
                     "code": "CHAT_TIMEOUT",
                     "message": "等待 Agent 响应超时",
-                }
-                done_event = {"type": "done", "total_time": 120.0}
+                })
+                done_event = request_event("done", {"total_time": 120.0})
                 observability_store.record_pipeline_event(
                     trace_request_id,
                     "error",
@@ -1244,6 +1252,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
             conversation_event = {
                 "type": "conversation",
                 "conversation_id": conversation_id,
+                "request_id": trace_request_id,
             }
             yield f"data: {json.dumps(conversation_event, ensure_ascii=False)}\n\n"
 
@@ -1251,15 +1260,14 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 "type": "knowledge_bases",
                 "knowledge_bases": active_kbs,
             }
-            kb_event_data = json.dumps(
-                map_public_event(
-                    "knowledge_bases",
-                    kb_event,
-                    conversation_id=conversation_id,
-                    knowledge_bases=active_kbs,
-                ),
-                ensure_ascii=False,
+            public_kb_event = map_public_event(
+                "knowledge_bases",
+                kb_event,
+                conversation_id=conversation_id,
+                knowledge_bases=active_kbs,
             )
+            public_kb_event["request_id"] = trace_request_id
+            kb_event_data = json.dumps(public_kb_event, ensure_ascii=False)
             yield f"data: {kb_event_data}\n\n"
 
             async for event in _stateful_chat_events(
@@ -1281,6 +1289,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     knowledge_bases=active_kbs,
                 )
                 if public_event is not None:
+                    public_event["request_id"] = trace_request_id
                     yield f"data: {json.dumps(public_event, ensure_ascii=False)}\n\n"
             yield "data: [DONE]\n\n"
 

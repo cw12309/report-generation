@@ -6,6 +6,7 @@ Schema: rag_search
 - 返回结构化报告 JSON
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -16,6 +17,7 @@ from chat.report_schema import (
     ReportSchemaError,
     parse_report_with_repair,
 )
+from config import get_prompt_trace_enabled, get_prompt_trace_full
 from langsmith import traceable
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,70 @@ def _resolve_rule_body_parts(
     if fallback_body_part and fallback_body_part.strip():
         return [fallback_body_part.strip()]
     return []
+
+
+def _build_prompt_trace(
+    *,
+    entity_tracker,
+    modality: str,
+    rule_body_parts: list[str],
+    rules_result,
+    search_result: str,
+    reranked_entities,
+    sys_prompt: str,
+    user_content: str,
+    has_last_report: bool,
+    include_full: bool,
+) -> dict:
+    """Build a snapshot exclusively from the values used by Report LLM."""
+    slots = entity_tracker.slots if entity_tracker else {}
+    context_body_parts = slots.get("body_part", rule_body_parts)
+    if not isinstance(context_body_parts, list):
+        context_body_parts = [str(context_body_parts)] if context_body_parts else []
+    diagnosis = slots.get("diagnosis", [])
+    if not isinstance(diagnosis, list):
+        diagnosis = [str(diagnosis)] if diagnosis else []
+
+    rules_content = rules_result.content or ""
+    injected = bool(rules_content)
+    prompt = {
+        "system_prompt_chars": len(sys_prompt or ""),
+        "user_message_chars": len(user_content or ""),
+        "has_body_part_rules": injected,
+        "has_last_report": has_last_report,
+    }
+    if include_full:
+        prompt["system_prompt"] = sys_prompt
+        prompt["user_message"] = user_content
+
+    return {
+        "stage": "report_generation",
+        "context": {
+            "modality": slots.get("modality") or modality or None,
+            "body_parts": list(context_body_parts),
+            "diagnosis": list(diagnosis),
+        },
+        "rag": {
+            "has_evidence": bool(search_result),
+            "result_count": len(reranked_entities) if isinstance(reranked_entities, list) else 0,
+            "evidence_chars": len(search_result or ""),
+        },
+        "rules": {
+            "normalized_modality": rules_result.normalized_modality,
+            "normalized_body_parts": list(rules_result.normalized_body_parts),
+            "matched_rule_ids": list(rules_result.matched_rule_ids),
+            "matched_rule_files": list(rules_result.matched_rule_files),
+            "unmatched_body_parts": list(rules_result.unmatched_body_parts),
+            "content_chars": len(rules_content),
+            "content_hash": (
+                hashlib.sha256(rules_content.encode("utf-8")).hexdigest()[:16]
+                if injected
+                else None
+            ),
+            "injected": injected,
+        },
+        "prompt": prompt,
+    }
 
 
 RAG_SEARCH_SCHEMA = {
@@ -294,6 +360,36 @@ def create_rag_search_handler(
                     f"以此为准生成报告。若无完全一致的，选最接近的。注意：必须输出 JSON，不要输出其他内容。"
                 )
             user_content += "\n\n请按 JSON 格式输出结构化报告。"
+
+            if get_prompt_trace_enabled() and _emit_fn:
+                try:
+                    prompt_trace = _build_prompt_trace(
+                        entity_tracker=entity_tracker,
+                        modality=modality,
+                        rule_body_parts=rule_body_parts,
+                        rules_result=rules_result,
+                        search_result=search_result,
+                        reranked_entities=reranked_entities,
+                        sys_prompt=sys_prompt,
+                        user_content=user_content,
+                        has_last_report=bool(last_report and last_report[0]),
+                        include_full=get_prompt_trace_full(),
+                    )
+                    _emit_fn("prompt_trace", prompt_trace)
+                    logger.info(
+                        "prompt_trace stage=%s modality=%s body_parts=%s matched_rules=%s "
+                        "injected=%s rule_chars=%d prompt_chars=%d",
+                        prompt_trace["stage"],
+                        prompt_trace["context"]["modality"],
+                        prompt_trace["context"]["body_parts"],
+                        prompt_trace["rules"]["matched_rule_ids"],
+                        prompt_trace["rules"]["injected"],
+                        prompt_trace["rules"]["content_chars"],
+                        prompt_trace["prompt"]["system_prompt_chars"],
+                    )
+                except Exception:
+                    # Prompt Trace is observability-only and must never affect generation.
+                    logger.warning("prompt_trace 构造或发送失败", exc_info=True)
 
             messages = [
                 {"role": "system", "content": sys_prompt},

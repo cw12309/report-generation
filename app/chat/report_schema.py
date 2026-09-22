@@ -160,8 +160,94 @@ def validate_canonical_report(value: Any) -> dict[str, Any]:
     return report
 
 
+def _parse_markdown_report(markdown_text: str) -> dict[str, Any]:
+    """将 Markdown 格式报告转换为 Canonical JSON 格式
+    
+    支持的 Markdown 格式：
+    ## 一、影像学表现
+    内容...
+    
+    ## 二、诊断意见
+    内容...
+    """
+    lines = markdown_text.strip().split('\n')
+    
+    imaging_section = []
+    diagnosis_section = []
+    current_section = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        if '影像学表现' in line or '影像学所见' in line:
+            current_section = 'imaging'
+            continue
+        elif '诊断意见' in line or '诊断结论' in line or '印象' in line:
+            current_section = 'diagnosis'
+            continue
+        
+        # 跳过 Markdown 标题标记
+        if line.startswith('#'):
+            continue
+        
+        if current_section == 'imaging':
+            imaging_section.append(line)
+        elif current_section == 'diagnosis':
+            diagnosis_section.append(line)
+    
+    # 合并为单个条目
+    imaging_text = '\n'.join(imaging_section).strip()
+    diagnosis_text = '\n'.join(diagnosis_section).strip()
+    
+    if not imaging_text and not diagnosis_text:
+        raise ReportSchemaError("Markdown 报告未包含有效的影像学表现或诊断意见")
+    
+    return {
+        "results": [
+            {
+                "影像学表现": imaging_text or "未记录",
+                "诊断意见": diagnosis_text or "未记录"
+            }
+        ]
+    }
+
+
 def parse_report_output(raw: Any) -> dict[str, Any]:
-    """Extract, normalize, and validate one structured report."""
+    """Extract, normalize, and validate one structured report.
+    
+    支持两种输入格式：
+    1. JSON 格式（标准 Canonical Report）
+    2. Markdown 格式（通过 json_to_display 生成的展示格式）
+    """
+    # 如果是字符串，先尝试判断是 JSON 还是 Markdown
+    if isinstance(raw, str):
+        raw_stripped = raw.strip()
+        
+        # 优先尝试 JSON 解析（如果以 { 或 [ 开头）
+        if raw_stripped.startswith(('{', '[')):
+            try:
+                return validate_canonical_report(raw)
+            except ReportSchemaError:
+                # JSON 解析失败，可能是 Markdown
+                pass
+        
+        # 检测 Markdown 格式的特征（标题开头或包含关键标题）
+        markdown_indicators = [
+            '## 一、', '## 二、', '## 影像', '## 诊断'
+        ]
+        # 只有明确的 Markdown 标题才走 Markdown 路径
+        if any(indicator in raw_stripped[:300] for indicator in markdown_indicators):
+            try:
+                return _parse_markdown_report(raw_stripped)
+            except ReportSchemaError:
+                # Markdown 格式确认但内容无效，直接抛出
+                raise
+            except Exception:
+                # 其他异常，继续尝试 JSON
+                pass
+    
     return validate_canonical_report(raw)
 
 

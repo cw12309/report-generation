@@ -1,3 +1,17 @@
+# WSL / Linux 启动说明：
+# 1. 先启动 Milvus、etcd、MinIO 和 Attu：
+#    docker compose -f compose.milvus.yaml up -d
+# 2. 确认 Milvus 状态正常：
+#    docker compose -f compose.milvus.yaml ps
+# 3. 再启动报告生成服务：
+#    docker compose up -d
+# 4. 查看全部服务状态：
+#    docker compose ps
+#    docker compose -f compose.milvus.yaml ps
+# 停止服务：
+#    docker compose down
+#    docker compose -f compose.milvus.yaml down
+
 x-common-config: &common-config
   build:
     context: .
@@ -21,6 +35,11 @@ services:
   worker:
     <<: *common-config
     container_name: report-generation-worker
+    environment:
+      PYTHONUNBUFFERED: "1"
+      # 容器内不能使用 127.0.0.1 访问宿主机映射端口；两个 Compose
+      # 文件从同一目录启动时共享项目默认网络，可直接使用服务名 milvus。
+      MILVUS_URI: http://milvus:19530
     command:
       - uvicorn
       - app.chat.server:app

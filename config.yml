@@ -12,8 +12,8 @@ llms:
   temperature: 0.3
 embeddings:
 - name: bge-m3
-  base_url: http://14.22.83.225:11002/v1
-  model: bge-m3
+  base_url: https://api.siliconflow.cn/v1
+  model: BAAI/bge-m3
   api_key: ${EMBED_API_KEY}
   dimension: 1024
 reranks:
@@ -22,15 +22,15 @@ reranks:
   model: Qwen/Qwen3-VL-Reranker-8B
   api_key: ${SILICONFLOW_API_KEY}
 - name: bge-reranker-v2-m3
-  base_url: http://14.22.83.225:11002/v1/rerank
-  model: bge-reranker-v2-m3
+  base_url: https://api.siliconflow.cn/v1/rerank
+  model: BAAI/bge-reranker-v2-m3
   api_key: ${SILICONFLOW_API_KEY}
 retrieval:
   rag_top_k: 50
   rerank_top_k: 10
   collection_name: medical_reports
 milvus:
-  uri: http://220.154.3.166:19530
+  uri: http://127.0.0.1:19530
   token: ${MILVUS_TOKEN}
 short_term_memory:
   max_rounds: 5
@@ -38,7 +38,7 @@ short_term_memory:
 active_models:
   chat_llm: qwen36-27b
   embedding: bge-m3
-  rerank: Qwen-Qwen3-VL-Reranker-8B
+  rerank: bge-reranker-v2-m3
 breast_mri:
   host: 127.0.0.1
   port: 4173

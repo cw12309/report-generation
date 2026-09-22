@@ -57,6 +57,7 @@ Worker (app/chat/server.py) — 静态 Web UI + 业务接口 + Agent 编排
 - **Agent 主流程**: `app/chat/pipeline.py` → `run_pipeline()`
 - **CLI 入口**: `app/chat/main.py` → `main()`
 - **配置**: `app/config.py` + `config.yml` + `.env`
+- **Milvus 本地部署**: `compose.milvus.yaml` — Milvus Standalone + etcd + MinIO + Attu
 - **乳腺 MRI 工作台**: `services/breast-mri-report/` — 独立 Node.js 服务，FastAPI 代理层 `/api/breast-mri/*`、`/breast-mri/*`，启动时自动拉起
 - **数据构建**: `app/data_pipeline/build_vector_db.py`, `process_reports.py`
 - **评测**: `app/eval/run_retrieval_eval.py`
@@ -91,6 +92,9 @@ uvicorn app.chat.server:app --host 0.0.0.0 --port 8001
 
 # Docker
 docker compose up -d
+
+# Milvus + Attu（独立启动）
+docker compose -f compose.milvus.yaml up -d
 
 # Run tests
 pytest app/test/

@@ -1121,7 +1121,7 @@ class TestBodyPartRulesIntegration:
         assert "诊断意见" in result["results"][0]
 
     def test_loader_config_error_does_not_crash(self, monkeypatch):
-        """Loader 配置错误时记录日志但不中断报告生成"""
+        """Loader 配置错误时应该进入系统错误路径"""
         def failing_get_rules(modality, body_parts):
             raise ValueError("manifest 损坏")
 
@@ -1137,8 +1137,8 @@ class TestBodyPartRulesIntegration:
         handler, _chat_fn, _calls = _make_rag_handler(entity_tracker=tracker)
         result = json.loads(asyncio.run(handler({"query": "MR 腰椎"})))
 
-        assert result["_is_final"] is True
-        assert "results" in result
+        assert result["_is_final"] is False
+        assert "error" in result
 
     def test_resolve_rule_body_parts_from_fallback(self):
         """_resolve_rule_body_parts: 无 EntityTracker 时使用 fallback"""

@@ -218,9 +218,9 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
     )
     assert first_response.status_code == 200
     first_events = _sse_events(first_response)
-    assert [event["type"] for event in first_events] == ["conversation", "report", "done"]
+    assert [event["type"] for event in first_events] == ["conversation", "knowledge_bases", "report", "done"]
     assert all(event.get("request_id") for event in first_events)
-    assert "data" in first_events[1]
+    assert "data" in first_events[2]  # report 事件现在是第 3 个（索引 2）
     conversation_id = first_events[0]["conversation_id"]
     assert pipeline_calls[-1]["selected_kbs"] == ["kb_a"]
 
@@ -230,7 +230,7 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
         json={"message": "second", "conversation_id": conversation_id},
     )
     second_events = _sse_events(second_response)
-    assert [event["type"] for event in second_events] == ["conversation", "message", "done"]
+    assert [event["type"] for event in second_events] == ["conversation", "knowledge_bases", "message", "done"]
     assert pipeline_calls[-1]["history"]
     assert pipeline_calls[-1]["modality"] == "CT"
     assert "右侧病灶" in pipeline_calls[-1]["last_report"]

@@ -348,26 +348,17 @@ def create_rag_search_handler(
 
             rule_body_parts = _resolve_rule_body_parts(entity_tracker, body_part)
 
-            rules_result = None
-            try:
-                rules_result = StructureRulesLoader.get_rules(
-                    modality=modality or None,
-                    body_parts=rule_body_parts,
-                )
-                logger.info(
-                    "Body-part rules resolved: modality=%s body_parts=%s matched=%s unmatched=%s",
-                    rules_result.normalized_modality,
-                    rule_body_parts,
-                    rules_result.matched_rule_ids,
-                    rules_result.unmatched_body_parts,
-                )
-            except Exception:
-                logger.warning(
-                    "StructureRulesLoader.get_rules failed, continuing without rules: modality=%s body_parts=%s",
-                    modality,
-                    rule_body_parts,
-                    exc_info=True,
-                )
+            rules_result = StructureRulesLoader.get_rules(
+                modality=modality or None,
+                body_parts=rule_body_parts,
+            )
+            logger.info(
+                "Body-part rules resolved: modality=%s body_parts=%s matched=%s unmatched=%s",
+                rules_result.normalized_modality,
+                rule_body_parts,
+                rules_result.matched_rule_ids,
+                rules_result.unmatched_body_parts,
+            )
 
             sys_prompt = PromptBuilder.build(
                 "report_prompt/structure",

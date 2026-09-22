@@ -907,7 +907,7 @@ class TestBodyPartRulesIntegration:
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -931,7 +931,7 @@ class TestBodyPartRulesIntegration:
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -954,11 +954,11 @@ class TestBodyPartRulesIntegration:
         """Case 3: 未配置部位安全降级，报告生成继续"""
         fake_result = _FakeStructureRulesResult(
             content="",
-            unmatched_body_parts=["骶髂关节"],
+            unmatched=["骶髂关节"],
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -978,11 +978,11 @@ class TestBodyPartRulesIntegration:
         """Case 4: CT 不误用 MR 腰椎规则"""
         fake_result = _FakeStructureRulesResult(
             content="",
-            unmatched_body_parts=["腰椎"],
+            unmatched=["腰椎"],
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -1008,7 +1008,7 @@ class TestBodyPartRulesIntegration:
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -1033,7 +1033,7 @@ class TestBodyPartRulesIntegration:
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -1058,7 +1058,7 @@ class TestBodyPartRulesIntegration:
             return _FakeStructureRulesResult(content="")
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             fake_get_rules,
         )
 
@@ -1080,11 +1080,11 @@ class TestBodyPartRulesIntegration:
         """Case 8: Loader 返回空 content → PromptBuilder 收到 None"""
         fake_result = _FakeStructureRulesResult(
             content="",
-            unmatched_body_parts=["骶髂关节"],
+            unmatched=["骶髂关节"],
         )
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -1103,7 +1103,7 @@ class TestBodyPartRulesIntegration:
         fake_result = _FakeStructureRulesResult(content="")
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             lambda modality, body_parts: fake_result,
         )
 
@@ -1126,7 +1126,7 @@ class TestBodyPartRulesIntegration:
             raise ValueError("manifest 损坏")
 
         monkeypatch.setattr(
-            "tools.rag_tool.StructureRulesLoader.get_rules",
+            "prompt.structure_rules_loader.StructureRulesLoader.get_rules",
             failing_get_rules,
         )
 

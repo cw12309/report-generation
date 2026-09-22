@@ -342,7 +342,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
         _emit("cache_hit", {"query": query, "matched_diagnosis": selected_diagnosis})
     else:
         # 1. 实体提取：从用户输入提取实体更新槽位
-        changes = entity_tracker.update_from_query(query)
+        changes = await entity_tracker.update_from_query(query)
         if changes:
             logger.info(f"实体更新: {changes}")
             _emit("entity_update", {"changes": changes, "slots": entity_tracker.slots})
@@ -358,7 +358,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
             if last_report:
                 last_report[0] = ""
                 last_report_valid = False
-            entity_tracker.apply_switch(query)
+            await entity_tracker.apply_switch(query)
             _emit("intent_switch", {"message": "已清空旧上下文，开始新检查"})
 
         # 3. 上下文消解：补全省略信息

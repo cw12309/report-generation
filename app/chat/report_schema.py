@@ -18,6 +18,15 @@ from typing import Any, Awaitable, Callable
 REPORT_SCHEMA_VERSION = "1"
 REPORT_TOOL_NAMES = frozenset({"rag_search", "edit_report", "refine_report"})
 
+# 推理模型（reasoning 与正文共享 max_tokens 预算）在生成 Canonical JSON 前会消耗
+# 数千 token 推理，2048 会被推理耗尽导致正文为空、报告缺少 results。
+# 实测默认思考模式下完整报告需约 4.5k~6.9k completion tokens，故放宽到 8192。
+REPORT_MAX_TOKENS = 8192
+
+# Edit Judge 只需返回 {valid, unexpected_changes} 小 JSON，但推理仍占用预算，
+# 原值 512 会被推理耗尽导致 Judge 结构非法、编辑误判为超范围修改。
+EDIT_JUDGE_MAX_TOKENS = 4096
+
 
 class ReportSchemaError(ValueError):
     """Raised when content cannot become a valid canonical report."""
@@ -285,6 +294,50 @@ def _unit_tokens(text: str) -> Counter[str]:
     return Counter(token.lower().replace("％", "%") for token in _UNIT_RE.findall(text))
 
 
+# 单位在报告中既有英文符号（mm/cm）也有中文写法（毫米/厘米），两者等价。
+_UNIT_ALIASES = {
+    "mm": ("毫米",),
+    "cm": ("厘米",),
+    "ml": ("毫升",),
+    "hu": ("CT值", "密度值"),
+    "%": ("百分比",),
+}
+
+# 同一量纲内的单位互换（mm↔cm）是尺寸指令的正常结果：替换必然让旧单位消失。
+_LENGTH_UNITS = frozenset({"mm", "cm"})
+_SIZE_WORDS = ("大小", "尺寸", "范围", "长径", "短径")
+
+
+def _unit_named(unit: str, instruction: str) -> bool:
+    lowered = instruction.lower()
+    return unit in lowered or any(
+        alias in instruction for alias in _UNIT_ALIASES.get(unit, ())
+    )
+
+
+def _unit_change_allowed(before: Counter[str], after: Counter[str], instruction: str) -> bool:
+    """判断单位变更是否由编辑指令显式要求。
+
+    放行两类变更，其余仍判为意外改变：
+    1. 所有发生变化的单位都能在指令中找到（英文符号或中文写法）；
+    2. 变化仅发生在同一量纲的长度单位之间（如"改成3.2×1.8cm"把 mm 换成 cm），
+       且指令包含尺寸类表述。跨量纲（如删除 HU）不受此例外保护。
+    """
+    if "单位" in instruction:
+        return True
+
+    differing = {
+        unit for unit in set(before) | set(after) if before[unit] != after[unit]
+    }
+    if not differing:
+        return True
+
+    if all(_unit_named(unit, instruction) for unit in differing):
+        return True
+
+    return differing <= _LENGTH_UNITS and any(word in instruction for word in _SIZE_WORDS)
+
+
 def _laterality_semantics(text: str) -> Counter[str]:
     normalized = Counter()
     mapping = {
@@ -368,8 +421,10 @@ def collect_edit_fact_violations(
         ):
             violations.append(f"引入了指令中不存在的新数值：{token}")
 
-    if _unit_tokens(before_text) != _unit_tokens(after_text) and not any(
-        word in instruction for word in ("单位", "毫米", "厘米", "毫升", "百分比")
+    before_units = _unit_tokens(before_text)
+    after_units = _unit_tokens(after_text)
+    if before_units != after_units and not _unit_change_allowed(
+        before_units, after_units, instruction
     ):
         violations.append("意外改变或删除了数值单位")
 

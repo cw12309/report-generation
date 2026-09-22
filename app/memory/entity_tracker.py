@@ -131,7 +131,7 @@ class EntityTracker:
 
     # ── 实体提取 ──────────────────────────────────────────
 
-    def update_from_query(self, query: str) -> dict:
+    async def update_from_query(self, query: str) -> dict:
         """从用户输入提取实体，更新槽位。
 
         优先使用 LLM JSON 结构化提取，失败回退到规则匹配。
@@ -143,7 +143,7 @@ class EntityTracker:
         changes = {}
 
         if self._llm_chat is not None:
-            extracted = self._extract_llm(query)
+            extracted = await self._extract_llm(query)
             if extracted:
                 modality, body_parts, clinical_history, diagnosis_list = extracted
                 
@@ -227,7 +227,7 @@ class EntityTracker:
 
         return changes
 
-    def _extract_llm(self, query: str) -> Optional[Tuple[Optional[str], Optional[list], Optional[str], Optional[list]]]:
+    async def _extract_llm(self, query: str) -> Optional[Tuple[Optional[str], Optional[list], Optional[str], Optional[list]]]:
         """使用 LLM 提取实体，返回 JSON 解析后的 (modality, body_parts, clinical_history, diagnosis_list)"""
         if self._llm_chat is None:
             return None
@@ -239,7 +239,7 @@ class EntityTracker:
         ]
 
         try:
-            output = self._llm_chat(messages)
+            output = await self._llm_chat(messages)
             return self._parse_json_output(output)
         except Exception as e:
             logger.warning("LLM 实体提取失败，回退到规则: %s", e)
@@ -509,10 +509,10 @@ class EntityTracker:
         }
         logger.debug("实体追踪器已重置")
 
-    def apply_switch(self, query: str):
+    async def apply_switch(self, query: str):
         """切换意图：清空旧状态，从新查询提取实体"""
         self.clear()
-        self.update_from_query(query)
+        await self.update_from_query(query)
         self.slots["intent"] = "switch"
         logger.debug("实体追踪器已切换: %s", self.slots)
 

@@ -13,6 +13,7 @@ import re
 from typing import Callable, Optional, List, Dict
 
 from chat.report_schema import (
+    REPORT_MAX_TOKENS,
     REPORT_SCHEMA_VERSION,
     ReportSchemaError,
     parse_report_with_repair,
@@ -248,6 +249,20 @@ def create_rag_search_handler(
         modality = arguments.get("modality", "")
         body_part = arguments.get("body_part", "")
 
+        # ── 参数容错：LLM 常把 rag_search 的 query 写成其他报告工具的参数名 ──
+        # Schema 已声明 query 为必填，但模型仍会串用 instruction/query_text 等键名，
+        # 直接报错会成为 terminal 错误中断整轮，故按同义键名回退取值。
+        if not query:
+            for alias in ("instruction", "query_text", "text", "content"):
+                value = arguments.get(alias)
+                if isinstance(value, str) and value.strip():
+                    query = value.strip()
+                    logger.warning(
+                        "rag_search: 参数名回退，使用 %s 作为 query（schema 期望 'query'）",
+                        alias,
+                    )
+                    break
+
         # ── 参数容错：从 EntityTracker 自动补全缺失参数 ──
         if not modality and entity_tracker:
             modality = entity_tracker.slots.get("modality", "")
@@ -333,17 +348,26 @@ def create_rag_search_handler(
 
             rule_body_parts = _resolve_rule_body_parts(entity_tracker, body_part)
 
-            rules_result = StructureRulesLoader.get_rules(
-                modality=modality or None,
-                body_parts=rule_body_parts,
-            )
-            logger.info(
-                "Body-part rules resolved: modality=%s body_parts=%s matched=%s unmatched=%s",
-                rules_result.normalized_modality,
-                rule_body_parts,
-                rules_result.matched_rule_ids,
-                rules_result.unmatched_body_parts,
-            )
+            rules_result = None
+            try:
+                rules_result = StructureRulesLoader.get_rules(
+                    modality=modality or None,
+                    body_parts=rule_body_parts,
+                )
+                logger.info(
+                    "Body-part rules resolved: modality=%s body_parts=%s matched=%s unmatched=%s",
+                    rules_result.normalized_modality,
+                    rule_body_parts,
+                    rules_result.matched_rule_ids,
+                    rules_result.unmatched_body_parts,
+                )
+            except Exception:
+                logger.warning(
+                    "StructureRulesLoader.get_rules failed, continuing without rules: modality=%s body_parts=%s",
+                    modality,
+                    rule_body_parts,
+                    exc_info=True,
+                )
 
             sys_prompt = PromptBuilder.build(
                 "report_prompt/structure",
@@ -398,7 +422,7 @@ def create_rag_search_handler(
 
             output = await chat_fn(
                 messages,
-                max_tokens=2048,
+                max_tokens=REPORT_MAX_TOKENS,
                 temperature=0.3,
                 _emit=None,
                 debug=True,
@@ -408,7 +432,7 @@ def create_rag_search_handler(
             async def repair(repair_messages):
                 return await chat_fn(
                     repair_messages,
-                    max_tokens=2048,
+                    max_tokens=REPORT_MAX_TOKENS,
                     temperature=0,
                     _emit=None,
                     debug=True,

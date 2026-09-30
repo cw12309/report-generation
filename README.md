@@ -350,7 +350,19 @@ uvicorn app.chat.server:app --host 0.0.0.0 --port 8001
 
 ### Docker Compose
 
+推荐使用一键部署脚本（Linux/WSL）：
+
 ```bash
+./deploy.sh              # 初始化 .env、启动 Milvus、构建并启动 Worker + Gateway
+./deploy.sh --status     # 查看状态与健康检查
+./deploy.sh --logs       # 跟踪日志
+./deploy.sh --stop       # 停止服务（保留数据）
+```
+
+或手动启动：
+
+```bash
+docker compose -f compose.milvus.yaml up -d   # 先启动向量库
 docker compose up -d
 docker compose ps
 docker compose logs -f worker gateway
@@ -360,15 +372,15 @@ Compose 拓扑：
 
 | Service | Container Port | Host Port | Role |
 | --- | ---: | ---: | --- |
-| `worker` | 8001 | 不发布 | Agent、模型、RAG、Session、KB、Eval |
-| `gateway` | 8000 | 7860 | 对外入口、鉴权和代理 |
+| `worker` | 8000 | 8011 | Web 界面、Agent、模型、RAG、Session、KB、Eval |
+| `gateway` | 8001 | 8012 | 对外入口、鉴权和代理 |
 
 Docker 访问：
 
-- Web/Gateway：<http://localhost:7860>
-- Gateway OpenAPI：<http://localhost:7860/docs>
+- Web 界面（报告生成）：<http://localhost:8011>
+- Gateway OpenAPI：<http://localhost:8012/docs>
 
-不要把 Worker 的 8001 端口直接发布到公网。
+端口 8011/8012 可按需在 `compose.yaml` 的 `ports` 中调整。不要把 Gateway 的 8012 端口直接暴露到公网而不配置 `API_SECRET_KEY`。
 
 ## API Overview
 
@@ -507,7 +519,7 @@ curl -N -X POST http://localhost:8000/api/v1/deployments/<deployment-id>/chat \
 
 公开事件只包含稳定集合：`conversation`、`status`、`message`、`report`、`ambiguous`、`error`、`done`，最后仍发送 `data: [DONE]`。内部 Query Plan、Memory、Tool 和 Rerank 细节不会暴露给外部调用方。
 
-Docker Compose 部署时，将示例中的 `localhost:8000` 改为 `localhost:7860`。
+Docker Compose 部署时，将示例中的 `localhost:8000` 改为 `localhost:8012`（Gateway 宿主机端口）。
 
 ## Report Output
 

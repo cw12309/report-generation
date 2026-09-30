@@ -1,0 +1,4 @@
+# Shell 脚本必须使用 LF，否则在 Linux 服务器上无法执行
+*.sh text eol=lf
+deploy.sh text eol=lf
+start.sh text eol=lf

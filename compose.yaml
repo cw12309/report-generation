@@ -50,12 +50,16 @@ services:
     expose:
       - "8000"
     ports:
-      - "8080:8000"
+      # 宿主机端口 8011（避开现有服务占用的 8080）；容器内仍为 8000
+      - "8011:8000"
     volumes:
       # Excel 切片文件
       - ./app/data_pipeline/xlsx_slices:/app/app/data_pipeline/xlsx_slices
-      # 报告模板
-      - ./app/report_template:/app/app/report_template
+      # 知识库原始 Excel（代码实际路径为 app/data_pipeline/report_template，
+      # 见 server.py 上传与 source_path 回退逻辑；挂载后新上传的知识库可持久化）
+      - ./app/data_pipeline/report_template:/app/app/data_pipeline/report_template
+      # 知识库 Markdown 切片（build_vector_db 的输入，重建向量库时依赖）
+      - ./app/data_pipeline/output_markdown:/app/app/data_pipeline/output_markdown
       # 会话持久化
       - ./data:/app/data
       # 长期记忆
@@ -78,7 +82,8 @@ services:
       - --port
       - "8001"
     ports:
-      - "8081:8001"
+      # 宿主机端口 8012（避开现有服务占用的 8081）；容器内仍为 8001
+      - "8012:8001"
     environment:
       PYTHONUNBUFFERED: "1"
       WORKER_BASE_URL: http://worker:8000
@@ -86,7 +91,8 @@ services:
       worker:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      # Gateway 仅注册代理路由，无 /health；用 FastAPI 自带的 /docs 探活
+      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
       interval: 30s
       timeout: 10s
       start_period: 10s

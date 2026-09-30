@@ -66,7 +66,7 @@ build_and_start() {
     echo ""
     dc ps
     echo ""
-    info "访问地址: http://localhost:8000"
+    info "访问地址: http://localhost:8011"
 }
 
 stop_service() {

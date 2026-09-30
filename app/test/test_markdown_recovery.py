@@ -34,6 +34,24 @@ def test_parse_markdown_report_standard_format():
     assert "脑出血" in result["results"][0]["诊断意见"]
 
 
+def test_parse_markdown_report_new_display_headings():
+    """测试新展示标题（影像所见/影像诊断）的解析"""
+    markdown = """
+## 一、影像所见
+
+右侧基底节区见高密度影，CT值约60HU。
+
+## 二、影像诊断
+
+右侧基底节区脑出血
+"""
+    result = parse_report_output(markdown)
+
+    assert len(result["results"]) == 1
+    assert "右侧基底节区" in result["results"][0]["影像学表现"]
+    assert "脑出血" in result["results"][0]["诊断意见"]
+
+
 def test_parse_markdown_report_with_extra_whitespace():
     """测试带额外空白的 Markdown 格式"""
     markdown = """

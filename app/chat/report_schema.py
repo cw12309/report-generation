@@ -164,11 +164,13 @@ def _parse_markdown_report(markdown_text: str) -> dict[str, Any]:
     """将 Markdown 格式报告转换为 Canonical JSON 格式
     
     支持的 Markdown 格式：
-    ## 一、影像学表现
+    ## 一、影像所见
     内容...
     
-    ## 二、诊断意见
+    ## 二、影像诊断
     内容...
+    
+    同时兼容历史标题：影像学表现 / 影像学所见 / 诊断意见 / 诊断结论 / 印象
     """
     lines = markdown_text.strip().split('\n')
     
@@ -181,10 +183,10 @@ def _parse_markdown_report(markdown_text: str) -> dict[str, Any]:
         if not line:
             continue
         
-        if '影像学表现' in line or '影像学所见' in line:
+        if '影像所见' in line or '影像学表现' in line or '影像学所见' in line:
             current_section = 'imaging'
             continue
-        elif '诊断意见' in line or '诊断结论' in line or '印象' in line:
+        elif '影像诊断' in line or '诊断意见' in line or '诊断结论' in line or '印象' in line:
             current_section = 'diagnosis'
             continue
         

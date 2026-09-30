@@ -15,20 +15,28 @@ _env_path = os.path.join(_project_root, ".env")
 load_dotenv(_env_path)
 
 _config = {}
+_config_mtime = None
 
 def _load():
-    global _config
-    if _config:
+    global _config, _config_mtime
+    # 基于文件 mtime 自动失效：外部直接编辑 config.yml 后无需重启即可生效
+    try:
+        mtime = os.path.getmtime(_config_path) if os.path.exists(_config_path) else None
+    except OSError:
+        mtime = None
+    if _config and mtime == _config_mtime:
         return
     if os.path.exists(_config_path):
         with open(_config_path, "r", encoding="utf-8") as f:
             _config = yaml.safe_load(f) or {}
     else:
         _config = {}
+    _config_mtime = mtime
 
 def reload_config():
-    global _config
+    global _config, _config_mtime
     _config = {}
+    _config_mtime = None
     _load()
 
 def _resolve(path: str, default=None):
@@ -118,11 +126,70 @@ def get_llm_model() -> str:
 def get_llm_api_key() -> str:
     return os.environ.get("CHAT_API_KEY", "")
 
+def _llm_key_env_name(name: str) -> str:
+    """单模型 API Key 的环境变量名: LLM_KEY_<NAME 大写化，非法字符转下划线>。"""
+    import re
+    normalized = re.sub(r"[^A-Z0-9]+", "_", (name or "").strip().upper()).strip("_")
+    return f"LLM_KEY_{normalized}" if normalized else ""
+
+def get_llm_api_key_for_entry(entry: dict) -> str:
+    """返回指定 LLM 条目的 API Key：优先单模型环境变量 LLM_KEY_<NAME>，回退全局 CHAT_API_KEY。"""
+    per = os.environ.get(_llm_key_env_name(entry.get("name", "")))
+    return per if per else get_llm_api_key()
+
+def save_llm_api_key(name: str, api_key: str) -> None:
+    """将单模型 API Key 持久化到 .env（LLM_KEY_<NAME>），并立即对当前进程生效。"""
+    env_name = _llm_key_env_name(name)
+    if not env_name:
+        return
+    if api_key:
+        set_key(_env_path, env_name, api_key)
+        os.environ[env_name] = api_key
+    else:
+        from dotenv import unset_key
+        unset_key(_env_path, env_name)
+        os.environ.pop(env_name, None)
+
 def get_llm_max_tokens() -> int:
     return _get_active("llms").get("max_tokens", 2048)
 
 def get_llm_temperature() -> float:
     return _get_active("llms").get("temperature", 0.3)
+
+def get_llm_entries() -> list[dict]:
+    """返回 config.yml 中所有有效的 LLM 条目（name/base_url/model），供前端选择。"""
+    _load()
+    entries = []
+    for item in _config.get("llms", []) or []:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        base_url = (item.get("base_url") or "").strip()
+        model = (item.get("model") or "").strip()
+        if name and base_url and model:
+            entries.append({"name": name, "base_url": normalize_openai_base_url(base_url), "model": model})
+    return entries
+
+def get_llm_entry_by_name(name: str) -> dict | None:
+    """按名称查找 LLM 条目（含该条目生效的 api_key，仅内部使用）；name 为空时返回当前激活条目。"""
+    entries = get_llm_entries()
+    if not name:
+        active = _get_active("llms")
+        target = normalize_openai_base_url(active.get("base_url", "")), active.get("model", "")
+        for e in entries:
+            if (e["base_url"], e["model"]) == target:
+                e["api_key"] = get_llm_api_key_for_entry(active)
+                return e
+        return None
+    for item in _config.get("llms", []) or []:
+        if not isinstance(item, dict):
+            continue
+        if (item.get("name") or "").strip() == name:
+            for e in entries:
+                if e["name"] == name:
+                    e["api_key"] = get_llm_api_key_for_entry(item)
+                    return e
+    return None
 
 def get_rewrite_base_url() -> str:
     return normalize_openai_base_url(
@@ -398,18 +465,30 @@ def _normalize_base_url(base_url: str, path_suffix: str) -> str:
     return f"{base_url}{path_suffix}"
 
 
-def create_openai_client(base_url: str, api_key: str = "", *, asynchronous: bool = False):
-    """Create a traced OpenAI-compatible client with Base URL normalization."""
+def create_openai_client(base_url: str, api_key: str = "", *, asynchronous: bool = False,
+                         timeout: float | None = None, max_retries: int | None = None):
+    """Create a traced OpenAI-compatible client with Base URL normalization.
+
+    timeout/max_retries 为 None 时使用 SDK 默认值；传入则覆盖（用于快速失败链路）。
+    """
     client_class = AsyncOpenAI if asynchronous else OpenAI
+    kwargs = {}
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    if max_retries is not None:
+        kwargs["max_retries"] = max_retries
     client = client_class(
         base_url=normalize_openai_base_url(base_url),
         api_key=api_key or "not-needed",
+        **kwargs,
     )
     return wrappers.wrap_openai(client)
 
 
-def create_llm_client(base_url: str, api_key: str = "") -> AsyncOpenAI:
-    return create_openai_client(base_url, api_key, asynchronous=True)
+def create_llm_client(base_url: str, api_key: str = "",
+                      timeout: float | None = None, max_retries: int | None = None) -> AsyncOpenAI:
+    return create_openai_client(base_url, api_key, asynchronous=True,
+                                timeout=timeout, max_retries=max_retries)
 
 
 def create_embed_client(base_url: str, api_key: str = "") -> OpenAI:

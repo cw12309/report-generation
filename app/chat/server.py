@@ -100,6 +100,14 @@ from .pipeline import run_pipeline, search_reports
 from .report_schema import ReportSchemaError, parse_report_output, serialize_report
 from tools.rag_tool import create_rag_search_handler
 
+# Report 工作台路由
+try:
+    from reporting.router import router as report_router
+    REPORT_WORKBENCH_AVAILABLE = True
+except ImportError:
+    REPORT_WORKBENCH_AVAILABLE = False
+    logger.warning("Report 工作台模块未找到，相关功能将不可用")
+
 # 全局歧义缓存，跨请求存活（按 session_id 索引）
 _ambiguity_cache = {}
 
@@ -107,8 +115,6 @@ logger = logging.getLogger(__name__)
 
 # 从配置加载常量
 COLLECTION_NAME = get_collection_name()
-CHAT_MODEL = get_llm_model()
-EMBED_MODEL = get_embed_model()
 
 
 def _compute_file_sha256(file_path: Path) -> str:
@@ -232,21 +238,39 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
 
     @app.on_event("startup")
     async def validate_milvus_schema_on_startup():
-        """Fail fast on an incompatible legacy Collection; create if absent."""
-        client = _new_milvus_client()
+        """Fail fast on an incompatible legacy Collection; create if absent.
+        Milvus 未启动时仅告警，不阻塞主服务（Report 工作台等不依赖 Milvus）。"""
+        try:
+            client = _new_milvus_client()
+        except Exception as exc:
+            logger.warning(
+                "Milvus 不可用（%s），跳过 Schema 校验；知识库检索功能暂不可用，"
+                "如需使用请启动 Docker Desktop 并运行: docker compose -f compose.milvus.yaml up -d",
+                exc,
+            )
+            return
         try:
             result = ensure_collection_schema(client)
             logger.info(
                 "Milvus Schema 检查完成: collection=%s, created=%s",
                 COLLECTION_NAME, result.get("created", False),
             )
+        except Exception as exc:
+            logger.warning("Milvus Schema 校验失败（不影响主服务启动）: %s", exc)
         finally:
-            client.close()
+            try:
+                client.close()
+            except Exception:
+                pass
 
     @app.on_event("startup")
     async def consistency_check_on_startup():
         """Compare SQLite, Milvus Catalog, and Milvus Chunks for consistency."""
-        client = _new_milvus_client()
+        try:
+            client = _new_milvus_client()
+        except Exception as exc:
+            logger.warning("Milvus 不可用（%s），跳过启动一致性检查", exc)
+            return
         try:
             ensure_catalog_collection(client)
 
@@ -341,6 +365,11 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     front_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "front")
     if os.path.isdir(front_dir):
         app.mount("/static", StaticFiles(directory=front_dir), name="static")
+
+    # 注册 Report 工作台路由
+    if REPORT_WORKBENCH_AVAILABLE:
+        app.include_router(report_router)
+        logger.info("Report 工作台路由已注册")
 
     @app.get("/")
     async def index():
@@ -1660,7 +1689,23 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 raise FileNotFoundError(f"知识库不存在: {kb_id}")
             source_path = Path(kb.get("source_path") or "")
             if not source_path.is_file():
-                raise FileNotFoundError(f"原始 Excel 不存在: {source_path}")
+                # 项目迁移后数据库中的旧绝对路径可能失效，
+                # 回退到当前项目 report_template/{kb_id}/{source_name} 并修正记录
+                fallback = (
+                    Path(__file__).resolve().parents[1]
+                    / "data_pipeline"
+                    / "report_template"
+                    / kb_id
+                    / (kb.get("source_name") or source_path.name)
+                )
+                if fallback.is_file():
+                    logger.info(
+                        "知识库 [%s] source_path 失效，回退到: %s", kb_id, fallback,
+                    )
+                    source_path = fallback
+                    store.update_knowledge_base(kb_id, source_path=str(fallback))
+                else:
+                    raise FileNotFoundError(f"原始 Excel 不存在: {source_path}")
             new_hash = _compute_file_sha256(source_path)
             old_hash = str(kb.get("source_hash") or "")
             if not force_rebuild and old_hash and new_hash == old_hash:
@@ -1805,8 +1850,16 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         milvus_config["uri"] = get_db_path()
 
         # 密钥只能来自环境变量；绝不把 YAML 占位符或真实密钥返回给前端。
+        # llms 支持单模型密钥（LLM_KEY_<NAME>），按条目分别掩码。
+        from app.config import get_llm_api_key_for_entry
+        models = config_data.get("llms")
+        if isinstance(models, list):
+            for m in models:
+                if isinstance(m, dict):
+                    m["api_key"] = (
+                        "••••••••••••••••••••••••" if get_llm_api_key_for_entry(m) else ""
+                    )
         for model_list_key, env_key_func in [
-            ("llms", get_llm_api_key),
             ("embeddings", get_embed_api_key),
             ("reranks", get_rerank_api_key),
         ]:
@@ -1841,9 +1894,23 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         if isinstance(retrieval_config, dict):
             retrieval_config.pop("db_path", None)
 
-        # 配置页只保存非敏感配置；所有密钥位置始终写回环境变量占位符。
+        # 配置页只保存非敏感配置；llms 的单模型密钥持久化到 .env（LLM_KEY_<NAME>），
+        # YAML 中一律写回占位符；embeddings/reranks 密钥仍只来自全局环境变量。
+        from app.config import save_llm_api_key
+        MASK = "••••••••••••••••••••••••"
+        llm_models = config_data.get("llms")
+        if isinstance(llm_models, list):
+            for m in llm_models:
+                if not isinstance(m, dict):
+                    continue
+                submitted = str(m.get("api_key") or "").strip()
+                if submitted and submitted != MASK:
+                    save_llm_api_key(m.get("name", ""), submitted)
+                elif not submitted:
+                    # 用户清空密钥：删除单模型密钥，回退全局 CHAT_API_KEY
+                    save_llm_api_key(m.get("name", ""), "")
+                m["api_key"] = "${CHAT_API_KEY}"
         api_key_placeholders = {
-            "llms": "${CHAT_API_KEY}",
             "embeddings": "${EMBED_API_KEY}",
             "reranks": "${SILICONFLOW_API_KEY}",
         }
@@ -1855,6 +1922,14 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
         milvus_config["token"] = "${MILVUS_TOKEN}"
 
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config.yml")
+        # 保留配置页不管理的顶层段（如 breast_mri），避免整体覆写时丢失
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                existing = yaml.safe_load(f) or {}
+            if isinstance(existing, dict):
+                for key, value in existing.items():
+                    if key not in config_data:
+                        config_data[key] = value
         with open(config_path, "w", encoding="utf-8") as f:
             yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
         reload_config()
@@ -1879,6 +1954,10 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 api_key = get_embed_api_key()
             elif model_type == "reranks":
                 api_key = get_rerank_api_key()
+            elif model_type == "llms":
+                # 单模型密钥优先（LLM_KEY_<NAME>），回退全局 CHAT_API_KEY
+                from app.config import get_llm_api_key_for_entry
+                api_key = get_llm_api_key_for_entry({"name": model_config.get("name", "")})
             else:
                 api_key = get_llm_api_key()
 
@@ -2061,8 +2140,8 @@ def web_main(port=8001):
     logger.info(
         "Worker 启动: http://127.0.0.1:%s, 模型=%s, Embedding=%s",
         port,
-        CHAT_MODEL,
-        EMBED_MODEL,
+        get_llm_model(),
+        get_embed_model(),
     )
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=port)

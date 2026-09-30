@@ -13,6 +13,7 @@ import logging
 from typing import Callable, Optional
 
 from chat.report_schema import (
+    REPORT_MAX_TOKENS,
     REPORT_SCHEMA_VERSION,
     ReportSchemaError,
     parse_report_output,
@@ -115,7 +116,7 @@ def create_refine_report_handler(
 
             output = await chat_fn(
                 messages,
-                max_tokens=2048,
+                max_tokens=REPORT_MAX_TOKENS,
                 temperature=0.5,
                 _emit=None,
                 debug=True,
@@ -125,7 +126,7 @@ def create_refine_report_handler(
             async def repair(repair_messages):
                 return await chat_fn(
                     repair_messages,
-                    max_tokens=2048,
+                    max_tokens=REPORT_MAX_TOKENS,
                     temperature=0,
                     _emit=None,
                     debug=True,

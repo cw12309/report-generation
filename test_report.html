@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Report工作台测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; }
+        .test-section h3 { margin-top: 0; }
+        button { padding: 8px 16px; margin: 5px; cursor: pointer; }
+        .result { margin-top: 10px; padding: 10px; background: #f5f5f5; }
+        .success { color: green; }
+        .error { color: red; }
+        pre { background: #f8f8f8; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Report 工作台功能测试</h1>
+    
+    <div class="test-section">
+        <h3>1. 测试路由列表API</h3>
+        <button onclick="testRoutes()">获取路由列表</button>
+        <div id="routesResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>2. 测试报告生成（腰椎MRI）</h3>
+        <button onclick="testGenerate()">生成报告</button>
+        <div id="generateResult" class="result"></div>
+    </div>
+    
+    <div class="test-section">
+        <h3>3. 测试DOM元素</h3>
+        <button onclick="testDOM()">检查DOM</button>
+        <div id="domResult" class="result"></div>
+    </div>
+
+    <script>
+        async function testRoutes() {
+            const resultDiv = document.getElementById('routesResult');
+            try {
+                const response = await fetch('http://localhost:8000/api/report-workbench/routes');
+                const data = await response.json();
+                resultDiv.innerHTML = `
+                    <span class="success">✓ 成功获取 ${data.routes.length} 个路由</span>
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ 错误: ${error.message}</span>`;
+            }
+        }
+
+        async function testGenerate() {
+            const resultDiv = document.getElementById('generateResult');
+            const conversationId = 'test_' + Date.now();
+            
+            resultDiv.innerHTML = '<p>正在生成报告...</p>';
+            
+            try {
+                const params = new URLSearchParams({
+                    input_text: '腰4/5椎间盘向后突出，硬膜囊受压',
+                    language: 'zh-CN',
+                    modality: '',
+                    body_part: '',
+                    route_id: ''
+                });
+                
+                const eventSource = new EventSource(
+                    `http://localhost:8000/api/report-workbench/sessions/${conversationId}/generate?${params}`
+                );
+                
+                let messages = [];
+                
+                eventSource.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    messages.push(data);
+                    
+                    if (data.type === 'done') {
+                        eventSource.close();
+                        resultDiv.innerHTML = `
+                            <span class="success">✓ 报告生成完成</span>
+                            <pre>${JSON.stringify(messages, null, 2)}</pre>
+                        `;
+                    }
+                };
+                
+                eventSource.onerror = (error) => {
+                    eventSource.close();
+                    resultDiv.innerHTML = `<span class="error">✗ SSE错误</span>`;
+                };
+                
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">✗ 错误: ${error.message}</span>`;
+            }
+        }
+
+        function testDOM() {
+            const resultDiv = document.getElementById('domResult');
+            
+            // 打开主页面
+            window.open('http://localhost:8000', '_blank');
+            
+            const requiredElements = [
+                'reportNewSessionBtn',
+                'reportSendBtn',
+                'reportTextInput',
+                'reportUploadBtn',
+                'reportUploadInput',
+                'reportSaveBtn',
+                'reportExportBtn',
+                'reportEmptyState',
+                'reportSections',
+                'reportFindingsContent',
+                'reportDiagnosisContent',
+                'reportChatMessages',
+                'reportStatusBadge',
+                'reportRouteName',
+                'reportQuestionRound',
+                'reportLanguageSelect',
+                'reportImagePreview'
+            ];
+            
+            resultDiv.innerHTML = `
+                <p class="success">✓ 已在新窗口打开主页面</p>
+                <p>需要检查的DOM元素ID列表：</p>
+                <pre>${requiredElements.join('\n')}</pre>
+                <p>请在浏览器控制台运行：</p>
+                <pre>requiredElements = ${JSON.stringify(requiredElements, null, 2)};
+requiredElements.forEach(id => {
+    const el = document.getElementById(id);
+    console.log(id + ': ' + (el ? '✓' : '✗'));
+});</pre>
+            `;
+        }
+    </script>
+</body>
+</html>

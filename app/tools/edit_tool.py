@@ -12,6 +12,8 @@ import logging
 from typing import Callable, Optional
 
 from chat.report_schema import (
+    EDIT_JUDGE_MAX_TOKENS,
+    REPORT_MAX_TOKENS,
     REPORT_SCHEMA_VERSION,
     ReportPreservationError,
     ReportSchemaError,
@@ -173,7 +175,7 @@ def create_edit_report_handler(
 
             output = await chat_fn(
                 messages,
-                max_tokens=2048,
+                max_tokens=REPORT_MAX_TOKENS,
                 temperature=0.3,
                 _emit=None,
                 debug=True,
@@ -194,7 +196,7 @@ def create_edit_report_handler(
                 try:
                     judge_output = await chat_fn(
                         _build_judge_messages(current_report, instruction, candidate),
-                        max_tokens=512,
+                        max_tokens=EDIT_JUDGE_MAX_TOKENS,
                         temperature=0,
                         _emit=None,
                         debug=True,
@@ -224,7 +226,7 @@ def create_edit_report_handler(
                         output,
                         violations,
                     ),
-                    max_tokens=2048,
+                    max_tokens=REPORT_MAX_TOKENS,
                     temperature=0,
                     _emit=None,
                     debug=True,

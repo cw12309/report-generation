@@ -1,0 +1,256 @@
+# Report 工作台路由配置
+# 综合医学影像报告模板路由
+
+routes:
+  - id: lumbar_mri
+    name: 腰椎 MRI
+    aliases:
+      - 腰椎MRI
+      - 腰椎 MR
+      - 腰椎磁共振
+      - 腰骶椎MRI
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 腰椎
+      - 腰骶椎
+    prompt_file: lumbar_mri.md
+    template_source: 腰椎MRI标准化报告模板.md
+    quick_tags:
+      - 腰椎序列规整，生理曲度正常
+      - 腰椎序列规整，生理曲度变直
+      - 椎间盘膨出
+      - 椎间盘突出
+      - 椎间盘脱出
+      - 椎间盘游离
+      - Pfirrmann I级
+      - Pfirrmann II级
+      - Pfirrmann III级
+      - Pfirrmann IV级
+      - Pfirrmann V级
+      - 硬膜囊受压
+      - 神经根受压
+      - 椎管狭窄 轻度
+      - 椎管狭窄 中度
+      - 椎管狭窄 重度
+      - Modic I型
+      - Modic II型
+      - Modic III型
+      - 椎体滑脱 Meyerding I度
+      - 椎体滑脱 Meyerding II度
+      - 终板炎
+      - 许莫氏结节
+      - 椎体血管瘤
+      - 压缩性骨折
+      - 黄韧带肥厚
+      - 椎小关节退变
+      - 马尾神经受压
+      - 扫描范围内未见异常
+    enabled: true
+
+  - id: cervical_mri
+    name: 颈椎 MRI
+    aliases:
+      - 颈椎MRI
+      - 颈椎 MR
+      - 颈椎磁共振
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 颈椎
+    prompt_file: cervical_mri.md
+    template_source: 颈椎MRI标准化诊断模板.md
+    quick_tags:
+      - 颅颈交界及寰枢关节对位正常
+      - 颈椎序列规整，生理曲度存在
+      - 颈椎生理曲度变直
+      - 颈椎反曲
+      - 椎间盘膨出
+      - 椎间盘突出
+      - 椎间盘脱出
+      - 硬膜囊受压
+      - 颈髓受压
+      - 神经根受压
+      - 椎管狭窄 轻度
+      - 椎管狭窄 中度
+      - 椎管狭窄 重度
+      - 椎间孔狭窄
+      - 椎体骨质增生
+      - 黄韧带增厚
+      - 椎小关节增生
+      - 颈髓信号异常
+      - 椎管内占位
+      - 扫描范围内甲状腺、颅底未见异常
+    enabled: true
+
+  - id: thoracic_mri
+    name: 胸椎 MRI
+    aliases:
+      - 胸椎MRI
+      - 胸椎 MR
+      - 胸椎磁共振
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 胸椎
+    prompt_file: thoracic_mri.md
+    template_source: 胸椎MRI标准化报告模板.md
+    quick_tags:
+      - 胸椎序列规整，生理曲度正常
+      - 胸椎生理曲度后凸
+      - 椎间盘突出
+      - 硬膜囊受压
+      - 胸髓受压
+      - 椎管狭窄
+      - 黄韧带肥厚
+      - 黄韧带骨化
+      - 椎体血管瘤
+      - 压缩性骨折
+      - 椎体转移瘤
+      - 椎管内占位
+      - 髓内信号异常
+      - 终板炎 Modic I型
+      - 许莫氏结节
+      - 扫描范围内未见异常
+    enabled: true
+
+  - id: brain_mri
+    name: 颅脑 MRI
+    aliases:
+      - 颅脑MRI
+      - 头颅MRI
+      - 脑MRI
+      - 颅脑 MR
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 颅脑
+      - 头颅
+      - 脑
+    prompt_file: brain_mri.md
+    template_source: 颅脑MRI标准化报告模板.md
+    quick_tags:
+      - 双侧大脑半球对称，中线结构居中
+      - 中线结构移位
+      - 脑白质高信号 Fezekas 1级
+      - 脑白质高信号 Fezekas 2级
+      - 脑白质高信号 Fezekas 3级
+      - 急性脑梗死
+      - 陈旧性脑梗死/软化灶
+      - 颅内出血
+      - 占位性病变
+      - 环形强化
+      - 瘤周水肿
+      - 占位效应
+      - 脑萎缩 轻度
+      - 脑萎缩 中度
+      - 脑萎缩 重度
+      - 脑室系统扩张
+      - 脱髓鞘病变
+      - 上颌窦炎
+      - 扫描范围内鼻窦、眼眶、乳突未见异常
+    enabled: true
+
+  - id: breast_mri
+    name: 乳腺 MRI
+    aliases:
+      - 乳腺MRI
+      - 乳房MRI
+      - 乳腺 MR
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 乳腺
+      - 乳房
+    prompt_file: breast_mri.md
+    template_source: 乳腺MRI标准化报告模板.md
+    quick_tags:
+      - 双侧乳腺对称，ACR b型
+      - 双侧乳腺对称，ACR c型
+      - 双侧乳腺对称，ACR d型
+      - BPE 少量对称
+      - BPE 中等对称
+      - BPE 显著对称
+      - 囊肿
+      - 纤维腺瘤
+      - 肿块 边缘光整
+      - 肿块 边缘毛刺
+      - 肿块 分叶状
+      - 非肿块强化 导管样
+      - 非肿块强化 节段分布
+      - 环形强化
+      - TIC I型 流入型
+      - TIC II型 平台型
+      - TIC III型 廓清型
+      - DWI高信号 ADC减低
+      - 腋窝淋巴结肿大
+      - BI-RADS 2类
+      - BI-RADS 3类
+      - BI-RADS 4A类
+      - BI-RADS 4B类
+      - BI-RADS 4C类
+      - BI-RADS 5类
+      - 双侧腋窝未见肿大淋巴结
+    enabled: true
+
+  - id: cardiac_mri
+    name: 心脏 MRI
+    aliases:
+      - 心脏MRI
+      - 心脏 MR
+      - 心脏磁共振
+    modalities:
+      - MRI
+      - MR
+      - 磁共振
+    body_parts:
+      - 心脏
+    prompt_file: cardiac_mri.md
+    template_source: 心脏MRI标准化报告模板.md
+    quick_tags:
+      - 图像质量优质
+      - 心脏形态规整，房室比例协调
+      - 室壁运动同步
+      - 室壁运动减弱
+      - LVEF正常
+      - LVEF减低 HFrEF
+      - LVEF轻度减低 HFmrEF
+      - 心肌水肿 T2高信号
+      - LGE 心内膜下强化
+      - LGE 透壁强化
+      - LGE 中层强化
+      - LGE 心外膜下强化
+      - 无异常LGE强化
+      - 心包少量积液
+      - 心包中量积液
+      - 心包增厚
+      - 瓣膜反流 轻度
+      - 瓣膜反流 中度
+      - 瓣膜反流 重度
+      - 瓣膜狭窄
+      - 室壁瘤
+      - 房间隔缺损
+      - 室间隔缺损
+      - 扫描范围内双肺、纵隔未见异常
+    enabled: true
+
+  - id: generic
+    name: 通用影像报告
+    aliases:
+      - 通用
+      - 其他
+    modalities: []
+    body_parts: []
+    prompt_file: generic.yml
+    template_source: null
+    enabled: true

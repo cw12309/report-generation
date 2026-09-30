@@ -5,6 +5,11 @@ __pycache__/
 dist/
 build/
 
+.pytest_cache/
+.vscode/
+app/milvus_lite.db/
+/report-generation/
+
 xlsx_slices/
 /app/data_pipeline/report_template/
 /app/data_pipeline/output_markdown/

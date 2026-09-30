@@ -237,7 +237,8 @@ body {
 
 /* 工作台子视图 */
 .workspace-agent-view,
-.workspace-breastmri-view {
+.workspace-breastmri-view,
+.workspace-report-view {
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -5328,5 +5329,929 @@ body {
   .api-deployment-actions {
     width: auto;
     justify-content: flex-start;
+  }
+}
+
+/* ========== Report 工作台样式 ========== */
+
+.workspace-report-view {
+  display: none;
+  width: 100%;
+  height: 100%;
+  background: #f8fafc;
+}
+
+.workspace-report-view[style*="display: block"],
+.workspace-report-view[style*="display: flex"] {
+  display: flex !important;
+}
+
+.report-workbench-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  gap: 0;
+}
+
+/* 左侧历史会话侧边栏 */
+.report-history-sidebar {
+  width: 240px;
+  background: #ffffff;
+  border-right: 1px solid #e4e7eb;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.report-history-header {
+  padding: 16px;
+  border-bottom: 1px solid #e4e7eb;
+}
+
+.report-history-header h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2939;
+}
+
+.report-new-session-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: #0066ff;
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.report-new-session-btn:hover {
+  background: #0052cc;
+}
+
+.report-history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.report-history-item {
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  background: #f8fafc;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.report-history-item:hover {
+  background: #eef3f9;
+  border-color: #d0dbe6;
+}
+
+.report-history-item.active {
+  background: #e8f2ff;
+  border-color: #0066ff;
+}
+
+.report-history-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #344054;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-history-item-time {
+  font-size: 11px;
+  color: #667085;
+}
+
+.report-history-item-preview {
+  font-size: 11px;
+  color: #98a2b3;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-history-empty {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+/* 中间主区域 */
+.report-main-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  min-width: 0;
+}
+
+/* 状态栏 */
+.report-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e4e7eb;
+  flex-shrink: 0;
+}
+
+.report-status-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.report-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: #e8f2ff;
+  color: #0066ff;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.report-status-badge.generating {
+  background: #fff4e6;
+  color: #ff8800;
+}
+
+.report-status-badge.completed {
+  background: #e6f7ed;
+  color: #00a854;
+}
+
+.report-status-badge.failed {
+  background: #ffebe9;
+  color: #ff4d4f;
+}
+
+.report-route-name {
+  font-size: 13px;
+  color: #667085;
+}
+
+.report-question-round {
+  font-size: 12px;
+  color: #98a2b3;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.report-elapsed {
+  font-size: 12px;
+  color: #00a854;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  background: #e6f7ed;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* 报告内容区域（固定在上方） */
+.report-content-area {
+  flex-shrink: 0;
+  background: #ffffff;
+  border-bottom: 1px solid #e4e7eb;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.report-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.report-empty-state .empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.report-empty-state h3 {
+  margin: 0 0 8px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.report-empty-state p {
+  margin: 0;
+  font-size: 13px;
+  color: #667085;
+}
+
+.report-sections {
+  padding: 20px;
+}
+
+.report-section {
+  position: relative;
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+}
+
+.report-section:last-child {
+  margin-bottom: 0;
+}
+
+.report-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.report-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d2939;
+}
+
+.report-copy-btn {
+  padding: 4px 10px;
+  background: #ffffff;
+  color: #667085;
+  border: 1px solid #d0d5dd;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.report-copy-btn:hover {
+  background: #f8fafc;
+  color: #344054;
+  border-color: #98a2b3;
+}
+
+.report-copy-btn.copied {
+  background: #e6f7ed;
+  color: #00a854;
+  border-color: #00a854;
+}
+
+.report-section-content {
+  font-size: 13px;
+  line-height: 1.8;
+  color: #344054;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.report-section-content:empty::before {
+  content: "等待生成...";
+  color: #98a2b3;
+  font-style: italic;
+}
+
+/* AI对话区域 */
+.report-chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.report-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  background: #ffffff;
+}
+
+.report-chat-message {
+  margin-bottom: 16px;
+  display: flex;
+  gap: 12px;
+}
+
+.report-chat-message.user {
+  flex-direction: row-reverse;
+}
+
+.report-chat-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e4e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.report-chat-message.assistant .report-chat-avatar {
+  background: #e8f2ff;
+  color: #0066ff;
+}
+
+.report-chat-message.user .report-chat-avatar {
+  background: #f0f0f0;
+  color: #667085;
+}
+
+.report-chat-bubble {
+  max-width: 70%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.report-chat-message.assistant .report-chat-bubble {
+  background: #f8fafc;
+  color: #344054;
+  border: 1px solid #e4e7eb;
+}
+
+.report-chat-message.user .report-chat-bubble {
+  background: #0066ff;
+  color: #ffffff;
+}
+
+.report-chat-questions {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fff9e6;
+  border: 1px solid #ffe7a3;
+  border-radius: 8px;
+}
+
+.report-chat-time {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #98a2b3;
+  letter-spacing: 0.2px;
+}
+
+.report-chat-question-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: #ffffff;
+  border: 1px solid #ffe7a3;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #667085;
+}
+
+.report-chat-question-item:last-child {
+  margin-bottom: 0;
+}
+
+.report-chat-question-item strong {
+  color: #344054;
+}
+
+/* 输入区域 */
+.report-input-area {
+  flex-shrink: 0;
+  padding: 16px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e4e7eb;
+}
+
+/* 快捷输入标签栏 */
+.report-quick-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 74px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+  padding: 6px;
+  background: #f7f9fc;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+}
+
+.report-quick-tag {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #344054;
+  background: #ffffff;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s;
+}
+
+.report-quick-tag:hover {
+  background: #eef4ff;
+  border-color: #4f7cff;
+  color: #2456d6;
+}
+
+/* 导出格式菜单 */
+.report-export-menu {
+  position: absolute;
+  right: 8px;
+  top: 96px;
+  z-index: 60;
+  background: #ffffff;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(16, 24, 40, 0.12);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.report-export-menu-item {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #344054;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.report-export-menu-item:hover {
+  background: #eef4ff;
+  color: #2456d6;
+}
+
+/* 追问候选选项按钮 */
+.report-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.report-question-option-btn {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #2456d6;
+  background: #eef4ff;
+  border: 1px solid #b9ccf7;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.report-question-option-btn:hover {
+  background: #2456d6;
+  border-color: #2456d6;
+  color: #ffffff;
+}
+
+.report-input-wrapper {
+  display: flex;
+  gap: 8px;
+}
+
+.report-text-input {
+  flex: 1;
+  padding: 10px 14px;
+  background: #ffffff;
+  color: #344054;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  font-size: 13px;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s;
+  min-height: 40px;
+  max-height: 120px;
+}
+
+.report-text-input:focus {
+  border-color: #0066ff;
+  box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
+}
+
+.report-text-input::placeholder {
+  color: #98a2b3;
+}
+
+.report-send-btn {
+  padding: 10px 20px;
+  background: #0066ff;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-self: flex-end;
+}
+
+.report-send-btn:hover:not(:disabled) {
+  background: #0052cc;
+}
+
+.report-send-btn:disabled {
+  background: #d0d5dd;
+  cursor: not-allowed;
+}
+
+/* 右侧工具栏 */
+.report-toolbar {
+  position: relative;
+  width: 80px;
+  background: #ffffff;
+  border-left: 1px solid #e4e7eb;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 0;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.report-action-btn {
+  width: 56px;
+  height: 56px;
+  background: #f8fafc;
+  color: #667085;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.report-action-btn:hover {
+  background: #eef3f9;
+  color: #0066ff;
+  border-color: #0066ff;
+}
+
+.report-action-btn span {
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.report-action-btn.primary {
+  background: #0066ff;
+  color: #ffffff;
+  border-color: #0066ff;
+}
+
+.report-action-btn.primary:hover {
+  background: #0052cc;
+  border-color: #0052cc;
+}
+
+/* 模型选择器 */
+.report-model-picker {
+  position: relative;
+}
+
+.report-model-menu {
+  position: absolute;
+  top: 0;
+  right: 68px;
+  width: 320px;
+  max-height: 460px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid #e4e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.12);
+  padding: 8px;
+  z-index: 60;
+}
+
+.report-model-menu-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #667085;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid #f0f2f5;
+  margin-bottom: 6px;
+}
+
+.report-model-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  color: #344054;
+}
+
+.report-model-item:hover {
+  background: #f0f5ff;
+}
+
+.report-model-item.active {
+  background: #e8f0fe;
+  color: #0066ff;
+  font-weight: 600;
+}
+
+.report-model-item .model-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d0d5dd;
+  flex-shrink: 0;
+}
+
+.report-model-item.active .model-dot {
+  background: #0066ff;
+}
+
+.report-model-item .model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 模型行：选择 + 思考开关 + 实测 ===== */
+.report-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 2px;
+}
+
+.report-model-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.report-model-row .report-model-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.report-model-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.report-think-test {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid #d0d5dd;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  color: #475467;
+}
+
+.report-think-test:hover:not(:disabled) {
+  border-color: #0066ff;
+  color: #0066ff;
+}
+
+.report-think-test:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* 思考开关（iOS 风格滑块） */
+.report-think-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 34px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.report-think-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.report-think-slider {
+  position: absolute;
+  inset: 0;
+  background: #d0d5dd;
+  border-radius: 18px;
+  transition: background 0.2s;
+}
+
+.report-think-slider::before {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.report-think-switch input:checked + .report-think-slider {
+  background: #7c3aed;
+}
+
+.report-think-switch input:checked + .report-think-slider::before {
+  transform: translateX(16px);
+}
+
+.report-think-switch input:disabled + .report-think-slider {
+  opacity: 0.5;
+}
+
+/* 实测结论 */
+.report-think-result {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: #667085;
+  background: #f7f8fa;
+  word-break: break-word;
+}
+
+.report-think-result.reasoning_channel {
+  color: #12855f;
+  background: #ecfdf3;
+}
+
+.report-think-result.content_mixed {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.report-think-result.no_effect {
+  color: #98a2b3;
+  background: #f7f8fa;
+}
+
+.report-think-result.unsupported {
+  color: #b54708;
+  background: #fffaeb;
+}
+
+.report-think-result.testing {
+  color: #0066ff;
+  background: #f0f5ff;
+}
+
+.report-think-test-all {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px;
+  font-size: 11px;
+  border: 1px dashed #d0d5dd;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #475467;
+}
+
+.report-think-test-all:hover:not(:disabled) {
+  border-color: #7c3aed;
+  color: #7c3aed;
+}
+
+.report-think-test-all:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ===== 思考过程面板（可折叠） ===== */
+.report-thinking-panel {
+  margin: 8px 0;
+  border: 1px solid #e9d5ff;
+  border-radius: 8px;
+  background: #faf5ff;
+  overflow: hidden;
+}
+
+.report-thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7c3aed;
+  cursor: pointer;
+  user-select: none;
+}
+
+.report-thinking-toggle {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.report-thinking-status {
+  margin-left: auto;
+  font-weight: 500;
+  color: #b794f6;
+}
+
+.report-thinking-status.done {
+  color: #7c3aed;
+}
+
+.report-thinking-body {
+  padding: 0 12px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b46c1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.report-thinking-collapsed .report-thinking-body {
+  display: none;
+}
+
+.report-thinking-collapsed .report-thinking-toggle {
+  transform: rotate(-90deg);
+}
+
+/* 响应式调整 */
+@media (max-width: 1200px) {
+  .report-history-sidebar {
+    width: 200px;
+  }
+  
+  .report-toolbar {
+    width: 70px;
+  }
+  
+  .report-action-btn {
+    width: 50px;
+    height: 50px;
+    font-size: 18px;
+  }
+}
+
+@media (max-width: 768px) {
+  .report-workbench-layout {
+    flex-direction: column;
+  }
+  
+  .report-history-sidebar {
+    width: 100%;
+    max-height: 30vh;
+    border-right: none;
+    border-bottom: 1px solid #e4e7eb;
+  }
+  
+  .report-toolbar {
+    width: 100%;
+    height: auto;
+    flex-direction: row;
+    border-left: none;
+    border-top: 1px solid #e4e7eb;
+    padding: 8px 16px;
+    justify-content: center;
+  }
+  
+  .report-content-area {
+    max-height: 40vh;
+  }
+  
+  .report-chat-bubble {
+    max-width: 85%;
   }
 }

@@ -577,7 +577,8 @@ class SessionStore:
                               metadata_tree: Optional[dict] = None,
                               progress: Optional[int] = None,
                               source_hash: Optional[str] = None,
-                              source_name: Optional[str] = None) -> None:
+                              source_name: Optional[str] = None,
+                              source_path: Optional[str] = None) -> None:
         assignments, values = [], []
         if status is not None:
             if status not in KNOWLEDGE_BASE_STATUSES:
@@ -599,6 +600,9 @@ class SessionStore:
         if source_name is not None:
             assignments.append("source_name = ?")
             values.append(source_name)
+        if source_path is not None:
+            assignments.append("source_path = ?")
+            values.append(source_path)
         if assignments:
             values.append(kb_id)
             with self._get_conn() as conn:

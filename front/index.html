@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=44" />
+    <link rel="stylesheet" href="/static/style.css?v=56" />
   </head>
   <body>
     <div class="app">
@@ -52,6 +52,7 @@
             <!-- 工作台子导航 Tab 栏 -->
             <nav class="workspace-tabs">
               <button class="workspace-tab active" data-workspace-tab="agent">通用 Agent</button>
+              <button class="workspace-tab" data-workspace-tab="report">综合报告</button>
               <button class="workspace-tab" data-workspace-tab="breast-mri">乳腺 MRI</button>
             </nav>
 
@@ -168,6 +169,117 @@
               <iframe id="breastMRIIframe" src="" style="display: none"></iframe>
             </div>
             <!-- /乳腺 MRI 子视图 -->
+
+            <!-- Report 工作台子视图 -->
+            <div class="workspace-report-view" id="workspaceReport" style="display: none">
+              <div class="report-workbench-layout">
+                <!-- 左侧：历史会话 -->
+                <aside class="report-history-sidebar">
+                  <div class="report-history-header">
+                    <h3>报告历史</h3>
+                    <button id="reportNewSessionBtn" class="report-new-session-btn">
+                      新建报告
+                    </button>
+                  </div>
+                  <div class="report-history-list" id="reportHistoryList">
+                    <!-- 历史会话列表 -->
+                  </div>
+                </aside>
+
+                <!-- 中间：报告主区域 -->
+                <div class="report-main-area">
+                  <!-- 状态栏 -->
+                  <div class="report-status-bar">
+                    <div class="report-status-info">
+                      <span class="report-status-badge" id="reportStatusBadge">等待输入</span>
+                      <span class="report-route-name" id="reportRouteName">未选择模板</span>
+                      <span class="report-question-round" id="reportQuestionRound">追问轮次: 0/2</span>
+                    </div>
+                  </div>
+
+                  <!-- 固定报告区域 -->
+                  <div class="report-content-area">
+                    <!-- 空状态 -->
+                    <div class="report-empty-state" id="reportEmptyState">
+                      <div class="empty-icon">📋</div>
+                      <h3>开始生成报告</h3>
+                      <p>输入医生的阅片结论，AI将快速生成规范的影像报告</p>
+                    </div>
+
+                    <!-- 报告展示 -->
+                    <div class="report-sections" id="reportSections" style="display: none">
+                      <!-- 影像所见 -->
+                      <div class="report-section">
+                        <div class="report-section-header">
+                          <h3 class="report-section-title">影像所见</h3>
+                          <button class="report-copy-btn" data-section="findings">复制</button>
+                        </div>
+                        <div class="report-section-content" id="reportFindingsContent"></div>
+                      </div>
+
+                      <!-- 影像诊断 -->
+                      <div class="report-section">
+                        <div class="report-section-header">
+                          <h3 class="report-section-title">影像诊断</h3>
+                          <button class="report-copy-btn" data-section="diagnosis">复制</button>
+                        </div>
+                        <div class="report-section-content" id="reportDiagnosisContent"></div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- AI 对话区域 -->
+                  <div class="report-chat-area">
+                    <div class="report-chat-messages" id="reportChatMessages">
+                      <!-- 对话消息 -->
+                    </div>
+                    
+                    <!-- 输入区 -->
+                    <div class="report-input-area">
+                      <div class="report-quick-tags" id="reportQuickTags" style="display:none"></div>
+                      <div class="report-input-wrapper">
+                        <textarea
+                          class="report-text-input"
+                          id="reportTextInput"
+                          placeholder="输入医生的阅片结论..."
+                          rows="3"
+                        ></textarea>
+                        <button id="reportSendBtn" class="report-send-btn">
+                          发送
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 右侧：操作工具栏 -->
+                <aside class="report-toolbar">
+                  <button class="report-action-btn primary" id="reportSaveBtn" title="保存报告">
+                    💾<br><span>保存</span>
+                  </button>
+                  <button class="report-action-btn" id="reportExportBtn" title="导出报告">
+                    📥<br><span>导出</span>
+                  </button>
+                  <div class="report-export-menu" id="reportExportMenu" style="display:none">
+                    <button class="report-export-menu-item" data-fmt="docx">Word</button>
+                    <button class="report-export-menu-item" data-fmt="md">MD</button>
+                  </div>
+                  <button class="report-action-btn" id="reportVersionBtn" title="历史版本">
+                    🕐<br><span>版本</span>
+                  </button>
+                  <div class="report-model-picker">
+                    <button class="report-action-btn" id="reportModelBtn" title="选择生成模型">
+                      🤖<br><span>模型</span>
+                    </button>
+                    <div class="report-model-menu" id="reportModelMenu" style="display: none">
+                      <div class="report-model-menu-title">生成模型</div>
+                      <div id="reportModelList"></div>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+            <!-- /Report 工作台子视图 -->
           </div>
 
           <!-- 模型选择弹窗 -->
@@ -1729,6 +1841,6 @@ data: [DONE]</code></pre>
       hidden
     ></div>
 
-    <script src="/static/app.js?v=63"></script>
+    <script src="/static/app.js?v=92"></script>
   </body>
 </html>

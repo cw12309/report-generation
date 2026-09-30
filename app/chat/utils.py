@@ -73,7 +73,7 @@ def json_to_display(report_json):
     lines = []
 
     results = report_json["results"]
-    lines.append("## 一、影像学表现")
+    lines.append("## 一、影像所见")
     lines.append("")
     for item in results:
         imaging = item["影像学表现"]
@@ -82,7 +82,7 @@ def json_to_display(report_json):
                 lines.append(line)
             lines.append("")
 
-    lines.append("## 二、诊断意见")
+    lines.append("## 二、影像诊断")
     lines.append("")
     for item in results:
         diagnosis = item["诊断意见"]

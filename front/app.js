@@ -405,6 +405,7 @@ function switchWorkspaceTab(tab) {
 
   const agentView = document.getElementById("workspaceAgent");
   const mriView = document.getElementById("workspaceBreastMRI");
+  const reportView = document.getElementById("workspaceReport");
 
   const tabs = document.querySelectorAll(".workspace-tab");
   tabs.forEach((t) => {
@@ -414,11 +415,20 @@ function switchWorkspaceTab(tab) {
   if (tab === "agent") {
     if (agentView) agentView.style.display = "";
     if (mriView) mriView.style.display = "none";
+    if (reportView) reportView.style.display = "none";
   } else if (tab === "breast-mri") {
     if (agentView) agentView.style.display = "none";
     if (mriView) mriView.style.display = "";
+    if (reportView) reportView.style.display = "none";
     if (!breastMRILoaded) {
       initBreastMRI();
+    }
+  } else if (tab === "report") {
+    if (agentView) agentView.style.display = "none";
+    if (mriView) mriView.style.display = "none";
+    if (reportView) reportView.style.display = "flex";
+    if (!reportWorkbenchLoaded) {
+      initReportWorkbench();
     }
   }
 }
@@ -1867,8 +1877,14 @@ function renderManageKbList(data = knowledgeBases) {
 
   manageKbList.querySelectorAll(".manage-kb-card").forEach((card) => {
     const selectCard = () => {
-      selectedManageKbId = card.dataset.kbId;
+      const kbId = card.dataset.kbId;
+      const sameKb = selectedManageKbId === kbId;
+      selectedManageKbId = kbId;
       renderManageKbList(knowledgeBases);
+      // 重复点击同一知识库且已有请求在途时跳过，避免中止旧请求产生 ERR_ABORTED
+      if (sameKb && kbChunkAbortController && kbChunkList?.dataset.kbId === kbId) {
+        return;
+      }
       loadKnowledgeBaseChunks(selectedManageKbId);
     };
     card.addEventListener("click", selectCard);
@@ -3832,7 +3848,10 @@ function collectModelData(sectionKey) {
     });
     items.push(item);
   });
-  return items;
+  // 丢弃完全空白的占位条目，避免写入无效配置
+  return items.filter(
+    (it) => (it.name || "").trim() || (it.base_url || "").trim() || (it.model || "").trim()
+  );
 }
 
 // 测试模型 API 连接
@@ -4024,6 +4043,8 @@ async function saveConfig() {
         milvusUriInput.value = data.milvus_uri;
       }
       showConfigHint("✅ " + data.message);
+      // 保存后刷新报告工作台模型列表，新增模型立即可选
+      if (typeof loadReportModels === "function") loadReportModels();
     } else {
       showConfigHint("❌ " + (data.detail || data.error || "保存失败"));
     }
@@ -4094,6 +4115,12 @@ function openLlmConfigPanel() {
 // 弹窗保存激活模型
 async function saveLlmConfigFromPanel() {
   const hint = document.getElementById("llmConfigHint");
+
+  // 先收集 Config 页表单中的最新输入，避免内存数据覆盖用户填写内容
+  Object.keys(MODEL_DEFS).forEach((sectionKey) => {
+    _configData[sectionKey] = collectModelData(sectionKey);
+  });
+
   const llms = _configData.llms || [];
   const embeddings = _configData.embeddings || [];
   const reranks = _configData.reranks || [];
@@ -5754,3 +5781,1221 @@ btnClearLogs?.addEventListener("click", () => {
 document.addEventListener("DOMContentLoaded", () => {
   loadMonitorOverview();
 });
+
+// ==================== Report 工作台 ====================
+
+let reportWorkbenchLoaded = false;
+let currentReportSession = null;
+let reportConversationId = null;
+let reportEventSource = null;
+
+// ===== 报告工作台模型选择 =====
+let reportModels = [];       // [{name, base_url, model}]
+let reportSelectedModel = ""; // 选中的模型 name（空=全局激活模型）
+let reportRoutesCache = []; // 路由列表缓存（含 quick_tags）
+
+// ===== 思考模式开关（按模型分别记忆，默认全部关闭）=====
+const REPORT_THINKING_KEY = "report_thinking_enabled";
+// 实测结果缓存 { [modelName]: { mode, message, supported } }，避免重复实测
+let reportThinkingTestCache = {};
+
+function _readThinkingMap() {
+  try {
+    const raw = localStorage.getItem(REPORT_THINKING_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function isReportThinkingEnabled(modelName) {
+  if (!modelName) return false;
+  return !!_readThinkingMap()[modelName];
+}
+
+function setReportThinkingEnabled(modelName, enabled) {
+  if (!modelName) return;
+  const map = _readThinkingMap();
+  if (enabled) map[modelName] = true;
+  else delete map[modelName];
+  localStorage.setItem(REPORT_THINKING_KEY, JSON.stringify(map));
+}
+
+async function loadReportModels() {
+  try {
+    const resp = await fetch(`${API_BASE}/report-workbench/models?t=${Date.now()}`);
+    const data = await resp.json();
+    reportModels = data.models || [];
+    // 保持用户上次选中的模型（localStorage 持久化），无记录时才用全局激活模型
+    const saved = localStorage.getItem("report_selected_model") || "";
+    if (saved && reportModels.some((m) => m.name === saved)) {
+      reportSelectedModel = saved;
+    } else {
+      reportSelectedModel = data.active || (reportModels[0]?.name || "");
+    }
+    renderReportModelMenu();
+  } catch (e) {
+    console.error("加载模型列表失败:", e);
+  }
+}
+
+function renderReportModelMenu() {
+  const list = document.getElementById("reportModelList");
+  // 按钮上显示当前选中的模型名 + 思考标记
+  const btnLabel = document.querySelector("#reportModelBtn span");
+  if (btnLabel) {
+    const selected = reportModels.find((m) => m.name === reportSelectedModel);
+    let label = selected ? selected.name : "模型";
+    label = label.length > 10 ? label.slice(0, 10) + "…" : label;
+    if (selected && isReportThinkingEnabled(selected.name)) label += " ·思";
+    btnLabel.textContent = label;
+    btnLabel.title = selected
+      ? `${selected.name} (${selected.model})${isReportThinkingEnabled(selected.name) ? " — 思考模式已开启" : ""}`
+      : "选择生成模型";
+  }
+  if (!list) return;
+
+  list.innerHTML =
+    reportModels
+      .map((m) => {
+        const on = isReportThinkingEnabled(m.name);
+        const cached = reportThinkingTestCache[m.name];
+        return `
+      <div class="report-model-row" data-model-name="${escapeHtml(m.name)}">
+        <div class="report-model-main">
+          <button class="report-model-item ${m.name === reportSelectedModel ? "active" : ""}" data-model-name="${escapeHtml(m.name)}">
+            <span class="model-dot"></span>
+            <span class="model-name" title="${escapeHtml(m.model)}">${escapeHtml(m.name)}</span>
+          </button>
+          <div class="report-model-tools">
+            <button class="report-think-test" data-model-name="${escapeHtml(m.name)}" title="实测该模型的思考开关效果">实测</button>
+            <label class="report-think-switch" title="开启思考模式（默认关闭）">
+              <input type="checkbox" data-model-name="${escapeHtml(m.name)}" ${on ? "checked" : ""}>
+              <span class="report-think-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="report-think-result ${cached ? cached.mode : ""}" data-model-name="${escapeHtml(m.name)}" style="${cached ? "" : "display:none"}">${cached ? escapeHtml(cached.message + (cached.detail || "")) : ""}</div>
+      </div>`;
+      })
+      .join("") +
+    `<button class="report-think-test-all" id="reportThinkTestAll">实测全部模型的思考开关</button>`;
+
+  // 选择模型（探活后切换）
+  list.querySelectorAll(".report-model-item").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.modelName;
+      if (name === reportSelectedModel) {
+        document.getElementById("reportModelMenu").style.display = "none";
+        return;
+      }
+      // 选择前先探活：不可响应则报错提示选择其他模型，保持原选中不变
+      const nameEl = btn.querySelector(".model-name");
+      const oldText = nameEl.textContent;
+      btn.disabled = true;
+      nameEl.textContent = "检测中…";
+      let ok = true;
+      let message = "";
+      try {
+        const resp = await fetch(`${API_BASE}/report-workbench/models/check?name=${encodeURIComponent(name)}&t=${Date.now()}`);
+        if (!resp.ok) {
+          // 检测接口本身不可用（后端未重启加载新路由），并非模型问题
+          ok = false;
+          message = `模型检测接口不可用（HTTP ${resp.status}），请重启后端服务后重试`;
+        } else {
+          const data = await resp.json();
+          ok = !!data.ok;
+          message = data.message || "";
+        }
+      } catch (e) {
+        ok = false;
+        message = e.message;
+      }
+      btn.disabled = false;
+      nameEl.textContent = oldText;
+      if (!ok) {
+        alert(`模型「${name}」无法响应：${message}\n请选择其他模型。`);
+        return;
+      }
+      reportSelectedModel = name;
+      localStorage.setItem("report_selected_model", name);
+      renderReportModelMenu();
+      document.getElementById("reportModelMenu").style.display = "none";
+    });
+  });
+
+  // 单模型思考开关
+  list.querySelectorAll(".report-think-switch input").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const name = input.dataset.modelName;
+      const resultEl = list.querySelector(`.report-think-result[data-model-name="${CSS.escape(name)}"]`);
+      if (input.checked) {
+        // 开启前先实测：确认该模型思考是否走独立通道，避免思考内容混入报告 JSON
+        let cached = reportThinkingTestCache[name];
+        if (!cached) {
+          input.disabled = true;
+          setThinkResult(resultEl, "testing", "实测中…（约需数秒）");
+          cached = await runThinkingTest(name, resultEl);
+          input.disabled = false;
+        }
+        if (cached && cached.mode === "content_mixed") {
+          const go = confirm(
+            `模型「${name}」开启思考后，思考内容会混入报告正文：\n\n${cached.message}\n\n` +
+              `这可能导致报告生成失败或内容不完整。仍要开启吗？`
+          );
+          if (!go) {
+            input.checked = false;
+            return;
+          }
+        }
+        if (cached && cached.mode === "unsupported") {
+          alert(`模型「${name}」无法响应，已保持关闭思考。\n${cached.message}`);
+          input.checked = false;
+          return;
+        }
+      }
+      setReportThinkingEnabled(name, input.checked);
+      renderReportModelMenu();
+    });
+  });
+
+  // 单模型实测按钮
+  list.querySelectorAll(".report-think-test").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const name = btn.dataset.modelName;
+      const row = btn.closest(".report-model-row");
+      const resultEl = row?.querySelector(".report-think-result");
+      btn.disabled = true;
+      setThinkResult(resultEl, "testing", "实测中…（关/开各请求一次）");
+      await runThinkingTest(name, resultEl);
+      btn.disabled = false;
+    });
+  });
+
+  // 全部模型实测
+  const testAllBtn = list.querySelector("#reportThinkTestAll");
+  if (testAllBtn) {
+    testAllBtn.addEventListener("click", async () => {
+      testAllBtn.disabled = true;
+      const total = reportModels.length;
+      for (let i = 0; i < total; i++) {
+        const name = reportModels[i].name;
+        const resultEl = list.querySelector(`.report-think-result[data-model-name="${CSS.escape(name)}"]`);
+        testAllBtn.textContent = `实测中… ${i + 1}/${total}`;
+        setThinkResult(resultEl, "testing", "实测中…");
+        await runThinkingTest(name, resultEl);
+      }
+      testAllBtn.disabled = false;
+      testAllBtn.textContent = "实测全部模型的思考开关";
+    });
+  }
+}
+
+function setThinkResult(resultEl, mode, message) {
+  if (!resultEl) return;
+  resultEl.className = `report-think-result ${mode}`;
+  resultEl.textContent = message;
+  resultEl.style.display = message ? "" : "none";
+}
+
+/** 调用后端实测接口，写入缓存并渲染结论；返回缓存对象 */
+async function runThinkingTest(modelName, resultEl) {
+  try {
+    const resp = await fetch(
+      `${API_BASE}/report-workbench/models/thinking-test?name=${encodeURIComponent(modelName)}&t=${Date.now()}`
+    );
+    if (!resp.ok) {
+      setThinkResult(resultEl, "unsupported", `实测接口不可用（HTTP ${resp.status}），请重启后端服务`);
+      return null;
+    }
+    const data = await resp.json();
+    const off = data.off || {};
+    const on = data.on || {};
+    const detail =
+      data.mode === "unsupported"
+        ? ""
+        : `  关闭: ${off.reasoning_chars || 0}字思考/${off.content_chars || 0}字正文/${off.elapsed || 0}s · 开启: ${on.reasoning_chars || 0}字思考/${on.content_chars || 0}字正文/${on.elapsed || 0}s`;
+    const cached = { mode: data.mode, supported: !!data.supported, message: data.message, detail };
+    reportThinkingTestCache[modelName] = cached;
+    setThinkResult(resultEl, data.mode, (data.message || "") + detail);
+    return cached;
+  } catch (e) {
+    setThinkResult(resultEl, "unsupported", `实测失败：${e.message}`);
+    return null;
+  }
+}
+
+function toggleReportModelMenu() {
+  const menu = document.getElementById("reportModelMenu");
+  if (!menu) return;
+  const opening = menu.style.display === "none";
+  menu.style.display = opening ? "block" : "none";
+  // 每次打开时拉取最新模型列表（配置页可能新增了模型）
+  if (opening) loadReportModels();
+}
+
+// ===== 报告历史 =====
+async function loadReportHistory() {
+  const list = document.getElementById("reportHistoryList");
+  if (!list) return;
+  try {
+    const resp = await fetch(`/api/report-workbench/history?t=${Date.now()}`);
+    const data = await resp.json();
+    const items = data.history || [];
+    if (items.length === 0) {
+      list.innerHTML = '<div class="report-history-empty">暂无历史报告</div>';
+      return;
+    }
+    list.innerHTML = items
+      .map((h) => {
+        const t = h.updated_at ? new Date(h.updated_at).toLocaleString("zh-CN", { hour12: false }) : "";
+        const active = h.conversation_id === reportConversationId ? "active" : "";
+        return `
+        <div class="report-history-item ${active}" data-conv-id="${escapeHtml(h.conversation_id)}" title="${escapeHtml(h.preview || h.route_name)}">
+          <div class="report-history-item-title">${escapeHtml(h.route_name || "报告")}</div>
+          <div class="report-history-item-preview">${escapeHtml(h.preview || "（空报告）")}</div>
+          <div class="report-history-item-time">${escapeHtml(t)} · v${h.current_version || 1}</div>
+        </div>`;
+      })
+      .join("");
+    list.querySelectorAll(".report-history-item").forEach((el) => {
+      el.addEventListener("click", () => openHistoryReport(el.dataset.convId));
+    });
+  } catch (e) {
+    console.error("加载报告历史失败:", e);
+  }
+}
+
+async function openHistoryReport(conversationId) {
+  try {
+    const resp = await fetch(`/api/report-workbench/history/${encodeURIComponent(conversationId)}?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const session = data.session;
+    reportConversationId = conversationId;
+    currentReportSession = session;
+    updateReportDisplay(session);
+    renderQuickTags(session.route_id);
+    updateReportStatus("completed", session.route_name || "", session.question_round || 0);
+    if (typeof session.elapsed_seconds === "number") setReportElapsed(session.elapsed_seconds);
+    renderHistoryMessages(session);
+    loadReportHistory(); // 刷新高亮
+  } catch (e) {
+    console.error("打开历史报告失败:", e);
+    alert("打开历史报告失败：" + e.message);
+  }
+}
+
+// 渲染历史会话的对话记录（用户输入 / AI 回复 / 追问）
+function renderHistoryMessages(session) {
+  const container = document.getElementById("reportChatMessages");
+  if (!container) return;
+  container.innerHTML = "";
+  const messages = (session && session.messages) || [];
+  messages.forEach((m) => {
+    const div = addReportChatMessage(m.role === "user" ? "user" : "assistant", m.content || "");
+    if (m.role !== "user") {
+      setReportChatTime(div, m.created_at);
+    }
+    if (m.questions && m.questions.length > 0) {
+      addReportQuestions(div, m.questions);
+    }
+  });
+}
+
+async function initReportWorkbench() {
+  if (reportWorkbenchLoaded) return;
+  reportWorkbenchLoaded = true;
+
+  // 初始化DOM引用
+  const reportNewSessionBtn = document.getElementById("reportNewSessionBtn");
+  const reportSendBtn = document.getElementById("reportSendBtn");
+  const reportTextInput = document.getElementById("reportTextInput");
+  const reportSaveBtn = document.getElementById("reportSaveBtn");
+  const reportExportBtn = document.getElementById("reportExportBtn");
+
+  // 绑定事件
+  reportNewSessionBtn?.addEventListener("click", createNewReportSession);
+  reportSendBtn?.addEventListener("click", sendReportMessage);
+  reportTextInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      sendReportMessage();
+    }
+  });
+  reportSaveBtn?.addEventListener("click", saveCurrentReport);
+
+  // 导出菜单（Word / MD）
+  reportExportBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const menu = document.getElementById("reportExportMenu");
+    if (menu) menu.style.display = menu.style.display === "none" ? "block" : "none";
+  });
+  document.querySelectorAll(".report-export-menu-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const menu = document.getElementById("reportExportMenu");
+      if (menu) menu.style.display = "none";
+      if (item.dataset.fmt === "docx") exportReportWord();
+      else exportCurrentReport();
+    });
+  });
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("reportExportMenu");
+    if (menu && menu.style.display !== "none" && !menu.contains(e.target) && !e.target.closest("#reportExportBtn")) {
+      menu.style.display = "none";
+    }
+  });
+
+  // 快捷标签点击（事件委托）
+  document.getElementById("reportQuickTags")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".report-quick-tag");
+    if (btn) insertQuickTag(btn.dataset.tag);
+  });
+
+  // 模型选择器
+  const reportModelBtn = document.getElementById("reportModelBtn");
+  reportModelBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleReportModelMenu();
+  });
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("reportModelMenu");
+    if (menu && menu.style.display !== "none" && !menu.contains(e.target)) {
+      menu.style.display = "none";
+    }
+  });
+  loadReportModels();
+  loadReportRoutes();
+
+  // 复制按钮事件委托
+  document.addEventListener("click", (e) => {
+    if (e.target.classList.contains("report-copy-btn")) {
+      handleReportCopy(e.target);
+    }
+  });
+
+  // 初始化空会话
+  createNewReportSession();
+  loadReportHistory();
+}
+
+function createNewReportSession() {
+  reportConversationId = generateSessionId();
+  currentReportSession = null;
+
+  // 重置UI
+  document.getElementById("reportEmptyState").style.display = "flex";
+  document.getElementById("reportSections").style.display = "none";
+  document.getElementById("reportChatMessages").innerHTML = "";
+  document.getElementById("reportTextInput").value = "";
+  const quickTagsBar = document.getElementById("reportQuickTags");
+  if (quickTagsBar) { quickTagsBar.innerHTML = ""; quickTagsBar.style.display = "none"; }
+  
+  const elapsedEl = document.getElementById("reportElapsed");
+  if (elapsedEl) elapsedEl.remove();
+  stopReportElapsedTimer();
+  
+  updateReportStatus("idle", "", 0);
+}
+
+async function sendReportMessage() {
+  const input = document.getElementById("reportTextInput");
+  const message = input.value.trim();
+  
+  if (!message) return;
+
+  // 显示用户消息
+  addReportChatMessage("user", message);
+
+  // 清空输入
+  input.value = "";
+  
+  // 禁用发送按钮
+  const sendBtn = document.getElementById("reportSendBtn");
+  sendBtn.disabled = true;
+
+  // 发送即开始实时计时（与生成并行刷新）
+  startReportElapsedTimer();
+
+  try {
+    if (!currentReportSession) {
+      // 首次生成
+      await generateReport(message);
+    } else {
+      // 迭代修改
+      await iterateReport(message);
+    }
+  } catch (error) {
+    console.error("发送消息失败:", error);
+    addReportChatMessage("assistant", "抱歉，发生了错误：" + error.message);
+    updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+    stopReportElapsedTimer();
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+async function generateReport(input) {
+  updateReportStatus("generating", "解析中...", 0);
+
+  const url = `/api/report-workbench/sessions/${reportConversationId}/generate`;
+  
+  reportEventSource = new EventSource(
+    `${url}?${new URLSearchParams({
+      input_text: input,
+      modality: "",
+      body_part: "",
+      route_id: "",
+      llm_name: reportSelectedModel || "",
+      enable_thinking: isReportThinkingEnabled(reportSelectedModel) ? "true" : "false"
+    })}`
+  );
+
+  let assistantMessageDiv = null;
+  const streamRenderer = createStreamReportRenderer();
+  let thinkingPanel = null; // 思考过程面板（仅开启思考模式时创建）
+
+  reportEventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      
+      switch (data.type) {
+        case "conversation":
+          reportConversationId = data.conversation_id;
+          break;
+
+        case "chat":
+          // 闲聊标准回复（非报告类输入）
+          addReportChatMessage("assistant", data.content);
+          stopReportElapsedTimer();
+          const chatElapsedEl = document.getElementById("reportElapsed");
+          if (chatElapsedEl) chatElapsedEl.remove();
+          updateReportStatus("idle", "", 0);
+          break;
+
+        case "notice":
+          // 系统通知（如模型自动降级切换）
+          addReportChatMessage("assistant", `⚠️ ${data.content}`);
+          break;
+
+        case "reasoning":
+          // 思考过程增量：独立面板展示，不影响报告正文渲染，也不计入首字耗时
+          if (!thinkingPanel) thinkingPanel = createReportThinkingPanel();
+          thinkingPanel?.push(data.content);
+          break;
+
+        case "token":
+          // 流式 token：增量解析 JSON，实时渲染报告正文（不显示原始 JSON）
+          if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+          if (reportElapsedTimer) stopReportElapsedTimer(); // 首字到达，计时定格
+          const partial = streamRenderer.push(data.content);
+          if (partial.findings || partial.diagnosis) {
+            showReportSectionsLive();
+            setLiveSection("reportFindingsContent", partial.findings);
+            setLiveSection("reportDiagnosisContent", partial.diagnosis);
+          }
+          break;
+
+        case "route_resolved":
+          updateReportStatus("generating", data.route_name, 0);
+          renderQuickTags(data.route_id);
+          break;
+
+        case "status":
+          updateReportStatus(data.status === "generating" ? "generating" : data.status, document.getElementById("reportRouteName")?.textContent || "", currentReportSession?.question_round || 0);
+          break;
+
+        case "report_updated":
+          currentReportSession = data.session;
+          updateReportDisplay(data.session);
+          updateReportStatus("generating", data.session.route_name, data.session.question_round);
+          if (typeof data.elapsed_seconds === "number") {
+            stopReportElapsedTimer(data.elapsed_seconds);
+          }
+          setReportChatTime(assistantMessageDiv, data.session.updated_at);
+          loadReportHistory();
+          break;
+
+        case "report_questions":
+          if (data.questions && data.questions.length > 0) {
+            if (!assistantMessageDiv) {
+              assistantMessageDiv = addReportChatMessage("assistant", "报告已生成，我还有几个问题想确认：");
+            }
+            addReportQuestions(assistantMessageDiv, data.questions);
+            setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
+          }
+          break;
+
+        case "message":
+          if (!assistantMessageDiv) {
+            assistantMessageDiv = addReportChatMessage("assistant", data.content);
+          } else {
+            assistantMessageDiv.querySelector(".report-chat-bubble").textContent += data.content;
+          }
+          setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
+          break;
+
+        case "done":
+          if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+          if (typeof data.elapsed_seconds === "number") {
+            stopReportElapsedTimer(data.elapsed_seconds);
+          } else {
+            stopReportElapsedTimer();
+          }
+          if (data.status === "chat") {
+            updateReportStatus("idle", "", 0);
+          } else {
+            updateReportStatus("completed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+          }
+          reportEventSource?.close();
+          reportEventSource = null;
+          break;
+
+        case "error":
+          if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+          addReportChatMessage("assistant", "错误：" + data.message);
+          stopReportElapsedTimer();
+          updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+          reportEventSource?.close();
+          reportEventSource = null;
+          break;
+      }
+    } catch (error) {
+      console.error("解析SSE事件失败:", error);
+    }
+  };
+
+  reportEventSource.onerror = (error) => {
+    console.error("SSE连接错误:", error);
+    if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+    reportEventSource?.close();
+    reportEventSource = null;
+    stopReportElapsedTimer();
+    updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+  };
+}
+
+async function iterateReport(user_input) {
+  updateReportStatus("iterating", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+
+  const url = `/api/report-workbench/sessions/${reportConversationId}/iterate`;
+  
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      input_text: user_input,
+      images: [],
+      base_version: currentReportSession.current_version || 0,
+      question_round: currentReportSession.question_round || 0,
+      llm_name: reportSelectedModel || "",
+      enable_thinking: isReportThinkingEnabled(reportSelectedModel),
+    })
+  });
+
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const errData = await response.json();
+      if (errData && errData.detail) detail = errData.detail;
+    } catch (_) { /* 非 JSON 错误体，保留状态码提示 */ }
+    throw new Error(detail);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let assistantMessageDiv = null;
+  const streamRenderer = createStreamReportRenderer();
+  let thinkingPanel = null; // 思考过程面板（仅开启思考模式时创建）
+  let sseBuffer = ""; // 跨 chunk 的行缓冲，防止大 JSON 事件被截断丢弃
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    sseBuffer += decoder.decode(value, { stream: true });
+    const lines = sseBuffer.split("\n");
+    sseBuffer = lines.pop(); // 最后一段可能不完整，留到下次
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+      
+      const jsonStr = line.slice(6);
+      if (jsonStr === "[DONE]") {
+        updateReportStatus("completed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+        continue;
+      }
+
+      try {
+        const data = JSON.parse(jsonStr);
+
+        switch (data.type) {
+          case "notice":
+            addReportChatMessage("assistant", `⚠️ ${data.content}`);
+            break;
+
+          case "reasoning":
+            // 思考过程增量：独立面板展示，不影响报告正文渲染，也不计入首字耗时
+            if (!thinkingPanel) thinkingPanel = createReportThinkingPanel();
+            thinkingPanel?.push(data.content);
+            break;
+
+          case "token":
+            if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+            if (reportElapsedTimer) stopReportElapsedTimer(); // 首字到达，计时定格
+            const partial = streamRenderer.push(data.content);
+            if (partial.findings || partial.diagnosis) {
+              showReportSectionsLive();
+              setLiveSection("reportFindingsContent", partial.findings);
+              setLiveSection("reportDiagnosisContent", partial.diagnosis);
+            }
+            break;
+
+          case "report_updated":
+            currentReportSession = data.session;
+            updateReportDisplay(data.session);
+            updateReportStatus("iterating", data.session.route_name, data.session.question_round);
+            if (typeof data.elapsed_seconds === "number") {
+              stopReportElapsedTimer(data.elapsed_seconds);
+            }
+            setReportChatTime(assistantMessageDiv, data.session.updated_at);
+            loadReportHistory();
+            break;
+
+          case "report_questions":
+            if (data.questions && data.questions.length > 0) {
+              if (!assistantMessageDiv) {
+                assistantMessageDiv = addReportChatMessage("assistant", "报告已更新，我还有几个问题：");
+              }
+              addReportQuestions(assistantMessageDiv, data.questions);
+              setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
+            }
+            break;
+
+          case "message":
+            if (!assistantMessageDiv) {
+              assistantMessageDiv = addReportChatMessage("assistant", data.content);
+            } else {
+              const bubble = assistantMessageDiv.querySelector(".report-chat-bubble");
+              const questionsDiv = bubble.querySelector(".report-chat-questions");
+              if (questionsDiv) {
+                bubble.insertBefore(document.createTextNode(data.content), questionsDiv);
+              } else {
+                bubble.textContent += data.content;
+              }
+            }
+            setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
+            break;
+
+          case "done":
+            if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+            if (typeof data.elapsed_seconds === "number") {
+              stopReportElapsedTimer(data.elapsed_seconds);
+            } else {
+              stopReportElapsedTimer();
+            }
+            updateReportStatus("completed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+            break;
+
+          case "error":
+            if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+            addReportChatMessage("assistant", "错误：" + data.message);
+            stopReportElapsedTimer();
+            updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+            break;
+        }
+      } catch (error) {
+        console.error("解析SSE数据失败:", error);
+      }
+    }
+  }
+
+  // 流正常结束但没收到 done/error 时，思考面板仍需收尾（避免一直显示"思考中…"）
+  if (thinkingPanel) { thinkingPanel.finish(); thinkingPanel = null; }
+
+  // 处理流结束后残留的最后一行
+  if (sseBuffer.startsWith("data: ") && sseBuffer.trim() !== "data: [DONE]") {
+    try {
+      const data = JSON.parse(sseBuffer.slice(6));
+      if (data.type === "report_updated" && data.session) {
+        currentReportSession = data.session;
+        updateReportDisplay(data.session);
+      }
+    } catch (e) { /* 忽略不完整尾行 */ }
+  }
+}
+
+function updateReportDisplay(session) {
+  const emptyState = document.getElementById("reportEmptyState");
+  const sections = document.getElementById("reportSections");
+  const findingsContent = document.getElementById("reportFindingsContent");
+  const diagnosisContent = document.getElementById("reportDiagnosisContent");
+
+  emptyState.style.display = "none";
+  sections.style.display = "block";
+
+  renderReportContent(findingsContent, session.report.imaging_findings || "");
+  renderReportContent(diagnosisContent, session.report.imaging_diagnosis || "");
+}
+
+function updateReportStatus(status, routeName, questionRound) {
+  const statusBadge = document.getElementById("reportStatusBadge");
+  const routeNameEl = document.getElementById("reportRouteName");
+  const questionRoundEl = document.getElementById("reportQuestionRound");
+
+  // 更新状态徽章
+  statusBadge.className = "report-status-badge";
+  switch (status) {
+    case "idle":
+      statusBadge.classList.add("idle");
+      statusBadge.textContent = "等待输入";
+      break;
+    case "generating":
+    case "iterating":
+      statusBadge.classList.add("generating");
+      statusBadge.textContent = "生成中";
+      break;
+    case "completed":
+      statusBadge.classList.add("completed");
+      statusBadge.textContent = "已完成";
+      break;
+    case "failed":
+      statusBadge.classList.add("failed");
+      statusBadge.textContent = "失败";
+      break;
+  }
+
+  routeNameEl.textContent = routeName || "未选择模板";
+  questionRoundEl.textContent = `追问轮次: ${questionRound}/2`;
+}
+
+function scrollReportChatToBottom() {
+  const messagesContainer = document.getElementById("reportChatMessages");
+  if (messagesContainer) {
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+}
+
+function setReportElapsed(seconds) {
+  const el = ensureReportElapsedEl();
+  el.textContent = `耗时: ${Number(seconds).toFixed(1)}s`;
+}
+
+// ===== 耗时实时计时器：生成期间并行刷新，完成后定格为后端精确值 =====
+let reportElapsedTimer = null;
+let reportElapsedStart = 0;
+
+function ensureReportElapsedEl() {
+  let el = document.getElementById("reportElapsed");
+  if (!el) {
+    el = document.createElement("span");
+    el.id = "reportElapsed";
+    el.className = "report-elapsed";
+    const info = document.querySelector(".report-status-info");
+    if (info) info.appendChild(el);
+  }
+  return el;
+}
+
+function startReportElapsedTimer() {
+  stopReportElapsedTimer();
+  reportElapsedStart = performance.now();
+  const el = ensureReportElapsedEl();
+  el.textContent = "耗时: 0.0s";
+  reportElapsedTimer = setInterval(() => {
+    el.textContent = `耗时: ${((performance.now() - reportElapsedStart) / 1000).toFixed(1)}s`;
+  }, 100);
+}
+
+function stopReportElapsedTimer(finalSeconds) {
+  if (reportElapsedTimer) {
+    clearInterval(reportElapsedTimer);
+    reportElapsedTimer = null;
+  }
+  if (typeof finalSeconds === "number") {
+    setReportElapsed(finalSeconds);
+  }
+}
+
+// ===== 流式 JSON 增量解析：从 token 流中实时提取报告正文 =====
+
+function extractPartialJsonString(text, key) {
+  /** 从（可能不完整的）JSON 文本中提取 key 对应字符串值的部分内容。
+   *  返回 {value, done} 或 null（key 尚未出现）。 */
+  const marker = `"${key}"`;
+  const idx = text.indexOf(marker);
+  if (idx === -1) return null;
+  const colon = text.indexOf(":", idx + marker.length);
+  if (colon === -1) return null;
+  const openQuote = text.indexOf('"', colon + 1);
+  if (openQuote === -1) return null;
+  let out = "";
+  let i = openQuote + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "\\") {
+      const next = text[i + 1];
+      if (next === undefined) break;
+      if (next === "n") out += "\n";
+      else if (next === "t") out += "\t";
+      else if (next === "r") out += "";
+      else if (next === "u") {
+        const hex = text.substr(i + 2, 4);
+        if (hex.length < 4) break;
+        out += String.fromCharCode(parseInt(hex, 16));
+        i += 4;
+      } else out += next;
+      i += 2;
+      continue;
+    }
+    if (ch === '"') return { value: out, done: true };
+    out += ch;
+    i++;
+  }
+  return { value: out, done: false };
+}
+
+/** 定位报告 JSON 的起始位置。
+ *  开启思考且模型无独立 reasoning 通道时，思考文本会混入正文，
+ *  其中可能自带 "imaging_findings" 等字段名，直接用 indexOf 会误取思考内容。
+ *  因此只认真实 JSON 对象的开头：{ "report": ...
+ *  未出现时返回 -1（此时不渲染，等后续 token）。 */
+function findReportJsonStart(text) {
+  const m = /\{\s*"report"\s*:/.exec(text);
+  return m ? m.index : -1;
+}
+
+function createStreamReportRenderer() {
+  let buffer = "";
+  let jsonStart = -1;
+  return {
+    push(chunk) {
+      buffer += chunk;
+      if (jsonStart === -1) jsonStart = findReportJsonStart(buffer);
+      if (jsonStart === -1) return { findings: null, diagnosis: null };
+      // 只在真实 JSON 片段内提取，跳过混入正文的思考前缀
+      const json = buffer.slice(jsonStart);
+      return {
+        findings: extractPartialJsonString(json, "imaging_findings"),
+        diagnosis: extractPartialJsonString(json, "imaging_diagnosis"),
+      };
+    },
+  };
+}
+
+function showReportSectionsLive() {
+  const emptyState = document.getElementById("reportEmptyState");
+  const sections = document.getElementById("reportSections");
+  if (emptyState) emptyState.style.display = "none";
+  if (sections) sections.style.display = "block";
+}
+
+function setLiveSection(elementId, partial) {
+  const el = document.getElementById(elementId);
+  if (!el || !partial) return;
+  renderReportContent(el, partial.value + (partial.done ? "" : "▌"));
+}
+
+function renderReportContent(el, text) {
+  /** 轻量渲染：转义HTML后支持 **加粗** 与换行 */
+  const escaped = String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  const html = escaped
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\n/g, "<br>");
+  el.innerHTML = html;
+}
+
+function addReportChatMessage(role, content) {
+  const messagesContainer = document.getElementById("reportChatMessages");
+  
+  const messageDiv = document.createElement("div");
+  messageDiv.className = `report-chat-message ${role}`;
+
+  const avatar = document.createElement("div");
+  avatar.className = "report-chat-avatar";
+  avatar.textContent = role === "user" ? "👤" : "🤖";
+
+  const bubble = document.createElement("div");
+  bubble.className = "report-chat-bubble";
+  bubble.textContent = content;
+
+  messageDiv.appendChild(avatar);
+  messageDiv.appendChild(bubble);
+  messagesContainer.appendChild(messageDiv);
+
+  // 滚动到底部
+  messagesContainer.scrollTop = messagesContainer.scrollHeight;
+
+  return messageDiv;
+}
+
+/** 消息时间戳格式化：ISO/空格分隔 → "YYYY-MM-DD HH:MM:SS" */
+function formatReportMessageTime(value) {
+  if (!value) return "";
+  const s = String(value).replace("T", " ").replace(/\.\d+.*$/, "");
+  return s.length > 19 ? s.slice(0, 19) : s;
+}
+
+/** 在消息气泡下方追加/更新时间戳小字 */
+function setReportChatTime(messageDiv, value) {
+  if (!messageDiv || !value) return;
+  const text = formatReportMessageTime(value);
+  if (!text) return;
+  let timeDiv = messageDiv.querySelector(".report-chat-time");
+  if (!timeDiv) {
+    timeDiv = document.createElement("div");
+    timeDiv.className = "report-chat-time";
+    messageDiv.appendChild(timeDiv);
+  }
+  timeDiv.textContent = text;
+}
+
+/**
+ * 思考过程面板（可折叠）。返回 { push, finish } 控制器。
+ * 仅在开启思考模式且模型返回 reasoning_content 时创建。
+ */
+function createReportThinkingPanel() {
+  const messagesContainer = document.getElementById("reportChatMessages");
+  if (!messagesContainer) return null;
+
+  const panel = document.createElement("div");
+  panel.className = "report-thinking-panel";
+
+  const header = document.createElement("div");
+  header.className = "report-thinking-header";
+  header.innerHTML = '<span class="report-thinking-toggle">▼</span><span>思考过程</span><span class="report-thinking-status">思考中…</span>';
+
+  const body = document.createElement("div");
+  body.className = "report-thinking-body";
+
+  panel.appendChild(header);
+  panel.appendChild(body);
+  messagesContainer.appendChild(panel);
+
+  header.addEventListener("click", () => {
+    panel.classList.toggle("report-thinking-collapsed");
+    const t = header.querySelector(".report-thinking-toggle");
+    if (t) t.textContent = panel.classList.contains("report-thinking-collapsed") ? "▶" : "▼";
+  });
+
+  const t0 = Date.now();
+  let chars = 0;
+
+  return {
+    push(content) {
+      if (!content) return;
+      chars += content.length;
+      body.textContent += content;
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    },
+    finish() {
+      const status = header.querySelector(".report-thinking-status");
+      if (status) {
+        status.textContent = `已思考 ${chars} 字 · ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+        status.classList.add("done");
+      }
+      // 默认折叠，避免遮挡报告正文
+      panel.classList.add("report-thinking-collapsed");
+      const t = header.querySelector(".report-thinking-toggle");
+      if (t) t.textContent = "▶";
+    },
+    remove() {
+      panel.remove();
+    },
+  };
+}
+
+/** 从追问文本提取参数名：优先括号内缩写（如 LVEF），否则剥离请求动词与后缀（如"请确认LGE延迟强化分布模式"→"LGE延迟强化"） */
+function extractQuestionParamName(question) {
+  const text = String(question || "").trim();
+  if (!text) return "";
+  const parens = text.match(/[（(]([^（）()]+)[）)]/g);
+  if (parens && parens.length) {
+    const last = parens[parens.length - 1].replace(/^[（(]/, "").replace(/[）)]$/, "").trim();
+    if (last) return last;
+  }
+  return text
+    .replace(/[\s?？:：。]+$/, "")
+    .replace(/(的)?[A-Za-z0-9]*(分型|分级|实测值|数值|具体分布模式|分布模式|具体情况|情况|程度)$/, "")
+    .replace(/^(请提供|请确认|请补充|请描述|请给出)(的)?/, "")
+    .replace(/的$/, "")
+    .trim();
+}
+
+function addReportQuestions(messageDiv, questions) {
+  const bubble = messageDiv.querySelector(".report-chat-bubble");
+  
+  const questionsDiv = document.createElement("div");
+  questionsDiv.className = "report-chat-questions";
+
+  questions.forEach((q) => {
+    const qItem = document.createElement("div");
+    qItem.className = "report-chat-question-item";
+    qItem.innerHTML = `<strong>${escapeHtml(q.question)}</strong>`;
+    // 候选选项按钮：点选后填入输入框，医生可继续补充后发送
+    const opts = q.options || [];
+    if (opts.length > 0) {
+      const optDiv = document.createElement("div");
+      optDiv.className = "report-question-options";
+      opts.forEach((o) => {
+        const b = document.createElement("button");
+        b.className = "report-question-option-btn";
+        b.textContent = o;
+        b.addEventListener("click", () => {
+          const input = document.getElementById("reportTextInput");
+          if (!input) return;
+          // 带参数名前缀填入（如"LVEF：≥50%"），便于下一轮迭代定位
+          const prefix = extractQuestionParamName(q.question);
+          const entry = prefix ? `${prefix}：${o}` : o;
+          const cur = input.value.trim();
+          input.value = cur ? `${cur}；${entry}` : entry;
+          input.focus();
+        });
+        optDiv.appendChild(b);
+      });
+      qItem.appendChild(optDiv);
+    }
+    questionsDiv.appendChild(qItem);
+  });
+
+  bubble.appendChild(questionsDiv);
+}
+
+// ===== 快捷输入标签 =====
+async function loadReportRoutes() {
+  try {
+    const resp = await fetch(`/api/report-workbench/routes?t=${Date.now()}`);
+    const data = await resp.json();
+    reportRoutesCache = data.routes || [];
+  } catch (e) {
+    console.error("加载路由列表失败:", e);
+  }
+}
+
+function renderQuickTags(routeId) {
+  const bar = document.getElementById("reportQuickTags");
+  if (!bar) return;
+  const route = reportRoutesCache.find((r) => r.id === routeId);
+  const tags = (route && route.quick_tags) || [];
+  if (tags.length === 0) {
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+  bar.innerHTML = tags
+    .map((t) => `<button class="report-quick-tag" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`)
+    .join("");
+  bar.style.display = "flex";
+}
+
+function insertQuickTag(tag) {
+  const input = document.getElementById("reportTextInput");
+  if (!input || !tag) return;
+  const cur = input.value;
+  const sep = cur && !/[\n；;]$/.test(cur) ? "；" : "";
+  input.value = cur + sep + tag;
+  input.focus();
+}
+
+function handleReportCopy(button) {
+  const section = button.closest(".report-section");
+  const content = section.querySelector(".report-section-content").innerText;
+
+  navigator.clipboard.writeText(content).then(() => {
+    button.textContent = "已复制";
+    button.classList.add("copied");
+    setTimeout(() => {
+      button.textContent = "复制";
+      button.classList.remove("copied");
+    }, 2000);
+  });
+}
+
+async function saveCurrentReport() {
+  if (!currentReportSession) {
+    alert("当前没有报告可保存");
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/report-workbench/sessions/${reportConversationId}/save`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        imaging_findings: currentReportSession.report.imaging_findings || "",
+        imaging_diagnosis: currentReportSession.report.imaging_diagnosis || "",
+        base_version: currentReportSession.current_version || 0,
+        source: "manual_edit"
+      })
+    });
+
+    if (!response.ok) {
+      let detail = `HTTP ${response.status}`;
+      try {
+        const errData = await response.json();
+        if (errData && errData.detail) detail = errData.detail;
+      } catch (_) { /* 非 JSON 错误体，保留状态码提示 */ }
+      throw new Error(detail);
+    }
+
+    const data = await response.json();
+    if (currentReportSession) currentReportSession.current_version = data.version;
+    loadReportHistory();
+    alert("报告已保存");
+  } catch (error) {
+    console.error("保存失败:", error);
+    alert("保存失败：" + error.message);
+  }
+}
+
+async function exportReportWord() {
+  if (!currentReportSession) {
+    alert("当前没有报告可导出");
+    return;
+  }
+  try {
+    const resp = await fetch(`/api/report-workbench/sessions/${reportConversationId}/export/word`, { method: "POST" });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => null);
+      throw new Error(err?.detail || `HTTP ${resp.status}`);
+    }
+    const blob = await resp.blob();
+    const disposition = resp.headers.get("Content-Disposition") || "";
+    let filename = `报告_${currentReportSession.route_name}_${Date.now()}.docx`;
+    const m = disposition.match(/filename\*=UTF-8''(.+)/);
+    if (m) filename = decodeURIComponent(m[1]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error("导出Word失败:", error);
+    alert("导出Word失败：" + error.message);
+  }
+}
+
+function exportCurrentReport() {
+  if (!currentReportSession) {
+    alert("当前没有报告可导出");
+    return;
+  }
+
+  const findings = currentReportSession.report.imaging_findings;
+  const diagnosis = currentReportSession.report.imaging_diagnosis;
+  
+  const content = `# ${currentReportSession.route_name}\n\n## 影像所见\n\n${findings}\n\n## 影像诊断\n\n${diagnosis}`;
+  
+  const blob = new Blob([content], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `报告_${currentReportSession.route_name}_${Date.now()}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}

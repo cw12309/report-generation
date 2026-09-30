@@ -61,6 +61,7 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 - `parse_report_output(raw)` — 提取 JSON、兼容旧边界格式并验证唯一 Canonical `results[]`
 - `parse_report_with_repair(raw, repair_fn)` — 首次失败后只允许一次受约束 JSON 修复
+- `REPORT_MAX_TOKENS` / `EDIT_JUDGE_MAX_TOKENS` — 报告生成与 Edit Judge 的 `max_tokens` 预算，由 `tools/rag_tool.py`、`edit_tool.py`、`refine_tool.py` 共用；推理模型的 reasoning 与正文共享该预算，调小会导致正文为空
 - `collect_edit_fact_violations(...)` / `validate_edit_preservation(...)` — 按数值、侧别、部位、数量、诊断与阳性/否定事实检查编辑范围，不做全文 Diff
 - `parse_edit_judge_output(raw)` — 校验受约束 Edit Judge 的 `{valid, unexpected_changes}` 输出
 - `validate_refine_preservation(...)` — 保护润色中的未授权医学事实
@@ -68,10 +69,12 @@ Worker 服务核心模块。负责 FastAPI 应用初始化、所有业务 API �
 
 ### `llm_client.py`
 
-- `chat_stream(messages, max_tokens, temperature, _emit, debug, caller)` — 异步流式 LLM 调用
+- `chat_stream(messages, max_tokens, temperature, _emit, debug, caller, model_override, base_url_override, timeout, max_retries, enable_thinking, api_key_override)` — 异步流式 LLM 调用，失败自动降级候选链；`_emit` 回调事件含 `token`（正文）、`reasoning`（思考过程）、`notice`（降级提示）
 - `get_embedding(text)` — 同步 Embedding 调用
 - `chat_with_tools(messages, tools, tool_choice, ...)` — 非流式 Tool Calling 调用
 - `rerank_with_retry(query, documents, top_n)` — 带重试的 Rerank 调用
+- `check_model_available(name)` — 轻量探活，供前端选择模型前预校验
+- `test_thinking_switch(name)` — 实测模型思考开关效果，返回 `reasoning_channel` / `content_mixed` / `no_effect` / `unsupported` 四种判定
 
 ### `schemas.py`
 
@@ -238,6 +241,8 @@ server.py (路由注册)
 - `server.py` 是唯一的路由注册位置，不要在其他文件注册路由
 - `pipeline.py` 是 Agent 编排的唯一入口，不要在 server.py 中直接编排
 - 通用 Chat/Embedding 调用复用 `llm_client.py`；Config 测试、Rewrite、Planner 和建库通过 `config.py` 的同一 OpenAI-compatible client 工厂创建客户端，Rerank 因 SDK 无原生接口保留直接 HTTP 调用
+- 模型名/地址/Key **禁止在 import 时固化为模块级常量**，必须每次调用 `get_llm_model()`/`get_embed_model()`/`get_llm_base_url()` 实时读取；否则切换激活模型后会出现"旧模型名打到新端点"的 `404 model_not_found`
+- 思考开关统一走 `extra_body={"chat_template_kwargs": {"enable_thinking": bool}}`；开启思考时 **reasoning 是否计入 `max_tokens` 因节点而异**（阿里云不计，vLLM 计入），调用方必须同步放大 `max_tokens` 与 `timeout`，否则报告 JSON 会被截断（`finish_reason=length`）
 - Config API 的 Milvus 地址以 `.env` 的 `MILVUS_URI` 为实际生效值；加载时回填该值，保存时同步 `.env`，`_new_milvus_client()` 每次动态读取，禁止缓存旧地址
 - 新增 Worker 请求/响应模型应定义在 `schemas.py`；既有 Stateless internal 模型当前仍在 `server.py`
 - Deployment 明文 Key 只能出现在创建/轮换响应，禁止写入数据库、日志或列表/详情响应
@@ -256,3 +261,5 @@ server.py (路由注册)
 - SSE 事件格式变更会影响前端解析，需要同步
 - 修改 Milvus Schema 后必须运行 `migrate_milvus_schema.py`
 - 修改 Recovery 白名单或错误分类逻辑后，必须运行 `pytest app/test/test_report_pipeline.py -v` 验证全部 30 个测试
+- 切换 Chat 模型时注意推理模型：`reasoning` 与正文共享 `max_tokens`，预算不足时 `chat_stream()` 会返回空字符串并触发 `REPORT_SCHEMA_INVALID`（报告缺少 results）。诊断时应记录 `finish_reason=length` 与 `completion_tokens`
+- `collect_edit_fact_violations()` 的单位守卫用 `_UNIT_RE` 提取英文单位（mm/cm/HU/ml/%），判断指令授权时必须同时接受英文符号与中文写法（毫米/厘米/毫升），否则"改成3.2×1.8cm"这类合法编辑会被误判为 `EDIT_REPAIR_FAILED`

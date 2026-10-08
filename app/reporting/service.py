@@ -396,6 +396,10 @@ class ReportService:
         # 清理模糊不确定表述，替换为常用阴性基线描述
         llm_output.report.imaging_findings = self.validator.sanitize_vague(llm_output.report.imaging_findings)
         llm_output.report.imaging_diagnosis = self.validator.sanitize_vague(llm_output.report.imaging_diagnosis)
+        # 归一影像所见为三行纯文本（LLM 连写单段时按行首锚点切分）
+        llm_output.report.imaging_findings = self.validator.normalize_findings_lines(llm_output.report.imaging_findings)
+        # 纠正追问单选/多选标注（互斥问题强制单选）
+        llm_output.questions = self.validator.normalize_questions_select(llm_output.questions)
 
         # 强制限制追问轮次
         if llm_output.question_round >= 2:
@@ -418,6 +422,8 @@ class ReportService:
                 )
                 llm_output.report.imaging_findings = self.validator.sanitize_vague(llm_output.report.imaging_findings)
                 llm_output.report.imaging_diagnosis = self.validator.sanitize_vague(llm_output.report.imaging_diagnosis)
+                llm_output.report.imaging_findings = self.validator.normalize_findings_lines(llm_output.report.imaging_findings)
+                llm_output.questions = self.validator.normalize_questions_select(llm_output.questions)
                 if llm_output.question_round >= 2:
                     llm_output.questions = []
                     llm_output.can_ask_questions = False
@@ -542,6 +548,10 @@ class ReportService:
         # 清理模糊不确定表述，替换为常用阴性基线描述
         llm_output.report.imaging_findings = self.validator.sanitize_vague(llm_output.report.imaging_findings)
         llm_output.report.imaging_diagnosis = self.validator.sanitize_vague(llm_output.report.imaging_diagnosis)
+        # 归一影像所见为三行纯文本（LLM 连写单段时按行首锚点切分）
+        llm_output.report.imaging_findings = self.validator.normalize_findings_lines(llm_output.report.imaging_findings)
+        # 纠正追问单选/多选标注（互斥问题强制单选）
+        llm_output.questions = self.validator.normalize_questions_select(llm_output.questions)
 
         # 强制限制追问轮次
         if new_round >= 2:
@@ -564,6 +574,8 @@ class ReportService:
                 )
                 llm_output.report.imaging_findings = self.validator.sanitize_vague(llm_output.report.imaging_findings)
                 llm_output.report.imaging_diagnosis = self.validator.sanitize_vague(llm_output.report.imaging_diagnosis)
+                llm_output.report.imaging_findings = self.validator.normalize_findings_lines(llm_output.report.imaging_findings)
+                llm_output.questions = self.validator.normalize_questions_select(llm_output.questions)
                 if new_round >= 2:
                     llm_output.questions = []
                     llm_output.can_ask_questions = False

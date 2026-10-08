@@ -32,6 +32,9 @@ venv/
 
 .docker/
 
+# 离线镜像包（docker save 产物，仅随文件夹打包分发，不进 git）
+milvus-stack-images.tar.gz
+
 data/
 app/memory/data/
 data/sessions.db

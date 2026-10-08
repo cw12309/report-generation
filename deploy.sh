@@ -141,8 +141,35 @@ build_vectors() {
     info "向量库构建完成"
 }
 
+# ---------------------------------------------------------------- 离线镜像
+# 部署机若无法访问 Docker Hub（registry-1.docker.io 超时），Milvus 栈镜像
+# 拉不下来。随包携带 milvus-stack-images.tar.gz（docker save 产物）时，
+# 检测到本地缺镜像就先 load，避免部署卡在拉取阶段。
+load_offline_images() {
+    local pkg="milvus-stack-images.tar.gz"
+    [ -f "$pkg" ] || return 0
+
+    local missing=""
+    for img in "quay.io/coreos/etcd:v3.5.25" \
+               "minio/minio:RELEASE.2024-05-28T17-19-04Z" \
+               "milvusdb/milvus:v2.6.22" \
+               "zilliz/attu:v3.0.0" \
+               "python:3.11-slim"; do
+        docker image inspect "$img" >/dev/null 2>&1 || missing="$missing $img"
+    done
+    [ -z "$missing" ] && return 0
+
+    step "检测到离线镜像包 ${pkg}，且本地缺少镜像，开始导入（约数分钟）..."
+    if docker load -i "$pkg"; then
+        info "离线镜像导入完成"
+    else
+        warn "离线镜像导入失败，将尝试在线拉取"
+    fi
+}
+
 # ---------------------------------------------------------------- 启动 Milvus
 start_milvus() {
+    load_offline_images
     step "启动 Milvus 向量库（etcd / minio / milvus / attu）..."
     dc -f compose.milvus.yaml up -d
 

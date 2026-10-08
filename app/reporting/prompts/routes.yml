@@ -251,6 +251,6 @@ routes:
       - 其他
     modalities: []
     body_parts: []
-    prompt_file: generic.yml
+    prompt_file: generic.md
     template_source: null
     enabled: true

@@ -6809,23 +6809,6 @@ function createReportThinkingPanel() {
   };
 }
 
-/** 从追问文本提取参数名：优先括号内缩写（如 LVEF），否则剥离请求动词与后缀（如"请确认LGE延迟强化分布模式"→"LGE延迟强化"） */
-function extractQuestionParamName(question) {
-  const text = String(question || "").trim();
-  if (!text) return "";
-  const parens = text.match(/[（(]([^（）()]+)[）)]/g);
-  if (parens && parens.length) {
-    const last = parens[parens.length - 1].replace(/^[（(]/, "").replace(/[）)]$/, "").trim();
-    if (last) return last;
-  }
-  return text
-    .replace(/[\s?？:：。]+$/, "")
-    .replace(/(的)?[A-Za-z0-9]*(分型|分级|实测值|数值|具体分布模式|分布模式|具体情况|情况|程度)$/, "")
-    .replace(/^(请提供|请确认|请补充|请描述|请给出)(的)?/, "")
-    .replace(/的$/, "")
-    .trim();
-}
-
 function addReportQuestions(messageDiv, questions) {
   const bubble = messageDiv.querySelector(".report-chat-bubble");
   
@@ -6835,12 +6818,18 @@ function addReportQuestions(messageDiv, questions) {
   questions.forEach((q) => {
     const qItem = document.createElement("div");
     qItem.className = "report-chat-question-item";
+    const multi = q.multi_select === true;
     qItem.innerHTML = `<strong>${escapeHtml(q.question)}</strong>`;
     // 候选选项按钮：点选后填入输入框，医生可继续补充后发送
     const opts = q.options || [];
     if (opts.length > 0) {
       const optDiv = document.createElement("div");
       optDiv.className = "report-question-options";
+      // 点选后以完整问题文本填入输入框（如"请确认LGE延迟强化分布模式：心内膜下"）
+      const fullQuestion = String(q.question || "").trim().replace(/[?？\s]+$/, "");
+      // 多选题：选项可反复点选切换，输入框中该问题的条目随之整体替换
+      const selected = new Set();
+      let currentEntry = "";
       opts.forEach((o) => {
         const b = document.createElement("button");
         b.className = "report-question-option-btn";
@@ -6848,11 +6837,33 @@ function addReportQuestions(messageDiv, questions) {
         b.addEventListener("click", () => {
           const input = document.getElementById("reportTextInput");
           if (!input) return;
-          // 带参数名前缀填入（如"LVEF：≥50%"），便于下一轮迭代定位
-          const prefix = extractQuestionParamName(q.question);
-          const entry = prefix ? `${prefix}：${o}` : o;
-          const cur = input.value.trim();
-          input.value = cur ? `${cur}；${entry}` : entry;
+          if (multi) {
+            if (selected.has(o)) {
+              selected.delete(o);
+              b.classList.remove("selected");
+            } else {
+              selected.add(o);
+              b.classList.add("selected");
+            }
+            // 先移除该问题上一次写入的条目，再追加最新组合
+            if (currentEntry && input.value.includes(currentEntry)) {
+              input.value = input.value
+                .replace(currentEntry, "")
+                .replace(/；\s*；/g, "；")
+                .replace(/^[；\s]+|[；\s]+$/g, "");
+            }
+            const nextEntry = selected.size ? `${fullQuestion}：${[...selected].join("、")}` : "";
+            if (nextEntry) {
+              const cur = input.value.trim();
+              input.value = cur ? `${cur}；${nextEntry}` : nextEntry;
+            }
+            currentEntry = nextEntry;
+          } else {
+            // 单选题：完整问题+选项值填入（如"请确认LGE延迟强化分布模式：心内膜下"）
+            const entry = fullQuestion ? `${fullQuestion}：${o}` : o;
+            const cur = input.value.trim();
+            input.value = cur ? `${cur}；${entry}` : entry;
+          }
           input.focus();
         });
         optDiv.appendChild(b);

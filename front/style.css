@@ -5823,6 +5823,13 @@ body {
   color: #ffffff;
 }
 
+/* 多选题选中态：保持高亮，便于医生确认已选组合 */
+.report-question-option-btn.selected {
+  background: #2456d6;
+  border-color: #2456d6;
+  color: #ffffff;
+}
+
 .report-input-wrapper {
   display: flex;
   gap: 8px;

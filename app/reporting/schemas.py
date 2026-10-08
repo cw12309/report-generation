@@ -47,6 +47,10 @@ class ReportQuestion(BaseModel):
         description="优先级"
     )
     options: list[str] = Field(default_factory=list, description="候选选项（供医生点选快速回答）")
+    multi_select: bool = Field(
+        default=False,
+        description="是否允许多选：互斥答案(侧别/分级/程度)为false，可并存答案(多节段/多部位)为true"
+    )
     answered: bool = Field(default=False, description="是否已回答")
 
 

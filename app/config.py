@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import yaml
 import logging
@@ -465,11 +466,34 @@ def _normalize_base_url(base_url: str, path_suffix: str) -> str:
     return f"{base_url}{path_suffix}"
 
 
+def is_private_host(base_url: str) -> bool:
+    """判断 base_url 是否为内网/回环地址（localhost、10.x、172.16-31.x、192.168.x、.local 等）。"""
+    host = (urlsplit(base_url).hostname or "").lower()
+    if not host:
+        return False
+    if host == "localhost" or host.endswith(".local"):
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback or ip.is_link_local
+
+
+def requests_no_proxy_kwargs(base_url: str) -> dict:
+    """requests 调用内网地址时禁用代理（返回可展开的 kwargs，外网地址返回空 dict）。"""
+    if is_private_host(base_url):
+        return {"proxies": {"http": None, "https": None}}
+    return {}
+
+
 def create_openai_client(base_url: str, api_key: str = "", *, asynchronous: bool = False,
                          timeout: float | None = None, max_retries: int | None = None):
     """Create a traced OpenAI-compatible client with Base URL normalization.
 
     timeout/max_retries 为 None 时使用 SDK 默认值；传入则覆盖（用于快速失败链路）。
+    内网地址（172.x/10.x/192.168.x/localhost）强制直连，忽略系统代理环境变量，
+    避免代理不可达内网导致 502。
     """
     client_class = AsyncOpenAI if asynchronous else OpenAI
     kwargs = {}
@@ -477,6 +501,11 @@ def create_openai_client(base_url: str, api_key: str = "", *, asynchronous: bool
         kwargs["timeout"] = timeout
     if max_retries is not None:
         kwargs["max_retries"] = max_retries
+    if is_private_host(base_url):
+        import httpx
+
+        http_cls = httpx.AsyncClient if asynchronous else httpx.Client
+        kwargs["http_client"] = http_cls(trust_env=False)
     client = client_class(
         base_url=normalize_openai_base_url(base_url),
         api_key=api_key or "not-needed",

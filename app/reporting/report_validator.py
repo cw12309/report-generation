@@ -2,10 +2,28 @@
 
 import logging
 import re
+from pathlib import Path
+
+import yaml
 
 from .schemas import LLMReportOutput
 
 logger = logging.getLogger(__name__)
+
+# 可编辑规则文件：路由配置管理界面保存后写入，启动/保存时热加载覆盖类属性
+RULES_FILE = Path(__file__).parent / "prompts" / "validator_rules.yml"
+
+# 可编辑规则字段 → 类属性映射
+_RULE_ATTR_MAP = {
+    "organ_anchors": "_ORGAN_ANCHORS",
+    "region_anchors": "_REGION_ANCHORS",
+    "exclusive_q_keywords": "_EXCLUSIVE_Q_KEYWORDS",
+    "multi_q_keywords": "_MULTI_Q_KEYWORDS",
+    "occ_strong": "_OCC_STRONG",
+    "occ_weak": "_OCC_WEAK",
+    "degen": "_DEGEN",
+    "inductive_markers": "_INDUCTIVE_MARKERS",
+}
 
 
 class ValidationError(Exception):
@@ -24,6 +42,8 @@ class ReportValidator:
     _VAGUE_PAREN = re.compile(
         r"[（(][^（）()\n]{0,40}?(?:待明确|待确认|待评估|待定|待排)[^（）()\n]{0,40}?[）)]"
     )
+    # 图像质量评述句：影像所见不输出"本次检查图像质量优质/合格/受限"等技术评述
+    _QUALITY_SENT = re.compile(r"[^。；\n]*图像质量[^。；\n]*[。；]?")
 
     # 范式-格式一致性检查关键词
     # 强占位/恶性征象（所见出现即应归纳式）
@@ -63,6 +83,8 @@ class ReportValidator:
         result = cls._VAGUE_CLAUSE.sub("", text)
         # 先剥离括号式模糊注记，避免整句替换规则吞掉括号前的真实征象
         result = cls._VAGUE_PAREN.sub("", result)
+        # 剥离图像质量评述句（如"本次检查图像质量优质。"）
+        result = cls._QUALITY_SENT.sub("", result)
         result = cls._VAGUE_SENTENCE.sub(cls._vague_replacement, result)
         result = cls._VAGUE_STANDALONE.sub("", result)
         # 清理残留的重复/悬挂标点
@@ -179,7 +201,7 @@ class ReportValidator:
     _ORGAN_ANCHORS = (
         "腰椎序列规整", "腰骶椎生理曲度", "颈椎序列规整", "颅颈交界", "胸椎序列规整",
         "双侧大脑半球对称", "中线结构居中",
-        "本次检查图像质量", "图像质量", "心脏整体形态", "心脏形态规整",
+        "心脏整体形态", "心脏形态规整",
         "双侧乳腺对称", "双侧乳腺呈", "纤维腺体呈",
         "肝形态规整", "双肺纹理清晰", "气管支气管通畅",
     )
@@ -308,3 +330,39 @@ class ReportValidator:
         """判断是否通过校验"""
         errors = self.validate(output, question_round)
         return len(errors) == 0
+
+
+def load_validator_rules(apply: bool = True) -> dict:
+    """读取可编辑规则文件；apply=True 时覆盖 ReportValidator 类属性（热加载）。
+
+    文件不存在时以当前类属性为准（首次保存时落盘）。
+    """
+    data = {}
+    if RULES_FILE.exists():
+        try:
+            data = yaml.safe_load(RULES_FILE.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            logger.warning(f"validator_rules.yml 解析失败，忽略: {e}")
+            data = {}
+    if apply:
+        for key, attr in _RULE_ATTR_MAP.items():
+            val = data.get(key)
+            if isinstance(val, list):
+                setattr(ReportValidator, attr, tuple(str(x) for x in val))
+    return data
+
+
+def save_validator_rules(data: dict):
+    """写回可编辑规则文件并热加载到 ReportValidator"""
+    clean = {k: [str(x) for x in (data.get(k) or []) if str(x).strip()] for k in _RULE_ATTR_MAP}
+    RULES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RULES_FILE.write_text(
+        yaml.safe_dump(clean, allow_unicode=True, sort_keys=False, default_flow_style=False),
+        encoding="utf-8",
+    )
+    load_validator_rules(apply=True)
+    logger.info("校验器联动规则已更新并热加载")
+
+
+# 启动时加载一次（文件存在则覆盖代码默认值）
+load_validator_rules(apply=True)

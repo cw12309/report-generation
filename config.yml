@@ -15,16 +15,20 @@ llms:
   model: qwen3.8-27b-awq-int4
   api_key: ${CHAT_API_KEY}
   temperature: 0.1
-- name: qwen38-27b-int4
-  base_url: http://172.18.16.240:11001/v1
-  model: qwen38-27b-int4
-  api_key: ${CHAT_API_KEY}
-  temperature: 0.1
 - name: qwen3.8-max
   base_url: https://llm-rtmmntkrmdtpfkn1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
   model: qwen3.8-max
   api_key: ${CHAT_API_KEY}
   temperature: 0.1
+- name: qwen38-27b-int4
+  base_url: http://172.17.20.189:11001/v1
+  model: qwen38-27b-int4
+  api_key: ${CHAT_API_KEY}
+  temperature: 0.1
+- name: qwen38-27b-awq-int4
+  base_url: http://14.22.86.97:11001/v1
+  model: qwen38-27b-awq-int4
+  api_key: ${CHAT_API_KEY}
 embeddings:
 - name: bge-m3
   base_url: https://api.siliconflow.cn/v1

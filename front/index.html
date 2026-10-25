@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=57" />
+    <link rel="stylesheet" href="/static/style.css?v=71" />
   </head>
   <body>
     <div class="app">
@@ -51,13 +51,13 @@
           <div class="page active" id="pageWorkspace">
             <!-- 工作台子导航 Tab 栏 -->
             <nav class="workspace-tabs">
-              <button class="workspace-tab active" data-workspace-tab="agent">通用 Agent</button>
-              <button class="workspace-tab" data-workspace-tab="report">综合报告</button>
+              <button class="workspace-tab active" data-workspace-tab="report">综合报告</button>
+              <button class="workspace-tab" data-workspace-tab="agent">通用 Agent</button>
               <button class="workspace-tab" data-workspace-tab="breast-mri">乳腺 MRI</button>
             </nav>
 
             <!-- Agent 子视图 -->
-            <div class="workspace-agent-view" id="workspaceAgent">
+            <div class="workspace-agent-view" id="workspaceAgent" style="display: none">
             <div class="agent-layout">
               <!-- 历史对话侧边栏 -->
               <aside class="chat-history-sidebar" id="chatHistorySidebar">
@@ -171,7 +171,7 @@
             <!-- /乳腺 MRI 子视图 -->
 
             <!-- Report 工作台子视图 -->
-            <div class="workspace-report-view" id="workspaceReport" style="display: none">
+            <div class="workspace-report-view" id="workspaceReport" style="display: flex">
               <div class="report-workbench-layout">
                 <!-- 左侧：历史会话 -->
                 <aside class="report-history-sidebar">
@@ -247,6 +247,9 @@
                         <button id="reportSendBtn" class="report-send-btn">
                           发送
                         </button>
+                        <button id="reportStopBtn" class="report-stop-btn" style="display: none">
+                          停止
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -276,10 +279,29 @@
                       <div id="reportModelList"></div>
                     </div>
                   </div>
+                  <button class="report-action-btn" id="reportRouteAdminBtn" title="路由配置管理">
+                    🧭<br><span>路由</span>
+                  </button>
                 </aside>
               </div>
             </div>
             <!-- /Report 工作台子视图 -->
+          </div>
+
+          <!-- 路由配置管理弹窗 -->
+          <div class="route-admin-panel" id="routeAdminPanel" style="display: none">
+            <div class="route-admin-header">
+              <h3>路由配置管理</h3>
+              <button class="llm-config-close" id="routeAdminClose">✕</button>
+            </div>
+            <div class="route-admin-body" id="routeAdminBody">
+              <div class="route-admin-list" id="routeAdminList"></div>
+              <div class="route-admin-editor" id="routeAdminEditor" style="display: none"></div>
+            </div>
+            <div class="route-admin-footer">
+              <button class="btn btn-sm btn-primary" id="routeAdminNewBtn">＋ 新增路由</button>
+              <span class="route-admin-hint" id="routeAdminHint"></span>
+            </div>
           </div>
 
           <!-- 模型选择弹窗 -->
@@ -1841,6 +1863,6 @@ data: [DONE]</code></pre>
       hidden
     ></div>
 
-    <script src="/static/app.js?v=94"></script>
+    <script src="/static/app.js?v=108"></script>
   </body>
 </html>

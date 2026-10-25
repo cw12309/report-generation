@@ -293,6 +293,12 @@ class ReportService:
         )
         return self.parser.parse(raw2), raw2
 
+    def reload_routes(self):
+        """路由配置变更后热重载（resolver + prompt 缓存）"""
+        self.route_resolver.reload()
+        self.prompt_loader._prompt_cache.clear()
+        logger.info(f"路由配置已重载: {len(self.route_resolver.routes)} 个路由")
+
     @staticmethod
     def is_report_intent(text: str) -> bool:
         """判断输入是否为报告生成意图（否则走闲聊标准回复）"""
@@ -364,9 +370,12 @@ class ReportService:
             operation="generate",
         )
 
+        # 模板直选线路：医生未输入阅片结论，仅点选模板按钮触发
+        template_only = bool(request.route_id) and not (request.input_text or "").strip()
         user_prompt = self.prompt_loader.build_user_prompt(
             doctor_input=request.input_text,
             operation="generate",
+            template_only=template_only,
         )
 
         messages = [

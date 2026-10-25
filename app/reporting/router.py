@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 from .schemas import (
@@ -203,8 +203,8 @@ async def generate_report(
         # 会话ID
         yield _sse({'type': 'conversation', 'conversation_id': conversation_id})
 
-        # 闲聊分流：非报告类输入返回标准回复，不调用LLM
-        if not _service.is_report_intent(input_text):
+        # 闲聊分流：非报告类输入返回标准回复，不调用LLM（显式指定模板路由时跳过分流）
+        if not route_id and not _service.is_report_intent(input_text):
             logger.info(f"非报告类输入，走闲聊标准回复: {input_text[:30]}")
             yield _sse({'type': 'chat', 'content': CHAT_STANDARD_REPLY})
             yield _sse({'type': 'done', 'status': 'chat', 'elapsed_seconds': 0.0})
@@ -488,6 +488,131 @@ async def list_routes():
             for r in routes
         ]
     }
+
+
+# ===== 路由配置管理 =====
+
+@router.get("/admin/routes")
+async def admin_list_routes():
+    """路由配置全量视图（含禁用路由、专科Prompt全文、校验器联动规则）"""
+    from . import route_admin
+
+    config = route_admin.load_routes_raw()
+    linkage = route_admin.validator_linkage()
+    items = []
+    for r in config.get("routes") or []:
+        items.append({
+            **r,
+            "prompt_md": route_admin.read_prompt(r),
+        })
+    return {"routes": items, "validator_linkage": linkage}
+
+
+@router.post("/admin/routes/{route_id}/toggle")
+async def admin_toggle_route(route_id: str):
+    """启用/停用路由"""
+    from . import route_admin
+
+    config = route_admin.load_routes_raw()
+    hit = None
+    for r in config.get("routes") or []:
+        if r.get("id") == route_id:
+            hit = r
+            break
+    if not hit:
+        raise HTTPException(status_code=404, detail="路由不存在")
+    if route_id == "generic":
+        raise HTTPException(status_code=400, detail="通用路由不可停用")
+    hit["enabled"] = not bool(hit.get("enabled", True))
+    route_admin.save_routes_raw(config)
+    _service.reload_routes()
+    return {"success": True, "enabled": hit["enabled"]}
+
+
+@router.get("/admin/validator-rules")
+async def admin_get_validator_rules():
+    """校验器联动规则当前值（可编辑字段）"""
+    from . import route_admin
+
+    return {"rules": route_admin.validator_linkage()}
+
+
+@router.post("/admin/validator-rules")
+async def admin_save_validator_rules(payload: dict):
+    """保存校验器联动规则并热加载生效"""
+    from .report_validator import save_validator_rules
+
+    save_validator_rules(payload or {})
+    return {"success": True}
+
+
+@router.post("/admin/routes/parse-doc")
+async def admin_parse_reference_doc(
+    file: UploadFile = File(...),
+    focus: str = Form(""),
+):
+    """解析上传的参考资料文档（pdf/docx/xlsx/txt/md/csv）为纯文本，并按路由名称提取相关材料"""
+    from . import route_admin
+
+    data = await file.read()
+    try:
+        result = route_admin.extract_reference_text(file.filename or "", data, focus=focus or "")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
+@router.post("/admin/routes/draft")
+async def admin_generate_draft(payload: dict):
+    """新路由草稿生成 skill：依据部位名+可选参考资料生成完整路由配置草稿（不落盘）"""
+    from . import route_admin
+
+    name = str((payload or {}).get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name 不能为空")
+    draft = await route_admin.generate_route_draft(
+        name=name,
+        body_part=str((payload or {}).get("body_part") or name).strip(),
+        modality=str((payload or {}).get("modality") or "MRI").strip(),
+        reference_text=str((payload or {}).get("reference_text") or ""),
+        llm_name=str((payload or {}).get("llm_name") or ""),
+    )
+    return {"draft": draft}
+
+
+@router.post("/admin/routes/{route_id}")
+async def admin_update_route(route_id: str, payload: dict):
+    """更新路由配置（元信息+专科Prompt+胶囊），保存后立即生效"""
+    from . import route_admin
+
+    config = route_admin.load_routes_raw()
+    existing = [r.get("id") for r in config.get("routes") or []]
+    payload = dict(payload or {})
+    payload["id"] = route_id
+    errors = route_admin.validate_route_payload(payload, existing, allow_same=True)
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    prompt_md = payload.pop("prompt_md", None)
+    route_admin.apply_draft(config, payload, prompt_content=prompt_md)
+    _service.reload_routes()
+    return {"success": True}
+
+
+@router.post("/admin/routes")
+async def admin_create_route(payload: dict):
+    """新增路由：写入 routes.yml 与专科 md 并热重载"""
+    from . import route_admin
+
+    config = route_admin.load_routes_raw()
+    existing = [r.get("id") for r in config.get("routes") or []]
+    payload = dict(payload or {})
+    errors = route_admin.validate_route_payload(payload, existing)
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    prompt_md = payload.pop("prompt_md", None)
+    route = route_admin.apply_draft(config, payload, prompt_content=prompt_md)
+    _service.reload_routes()
+    return {"success": True, "route_id": route.id}
 
 
 @router.post("/sessions/{conversation_id}/export/word")

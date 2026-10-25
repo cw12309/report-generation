@@ -49,6 +49,11 @@ class RouteResolver:
         self.routes: list[RouteInfo] = []
         self._load_routes()
 
+    def reload(self):
+        """重新加载路由配置（路由管理保存后调用）"""
+        self.routes = []
+        self._load_routes()
+
     def _load_routes(self):
         """加载路由配置"""
         try:
@@ -162,10 +167,26 @@ class RouteResolver:
             body_part = "乳腺"
         elif "心脏" in text or "心肌" in text:
             body_part = "心脏"
-        
-        # 如果没有明确指定modality，但有椎体相关的描述，默认为MRI
-        if not modality and body_part in ["腰椎", "颈椎", "胸椎", "乳腺", "颅脑", "心脏"]:
-            modality = "MRI"
+
+        # 新增路由（硬编码规则未覆盖）：动态扫描各路由 body_parts/aliases，长关键词优先
+        matched_modalities: list[str] = []
+        if not body_part:
+            for route in self.routes:
+                if route.id == "generic":
+                    continue
+                cands = sorted(
+                    {c for c in list(route.body_parts) + list(route.aliases) if c},
+                    key=len,
+                    reverse=True,
+                )
+                if any(c in text for c in cands):
+                    body_part = route.body_parts[0] if route.body_parts else cands[0]
+                    matched_modalities = list(route.modalities)
+                    break
+
+        # 如果没有明确指定modality，按命中路由的检查类型兜底（默认MRI）
+        if not modality and body_part:
+            modality = matched_modalities[0] if matched_modalities else "MRI"
 
         return modality, body_part
 
@@ -213,5 +234,5 @@ class RouteResolver:
         return None
 
     def list_routes(self) -> list[RouteInfo]:
-        """列出所有路由"""
-        return [r for r in self.routes if r.id != "generic"]
+        """列出所有已启用路由（含通用路由；前端模板直选自行过滤 generic）"""
+        return list(self.routes)

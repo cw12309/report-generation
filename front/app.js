@@ -398,7 +398,7 @@ sidebarBtns.forEach((btn) => {
 
 // ==================== 工作台内部 Tab 切换 ====================
 
-let workspaceActiveTab = "agent";
+let workspaceActiveTab = "report";
 
 function switchWorkspaceTab(tab) {
   workspaceActiveTab = tab;
@@ -5788,11 +5788,14 @@ let reportWorkbenchLoaded = false;
 let currentReportSession = null;
 let reportConversationId = null;
 let reportEventSource = null;
+let reportAbortController = null; // iterate 流式请求的 AbortController（停止生成用）
+let reportStoppedByUser = false;  // 用户手动停止标记（抑制 AbortError 报错气泡）
 
 // ===== 报告工作台模型选择 =====
 let reportModels = [];       // [{name, base_url, model}]
 let reportSelectedModel = ""; // 选中的模型 name（空=全局激活模型）
 let reportRoutesCache = []; // 路由列表缓存（含 quick_tags）
+let reportPendingRouteId = ""; // 模板直选：已选定但尚未发送生成的路由ID
 
 // ===== 思考模式开关（按模型分别记忆，默认全部关闭）=====
 const REPORT_THINKING_KEY = "report_thinking_enabled";
@@ -6102,6 +6105,13 @@ function renderHistoryMessages(session) {
       addReportQuestions(div, m.questions);
     }
   });
+  // 历史追问卡默认已答复态；仅当会话最后一条消息仍是带追问的助手回复时保留可点
+  const lastMsg = messages[messages.length - 1];
+  const keepLastActive = lastMsg && lastMsg.role !== "user" && (lastMsg.questions || []).length > 0;
+  const allQ = container.querySelectorAll(".report-chat-questions");
+  allQ.forEach((qd, i) => {
+    if (!(keepLastActive && i === allQ.length - 1)) markQuestionsAnswered(qd);
+  });
 }
 
 async function initReportWorkbench() {
@@ -6111,6 +6121,7 @@ async function initReportWorkbench() {
   // 初始化DOM引用
   const reportNewSessionBtn = document.getElementById("reportNewSessionBtn");
   const reportSendBtn = document.getElementById("reportSendBtn");
+  const reportStopBtn = document.getElementById("reportStopBtn");
   const reportTextInput = document.getElementById("reportTextInput");
   const reportSaveBtn = document.getElementById("reportSaveBtn");
   const reportExportBtn = document.getElementById("reportExportBtn");
@@ -6118,6 +6129,7 @@ async function initReportWorkbench() {
   // 绑定事件
   reportNewSessionBtn?.addEventListener("click", createNewReportSession);
   reportSendBtn?.addEventListener("click", sendReportMessage);
+  reportStopBtn?.addEventListener("click", stopReportGeneration);
   reportTextInput?.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -6147,10 +6159,20 @@ async function initReportWorkbench() {
     }
   });
 
-  // 快捷标签点击（事件委托）
+  // 胶囊栏点击（事件委托）：模板直选按钮仅完成路由选择；快捷标签插入输入框
   document.getElementById("reportQuickTags")?.addEventListener("click", (e) => {
+    const tplBtn = e.target.closest(".report-template-btn");
+    if (tplBtn) {
+      selectReportTemplate(tplBtn.dataset.route);
+      return;
+    }
+    if (e.target.closest(".report-template-reselect")) {
+      reportPendingRouteId = "";
+      renderTemplatePicker();
+      return;
+    }
     const btn = e.target.closest(".report-quick-tag");
-    if (btn) insertQuickTag(btn.dataset.tag);
+    if (btn) toggleQuickTag(btn.dataset.tag, btn);
   });
 
   // 模型选择器
@@ -6168,6 +6190,11 @@ async function initReportWorkbench() {
   loadReportModels();
   loadReportRoutes();
 
+  // 路由配置管理
+  document.getElementById("reportRouteAdminBtn")?.addEventListener("click", openRouteAdmin);
+  document.getElementById("routeAdminClose")?.addEventListener("click", closeRouteAdmin);
+  document.getElementById("routeAdminNewBtn")?.addEventListener("click", () => openRouteEditor(null));
+
   // 复制按钮事件委托
   document.addEventListener("click", (e) => {
     if (e.target.classList.contains("report-copy-btn")) {
@@ -6183,6 +6210,7 @@ async function initReportWorkbench() {
 function createNewReportSession() {
   reportConversationId = generateSessionId();
   currentReportSession = null;
+  reportPendingRouteId = "";
 
   // 重置UI
   document.getElementById("reportEmptyState").style.display = "flex";
@@ -6197,47 +6225,127 @@ function createNewReportSession() {
   stopReportElapsedTimer();
   
   updateReportStatus("idle", "", 0);
+  renderTemplatePicker();
+}
+
+// ===== 模板直选（胶囊栏位置居中展示6个模板按钮；点选仅完成路由选择并切换出该模板胶囊，生成须由发送触发） =====
+function renderTemplatePicker() {
+  const bar = document.getElementById("reportQuickTags");
+  if (!bar) return;
+  if (currentReportSession) {
+    bar.style.display = "none";
+    return;
+  }
+  const routes = (reportRoutesCache || []).filter((r) => r.id !== "generic");
+  if (routes.length === 0) {
+    bar.style.display = "none";
+    bar.innerHTML = "";
+    return;
+  }
+  bar.classList.add("template-mode");
+  bar.innerHTML =
+    `<div class="report-template-picker-title">选择检查模板（可先不输入阅片结论；点选后加载对应术语胶囊，发送后生成报告）</div>` +
+    routes
+      .map(
+        (r) =>
+          `<button class="report-template-btn" data-route="${escapeHtml(r.id)}">${escapeHtml(r.name)}</button>`
+      )
+      .join("");
+  bar.style.display = "flex";
+}
+
+function selectReportTemplate(routeId) {
+  if (!routeId || currentReportSession) return;
+  reportPendingRouteId = routeId;
+  const route = (reportRoutesCache || []).find((r) => r.id === routeId);
+  // 仅完成模板选择：切换出该模板的 quick_tags 胶囊，不触发报告生成
+  renderQuickTags(routeId);
+  updateReportStatus("idle", route ? route.name : routeId, 0);
+  document.getElementById("reportTextInput")?.focus();
 }
 
 async function sendReportMessage() {
   const input = document.getElementById("reportTextInput");
   const message = input.value.trim();
-  
-  if (!message) return;
+  // 生成中禁止重复发送（停止按钮可见即流式进行中）
+  const stopBtn = document.getElementById("reportStopBtn");
+  if (stopBtn && stopBtn.style.display !== "none") return;
+  // 模板直选线路：已选定模板时允许空输入发送（生成全基线报告+追问）
+  const pendingRoute = !currentReportSession ? reportPendingRouteId : "";
+  if (!message && !pendingRoute) return;
+  reportPendingRouteId = "";
+
+  // 上一轮追问卡置为已答复态：灰化禁点，防止旧选项污染新一轮输入
+  document
+    .querySelectorAll("#reportChatMessages .report-chat-questions:not(.answered)")
+    .forEach((qd) => markQuestionsAnswered(qd));
 
   // 显示用户消息
-  addReportChatMessage("user", message);
+  addReportChatMessage("user", message || `（未输入阅片结论，按模板「${(reportRoutesCache.find((r) => r.id === pendingRoute) || {}).name || pendingRoute}」生成基线报告）`);
 
   // 清空输入
   input.value = "";
   
-  // 禁用发送按钮
+  // 禁用发送按钮，切换为"停止"按钮（流式期间可取消）
   const sendBtn = document.getElementById("reportSendBtn");
   sendBtn.disabled = true;
+  setReportGeneratingUI(true);
+  reportStoppedByUser = false;
 
   // 发送即开始实时计时（与生成并行刷新）
   startReportElapsedTimer();
 
   try {
     if (!currentReportSession) {
-      // 首次生成
-      await generateReport(message);
+      // 首次生成（模板直选时携带 route_id）
+      await generateReport(message, pendingRoute);
     } else {
       // 迭代修改
       await iterateReport(message);
     }
   } catch (error) {
     console.error("发送消息失败:", error);
-    addReportChatMessage("assistant", "抱歉，发生了错误：" + error.message);
-    updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+    if (!reportStoppedByUser) {
+      addReportChatMessage("assistant", "抱歉，发生了错误：" + error.message);
+      updateReportStatus("failed", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+    }
     stopReportElapsedTimer();
   } finally {
     sendBtn.disabled = false;
+    setReportGeneratingUI(false);
+    reportAbortController = null;
   }
 }
 
-async function generateReport(input) {
-  updateReportStatus("generating", "解析中...", 0);
+// 生成中/停止 按钮态切换
+function setReportGeneratingUI(generating) {
+  const sendBtn = document.getElementById("reportSendBtn");
+  const stopBtn = document.getElementById("reportStopBtn");
+  if (sendBtn) sendBtn.style.display = generating ? "none" : "";
+  if (stopBtn) stopBtn.style.display = generating ? "" : "none";
+}
+
+// 停止生成：关闭 SSE / 中断 fetch 流，并将未答复的追问卡置为已终止态
+function stopReportGeneration() {
+  reportStoppedByUser = true;
+  if (reportEventSource) {
+    reportEventSource.close();
+    reportEventSource = null;
+  }
+  if (reportAbortController) {
+    reportAbortController.abort();
+    reportAbortController = null;
+  }
+  stopReportElapsedTimer();
+  updateReportStatus(currentReportSession ? "completed" : "idle", currentReportSession?.route_name || "", currentReportSession?.question_round || 0);
+  addReportChatMessage("assistant", "已停止生成。可继续输入补充结论后重新发送。");
+  setReportGeneratingUI(false);
+  const sendBtn = document.getElementById("reportSendBtn");
+  if (sendBtn) sendBtn.disabled = false;
+}
+
+async function generateReport(input, routeId = "") {
+  updateReportStatus("generating", routeId ? "模板已选定" : "解析中...", 0);
 
   const url = `/api/report-workbench/sessions/${reportConversationId}/generate`;
   
@@ -6246,7 +6354,7 @@ async function generateReport(input) {
       input_text: input,
       modality: "",
       body_part: "",
-      route_id: "",
+      route_id: routeId || "",
       llm_name: reportSelectedModel || "",
       enable_thinking: isReportThinkingEnabled(reportSelectedModel) ? "true" : "false"
     })}`
@@ -6381,9 +6489,11 @@ async function iterateReport(user_input) {
 
   const url = `/api/report-workbench/sessions/${reportConversationId}/iterate`;
   
+  reportAbortController = new AbortController();
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    signal: reportAbortController.signal,
     body: JSON.stringify({
       input_text: user_input,
       images: [],
@@ -6815,11 +6925,12 @@ function addReportQuestions(messageDiv, questions) {
   const questionsDiv = document.createElement("div");
   questionsDiv.className = "report-chat-questions";
 
-  questions.forEach((q) => {
+  questions.forEach((q, idx) => {
     const qItem = document.createElement("div");
     qItem.className = "report-chat-question-item";
     const multi = q.multi_select === true;
-    qItem.innerHTML = `<strong>${escapeHtml(q.question)}</strong>`;
+    // 编号徽标 + 问题标题 + 可多选标记
+    qItem.innerHTML = `<div class="report-q-head"><span class="report-q-index">${idx + 1}</span><strong>${escapeHtml(q.question)}</strong>${multi ? '<span class="report-q-multi">可多选</span>' : ""}</div>`;
     // 候选选项按钮：点选后填入输入框，医生可继续补充后发送
     const opts = q.options || [];
     if (opts.length > 0) {
@@ -6859,10 +6970,28 @@ function addReportQuestions(messageDiv, questions) {
             }
             currentEntry = nextEntry;
           } else {
-            // 单选题：完整问题+选项值填入（如"请确认LGE延迟强化分布模式：心内膜下"）
+            // 单选题：完整问题+选项值填入（如"请确认LGE延迟强化分布模式：心内膜下"）；再次点击已选项可撤回
             const entry = fullQuestion ? `${fullQuestion}：${o}` : o;
-            const cur = input.value.trim();
-            input.value = cur ? `${cur}；${entry}` : entry;
+            const wasSelected = b.classList.contains("selected");
+            optDiv
+              .querySelectorAll(".report-question-option-btn.selected")
+              .forEach((x) => x.classList.remove("selected"));
+            // 先移除该问题上一次写入的条目
+            if (currentEntry && input.value.includes(currentEntry)) {
+              input.value = input.value
+                .replace(currentEntry, "")
+                .replace(/；\s*；/g, "；")
+                .replace(/^[；\s]+|[；\s]+$/g, "");
+            }
+            if (wasSelected) {
+              // 撤回：不写回条目
+              currentEntry = "";
+            } else {
+              b.classList.add("selected");
+              const cur = input.value.trim();
+              input.value = cur ? `${cur}；${entry}` : entry;
+              currentEntry = entry;
+            }
           }
           input.focus();
         });
@@ -6876,12 +7005,27 @@ function addReportQuestions(messageDiv, questions) {
   bubble.appendChild(questionsDiv);
 }
 
+// 追问卡已答复态：灰化 + 禁点 + 标注"已答复"，防止旧轮次选项被误点写入输入框
+function markQuestionsAnswered(questionsDiv) {
+  if (!questionsDiv || questionsDiv.classList.contains("answered")) return;
+  questionsDiv.classList.add("answered");
+  questionsDiv.querySelectorAll(".report-question-option-btn").forEach((b) => {
+    b.disabled = true;
+  });
+  const tag = document.createElement("span");
+  tag.className = "report-q-answered-tag";
+  tag.textContent = "已答复";
+  questionsDiv.prepend(tag);
+}
+
 // ===== 快捷输入标签 =====
 async function loadReportRoutes() {
   try {
     const resp = await fetch(`/api/report-workbench/routes?t=${Date.now()}`);
     const data = await resp.json();
     reportRoutesCache = data.routes || [];
+    // 路由加载完成后，若处于空会话则渲染模板直选区
+    if (!currentReportSession) renderTemplatePicker();
   } catch (e) {
     console.error("加载路由列表失败:", e);
   }
@@ -6890,6 +7034,7 @@ async function loadReportRoutes() {
 function renderQuickTags(routeId) {
   const bar = document.getElementById("reportQuickTags");
   if (!bar) return;
+  bar.classList.remove("template-mode");
   const route = reportRoutesCache.find((r) => r.id === routeId);
   const tags = (route && route.quick_tags) || [];
   if (tags.length === 0) {
@@ -6897,19 +7042,440 @@ function renderQuickTags(routeId) {
     bar.innerHTML = "";
     return;
   }
-  bar.innerHTML = tags
-    .map((t) => `<button class="report-quick-tag" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`)
-    .join("");
+  // 已选定模板但尚未发送时，提供重选入口
+  const reselect =
+    reportPendingRouteId && !currentReportSession
+      ? `<button class="report-template-reselect">↺ 重选模板</button>`
+      : "";
+  bar.innerHTML =
+    reselect +
+    tags
+      .map((t) => `<button class="report-quick-tag" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`)
+      .join("");
   bar.style.display = "flex";
 }
 
-function insertQuickTag(tag) {
+function toggleQuickTag(tag, btn) {
+  // 胶囊点选切换：首次点击插入输入框并高亮；再次点击撤销（从输入框移除该胶囊文本）
   const input = document.getElementById("reportTextInput");
   if (!input || !tag) return;
-  const cur = input.value;
-  const sep = cur && !/[\n；;]$/.test(cur) ? "；" : "";
-  input.value = cur + sep + tag;
+  if (btn && btn.classList.contains("selected")) {
+    const parts = input.value.split(/([；;\n])/);
+    const kept = [];
+    for (let i = 0; i < parts.length; i += 2) {
+      if (parts[i].trim() !== tag) kept.push(parts[i]);
+    }
+    input.value = kept
+      .join("；")
+      .replace(/^[；;\s]+/, "")
+      .replace(/[；;\s]+$/, "")
+      .replace(/([；;])\1+/g, "$1");
+    btn.classList.remove("selected");
+  } else {
+    const cur = input.value;
+    const sep = cur && !/[\n；;]$/.test(cur) ? "；" : "";
+    input.value = cur + sep + tag;
+    if (btn) btn.classList.add("selected");
+  }
   input.focus();
+}
+
+// ===== 路由配置管理 =====
+let routeAdminCache = { routes: [], validator_linkage: null };
+
+function setRouteAdminHint(text, ok = false) {
+  const el = document.getElementById("routeAdminHint");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("ok", ok);
+}
+
+async function openRouteAdmin() {
+  const panel = document.getElementById("routeAdminPanel");
+  if (!panel) return;
+  panel.style.display = "flex";
+  setRouteAdminHint("加载中…");
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/routes?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    routeAdminCache = await resp.json();
+    renderRouteAdminList();
+    setRouteAdminHint("");
+  } catch (e) {
+    console.error("加载路由配置失败:", e);
+    setRouteAdminHint("加载失败: " + e.message);
+  }
+}
+
+function closeRouteAdmin() {
+  const panel = document.getElementById("routeAdminPanel");
+  if (panel) panel.style.display = "none";
+  const editor = document.getElementById("routeAdminEditor");
+  if (editor) editor.style.display = "none";
+}
+
+function renderRouteAdminList() {
+  const list = document.getElementById("routeAdminList");
+  const editor = document.getElementById("routeAdminEditor");
+  if (!list) return;
+  list.style.display = "block";
+  if (editor) editor.style.display = "none";
+
+  const routes = routeAdminCache.routes || [];
+  const linkage = routeAdminCache.validator_linkage || {};
+  const ruleField = (key, label, hint) => `
+    <div class="ra-vrule-row">
+      <label>${label}<span class="ra-vrule-hint">${hint}</span></label>
+      <textarea class="config-input ra-vrule-input" data-rule="${key}">${escapeHtml((linkage[key] || []).join("\n"))}</textarea>
+    </div>`;
+  const linkageHtml = `
+    <div class="ra-card ra-vrule-card">
+      <button type="button" class="ra-vrule-toggle" id="raVruleToggle">
+        <span class="ra-vrule-arrow">▶</span>
+        <span class="ra-vrule-toggle-text">校验器联动规则（可编辑，保存后立即生效）</span>
+        <span class="ra-vrule-toggle-hint">点击展开/收起</span>
+      </button>
+      <div class="ra-vrule-body" id="raVruleBody" hidden>
+      <div class="ra-vrule-grid">
+        ${ruleField("organ_anchors", "三行切分锚点·器官行", "所见第2行行首完整短语")}
+        ${ruleField("region_anchors", "三行切分锚点·区域行", "所见第3行行首完整短语")}
+        ${ruleField("exclusive_q_keywords", "互斥单选关键词", "命中且标多选→强制单选")}
+        ${ruleField("multi_q_keywords", "可并存多选关键词", "命中→保持多选（优先级更高）")}
+        ${ruleField("occ_strong", "强占位/恶性征象词", "命中→诊断必须归纳式三行")}
+        ${ruleField("occ_weak", "弱占位词", "与退变词共同判定范式")}
+        ${ruleField("degen", "退变/良性征象词", "仅命中→禁用归纳式")}
+        ${ruleField("inductive_markers", "归纳式标记", "诊断含标记→必须三行")}
+      </div>
+      <div class="ra-vrule-readonly">
+        <p><strong>固定校验项</strong>：${(linkage.checks || []).map(escapeHtml).join("；")}</p>
+        <p><strong>固定归一化</strong>：${(linkage.normalizers || []).map(escapeHtml).join("；")}</p>
+      </div>
+      <div class="ra-vrule-actions">
+        <button class="route-admin-save" id="raSaveRules">💾 保存规则并启用</button>
+      </div>
+      </div>
+    </div>`;
+
+  list.innerHTML =
+    linkageHtml +
+    routes
+      .map((r) => {
+        const enabled = r.enabled !== false;
+        return `
+        <div class="route-admin-item" data-route-id="${escapeHtml(r.id)}">
+          <div class="route-admin-item-head">
+            <span class="route-admin-item-name">${escapeHtml(r.name)}</span>
+            <code class="route-admin-item-id">${escapeHtml(r.id)}</code>
+            <span class="route-admin-item-badge ${enabled ? "on" : "off"}">${enabled ? "已启用" : "已停用"}</span>
+            <span class="route-admin-item-actions">
+              <button class="btn btn-sm" data-act="edit">编辑</button>
+              ${r.id !== "generic" ? `<button class="btn btn-sm" data-act="toggle">${enabled ? "停用" : "启用"}</button>` : ""}
+            </span>
+          </div>
+          <div class="route-admin-item-meta">
+            别名：${(r.aliases || []).map(escapeHtml).join("、") || "—"} ｜ 部位：${(r.body_parts || []).map(escapeHtml).join("、") || "—"} ｜ 胶囊 ${((r.quick_tags || []).length)} 条
+          </div>
+        </div>`;
+      })
+      .join("");
+
+  list.querySelector("#raVruleToggle")?.addEventListener("click", () => {
+    const body = list.querySelector("#raVruleBody");
+    const card = list.querySelector(".ra-vrule-card");
+    const open = body.hidden;
+    body.hidden = !open;
+    card.classList.toggle("open", open);
+  });
+
+  list.querySelector("#raSaveRules")?.addEventListener("click", async () => {
+    const payload = {};
+    list.querySelectorAll(".ra-vrule-input").forEach((ta) => {
+      payload[ta.dataset.rule] = ta.value
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    });
+    setRouteAdminHint("保存规则中…");
+    try {
+      const resp = await fetch("/api/report-workbench/admin/validator-rules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+      await openRouteAdmin();
+      setRouteAdminHint("校验器联动规则已保存并启用", true);
+    } catch (e) {
+      setRouteAdminHint("规则保存失败: " + e.message);
+    }
+  });
+
+  list.querySelectorAll(".route-admin-item [data-act]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const item = e.target.closest(".route-admin-item");
+      const rid = item?.dataset.routeId;
+      const act = btn.dataset.act;
+      if (act === "edit") {
+        const route = (routeAdminCache.routes || []).find((x) => x.id === rid);
+        openRouteEditor(route);
+      } else if (act === "toggle") {
+        try {
+          setRouteAdminHint("切换中…");
+          const resp = await fetch(`/api/report-workbench/admin/routes/${encodeURIComponent(rid)}/toggle`, { method: "POST" });
+          if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+          await openRouteAdmin();
+          loadReportRoutes();
+        } catch (err) {
+          setRouteAdminHint("操作失败: " + err.message);
+        }
+      }
+    });
+  });
+}
+
+function openRouteEditor(route) {
+  const list = document.getElementById("routeAdminList");
+  const editor = document.getElementById("routeAdminEditor");
+  if (!editor) return;
+  if (list) list.style.display = "none";
+  editor.style.display = "block";
+  const isNew = !route;
+  const r = route || { id: "", name: "", aliases: [], modalities: ["MRI"], body_parts: [], quick_tags: [], prompt_md: "", enabled: true };
+  editor.innerHTML = `
+    <div class="route-admin-form">
+      <div class="route-admin-editor-top">
+        <button type="button" class="route-admin-back" id="raBack">← 返回列表</button>
+        <div class="route-admin-editor-title">
+          <span class="ra-title-text">${isNew ? "新增路由" : "编辑路由"}</span>
+          ${isNew ? "" : `<code class="ra-title-id">${escapeHtml(r.id)}</code>`}
+          <span class="ra-title-sub">${isNew ? "生成草稿或直接填写，保存后立即生效" : "修改保存后立即热重载生效"}</span>
+        </div>
+      </div>
+
+      <div class="route-admin-tabs">
+        <button type="button" class="route-admin-tab active" data-tab="basic"><span class="ra-tab-ico">⚙️</span>基本配置</button>
+        <button type="button" class="route-admin-tab" data-tab="tags"><span class="ra-tab-ico">🏷️</span>诊断结论胶囊（${(r.quick_tags || []).length}）</button>
+        <button type="button" class="route-admin-tab" data-tab="prompt"><span class="ra-tab-ico">📝</span>专科 Prompt</button>
+      </div>
+
+      <div class="route-admin-tabpane" data-pane="basic">
+        <div class="ra-card">
+          <div class="ra-card-title">路由标识</div>
+          <div class="route-admin-form-grid">
+            <div class="route-admin-form-row">
+              <label>路由ID${isNew ? "" : "（不可改）"}</label>
+              <input class="config-input" id="raId" value="${escapeHtml(r.id)}" ${isNew ? "" : "disabled"} placeholder="如 liver_mri" />
+            </div>
+            <div class="route-admin-form-row">
+              <label>路由名称</label>
+              <input class="config-input" id="raName" value="${escapeHtml(r.name)}" placeholder="如 肝脏 MRI" />
+            </div>
+          </div>
+        </div>
+        <div class="ra-card">
+          <div class="ra-card-title">自动路由依据</div>
+          <div class="route-admin-form-grid">
+            <div class="route-admin-form-row">
+              <label>检查类型（逗号分隔）</label>
+              <input class="config-input" id="raModalities" value="${escapeHtml((r.modalities || []).join("，"))}" placeholder="MRI、CT" />
+            </div>
+            <div class="route-admin-form-row">
+              <label>部位关键词（逗号分隔）</label>
+              <input class="config-input" id="raBodyParts" value="${escapeHtml((r.body_parts || []).join("，"))}" placeholder="肝脏" />
+            </div>
+          </div>
+          <div class="route-admin-form-row">
+            <label>别名（逗号分隔，输入文本同义词）</label>
+            <input class="config-input" id="raAliases" value="${escapeHtml((r.aliases || []).join("，"))}" placeholder="肝脏MRI、肝MR" />
+          </div>
+        </div>
+        ${isNew ? `
+        <div class="ra-card ra-draft-card">
+          <div class="ra-card-title">⚡ AI 草稿生成</div>
+          <p class="ra-draft-desc">上传该部位的报告模板/诊断规范/术语表（可选，支持 PDF、Word(docx)、Excel(xlsx)、txt/md/csv），系统会按「路由名称/部位/别名」优先抽取相关材料，再生成 ID、别名、胶囊与专科 Prompt 草稿并自动填充三个页签。</p>
+          <textarea class="config-input route-admin-ref" id="raRef" placeholder="可选：参考资料文本；留空则按部位名生成"></textarea>
+          <div class="ra-draft-actions">
+            <input type="file" id="raRefFile" accept=".pdf,.docx,.xlsx,.txt,.md,.csv,.markdown" hidden />
+            <button class="route-admin-uploadbtn" id="raUploadRef" title="上传 pdf/docx/xlsx/txt/md/csv 参考资料，按路由名称抽取相关材料后填入上方文本框">📎 上传文档</button>
+            <button class="route-admin-genbtn" id="raGenDraft">⚡ 生成草稿</button>
+          </div>
+        </div>` : ""}
+      </div>
+
+      <div class="route-admin-tabpane" data-pane="tags" hidden>
+        <div class="ra-card">
+          <div class="ra-card-title">胶囊预览（医生输入框上方点选效果）</div>
+          <div class="route-admin-tags-preview" id="raTagsPreview"></div>
+        </div>
+        <div class="ra-card">
+          <div class="ra-card-title">胶囊编辑（每行一条）</div>
+          <textarea class="config-input route-admin-tags" id="raTags" placeholder="每行一条诊断结论，如：&#10;肝血管瘤&#10;肝细胞癌（LI-RADS 5类）">${escapeHtml((r.quick_tags || []).join("\n"))}</textarea>
+        </div>
+      </div>
+
+      <div class="route-admin-tabpane" data-pane="prompt" hidden>
+        <details class="route-admin-prompt-help">
+          <summary>📋 必备四个章节（保存后自动注入 system prompt）</summary>
+          <ol>
+            <li>#### {名称}专用基线与模块要素（三行6要素 + 默认基线填充句 + 关键病变速查）</li>
+            <li>#### 要素完整性与追问设计（追问参照清单，标注 multi_select 与"（可多选）"）</li>
+            <li>#### 两范式影像所见与影像诊断规范（演绎/归纳 + 专业建议三要素 + XX占位铁律）</li>
+            <li>#### 标准范例（演绎式范例 + 归纳式范例，所见三行/诊断去标签）</li>
+          </ol>
+        </details>
+        <textarea class="config-input route-admin-prompt" id="raPrompt">${escapeHtml(r.prompt_md || "")}</textarea>
+      </div>
+
+      <div class="route-admin-form-actions">
+        <button class="route-admin-save" id="raSave">💾 ${isNew ? "保存并启用" : "保存修改"}</button>
+        <button class="route-admin-cancel" id="raCancel">取消</button>
+      </div>
+    </div>`;
+
+  const splitList = (v) =>
+    String(v || "")
+      .split(/[,，、\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  // 页签切换
+  const switchTab = (tab) => {
+    editor.querySelectorAll(".route-admin-tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === tab));
+    editor.querySelectorAll(".route-admin-tabpane").forEach((p) => {
+      p.hidden = p.dataset.pane !== tab;
+    });
+  };
+  editor.querySelectorAll(".route-admin-tab").forEach((t) => {
+    t.addEventListener("click", () => switchTab(t.dataset.tab));
+  });
+
+  // 胶囊实时预览（与前端渲染样式一致）
+  const refreshTagsPreview = () => {
+    const preview = editor.querySelector("#raTagsPreview");
+    const tagsBox = editor.querySelector("#raTags");
+    if (!preview || !tagsBox) return;
+    const tags = tagsBox.value.split("\n").map((s) => s.trim()).filter(Boolean);
+    preview.innerHTML = tags.length
+      ? tags.map((t) => `<span class="report-quick-tag">${escapeHtml(t)}</span>`).join("")
+      : `<span class="route-admin-tags-empty">暂无胶囊，医生将无法点选快速输入</span>`;
+    const tabBtn = editor.querySelector('.route-admin-tab[data-tab="tags"]');
+    if (tabBtn) tabBtn.textContent = `诊断结论胶囊（${tags.length}）`;
+  };
+  editor.querySelector("#raTags").addEventListener("input", refreshTagsPreview);
+  refreshTagsPreview();
+
+  editor.querySelector("#raCancel").addEventListener("click", () => renderRouteAdminList());
+  editor.querySelector("#raBack").addEventListener("click", () => renderRouteAdminList());
+
+  if (isNew) {
+    editor.querySelector("#raUploadRef").addEventListener("click", () => {
+      editor.querySelector("#raRefFile").click();
+    });
+    editor.querySelector("#raRefFile").addEventListener("change", async (ev) => {
+      const file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      const btn = editor.querySelector("#raUploadRef");
+      btn.disabled = true;
+      setRouteAdminHint(`解析文档中：${file.name}…`);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        // focus：路由名称+部位+别名，后端据此优先抽取相关材料
+        const focus = [
+          editor.querySelector("#raName").value.trim(),
+          editor.querySelector("#raBodyParts").value.trim(),
+          editor.querySelector("#raAliases").value.trim(),
+        ]
+          .filter(Boolean)
+          .join(" ");
+        fd.append("focus", focus);
+        const resp = await fetch("/api/report-workbench/admin/routes/parse-doc", {
+          method: "POST",
+          body: fd,
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+        const data = await resp.json();
+        editor.querySelector("#raRef").value = data.text;
+        const detail = data.matched_lines
+          ? `，命中 ${data.matched_lines} 条与本路由相关${data.filtered_lines ? `（已过滤 ${data.filtered_lines} 条无关记录）` : ""}`
+          : "，未命中与本路由相关的内容（请检查路由名称/部位是否填写，或该文档确实不含本部位材料）";
+        setRouteAdminHint(`已解析 ${file.name}（${data.chars} 字${detail}），可点击生成草稿`, !!data.matched_lines);
+      } catch (e) {
+        setRouteAdminHint("文档解析失败: " + e.message);
+      } finally {
+        btn.disabled = false;
+        ev.target.value = "";
+      }
+    });
+
+    editor.querySelector("#raGenDraft").addEventListener("click", async () => {
+      const btn = editor.querySelector("#raGenDraft");
+      btn.disabled = true;
+      setRouteAdminHint("草稿生成中（约30~60秒）…");
+      try {
+        const resp = await fetch("/api/report-workbench/admin/routes/draft", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: editor.querySelector("#raName").value.trim(),
+            body_part: splitList(editor.querySelector("#raBodyParts").value)[0] || editor.querySelector("#raName").value.trim(),
+            modality: splitList(editor.querySelector("#raModalities").value)[0] || "MRI",
+            reference_text: editor.querySelector("#raRef").value,
+          }),
+        });
+        if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+        const { draft } = await resp.json();
+        editor.querySelector("#raId").value = draft.id || "";
+        editor.querySelector("#raName").value = draft.name || "";
+        editor.querySelector("#raAliases").value = (draft.aliases || []).join("，");
+        editor.querySelector("#raModalities").value = (draft.modalities || []).join("，");
+        editor.querySelector("#raBodyParts").value = (draft.body_parts || []).join("，");
+        editor.querySelector("#raTags").value = (draft.quick_tags || []).join("\n");
+        editor.querySelector("#raPrompt").value = draft.prompt_md || "";
+        refreshTagsPreview();
+        switchTab("tags");
+        setRouteAdminHint(draft.fallback ? "LLM不可用，已生成最小骨架草稿，请补全后保存" : "草稿已生成并填充，请检查修改后保存");
+      } catch (e) {
+        setRouteAdminHint("草稿生成失败: " + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  editor.querySelector("#raSave").addEventListener("click", async () => {
+    const payload = {
+      id: editor.querySelector("#raId").value.trim(),
+      name: editor.querySelector("#raName").value.trim(),
+      aliases: splitList(editor.querySelector("#raAliases").value),
+      modalities: splitList(editor.querySelector("#raModalities").value),
+      body_parts: splitList(editor.querySelector("#raBodyParts").value),
+      quick_tags: editor.querySelector("#raTags").value.split("\n").map((s) => s.trim()).filter(Boolean),
+      prompt_md: editor.querySelector("#raPrompt").value,
+      enabled: true,
+    };
+    if (!payload.id || !payload.name) {
+      setRouteAdminHint("ID 与名称必填");
+      return;
+    }
+    setRouteAdminHint("保存中…");
+    try {
+      const url = isNew
+        ? "/api/report-workbench/admin/routes"
+        : `/api/report-workbench/admin/routes/${encodeURIComponent(payload.id)}`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+      await openRouteAdmin();
+      loadReportRoutes();
+      setRouteAdminHint(`路由「${payload.name}」已保存并启用`, true);
+    } catch (e) {
+      setRouteAdminHint("保存失败: " + e.message);
+    }
+  });
 }
 
 function handleReportCopy(button) {

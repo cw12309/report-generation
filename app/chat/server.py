@@ -1987,11 +1987,14 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                     "query": "测试查询",
                     "documents": ["测试文档"],
                 }
+                from app.config import requests_no_proxy_kwargs
+
                 r = requests.post(
                     _normalize_base_url(base_url, "/rerank"),
                     headers=headers,
                     json=payload,
                     timeout=15,
+                    **requests_no_proxy_kwargs(base_url),
                 )
                 if r.status_code == 200:
                     data = r.json()

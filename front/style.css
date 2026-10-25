@@ -5559,6 +5559,640 @@ body {
   color: #667085;
 }
 
+/* 模板直选模式：胶囊栏居中展示模板按钮 */
+.report-quick-tags.template-mode {
+  justify-content: center;
+  align-items: center;
+  max-height: none;
+  background: #ffffff;
+}
+
+.report-template-picker-title {
+  width: 100%;
+  text-align: center;
+  font-size: 13px;
+  color: #667085;
+}
+
+.report-template-btn {
+  padding: 8px 22px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #2456d6;
+  background: #ffffff;
+  border: 1px solid #b9ccf7;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.report-template-btn:hover {
+  background: #eef4ff;
+  border-color: #4f7cff;
+  box-shadow: 0 2px 8px rgba(79, 124, 255, 0.18);
+}
+
+.report-template-reselect {
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #667085;
+  background: #f2f4f7;
+  border: 1px dashed #d0d5dd;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.report-template-reselect:hover {
+  color: #2456d6;
+  border-color: #4f7cff;
+}
+
+/* ===== 路由配置管理弹窗 ===== */
+.route-admin-panel {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 92%;
+  max-width: 860px;
+  max-height: 88vh;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  animation: memorySlideIn 0.25s ease;
+}
+
+.route-admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.route-admin-header h3 {
+  font-size: 17px;
+  color: var(--primary);
+  font-weight: 700;
+  margin: 0;
+}
+
+.route-admin-body {
+  /* 固定内容区高度且不参与 flex 伸缩：列表/编辑/页签切换时窗口外框大小保持一致 */
+  flex: 0 0 auto;
+  height: min(62vh, 620px);
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.route-admin-editor {
+  height: 100%;
+}
+
+.route-admin-form {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 页签内容区：占满剩余高度并内部滚动，切换页签外框不变 */
+.route-admin-tabpane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.route-admin-tabpane[data-pane="tags"]:not([hidden]),
+.route-admin-tabpane[data-pane="prompt"]:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
+.route-admin-tabpane .ra-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.route-admin-tabpane[data-pane="tags"] .ra-card:last-child,
+.route-admin-tabpane[data-pane="prompt"] .ra-card {
+  flex: 1;
+  min-height: 0;
+}
+
+.route-admin-tabpane .ra-card .route-admin-tags,
+.route-admin-tabpane > .route-admin-prompt {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* Prompt/胶囊大文本框撑满页签剩余高度（覆盖 .config-input 的 flex:none） */
+.route-admin-form textarea.config-input.route-admin-prompt,
+.route-admin-form textarea.config-input.route-admin-tags {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* 表单控件宽度与窗口对齐 */
+.route-admin-form .config-input {
+  width: 100%;
+  box-sizing: border-box;
+  flex: none;
+}
+
+.route-admin-form textarea.config-input {
+  resize: none;
+}
+
+.route-admin-ref {
+  height: 110px;
+}
+
+.route-admin-tags {
+  flex: 1;
+  min-height: 140px;
+}
+
+.route-admin-prompt {
+  flex: 1;
+  min-height: 240px;
+}
+
+.route-admin-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.route-admin-hint {
+  font-size: 12px;
+  color: #b42318;
+}
+
+.route-admin-hint.ok {
+  color: #067647;
+}
+
+/* ===== 编辑/新增界面 ===== */
+.route-admin-editor-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.route-admin-back {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #475467;
+  background: #f2f4f7;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.route-admin-back:hover {
+  background: #e9edf3;
+  color: #101828;
+}
+
+.route-admin-editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ra-title-text {
+  font-size: 16px;
+  font-weight: 700;
+  color: #101828;
+}
+
+.ra-title-id {
+  font-size: 12px;
+  color: #2456d6;
+  background: #eef3ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.ra-title-sub {
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.route-admin-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: #f2f4f7;
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+
+.route-admin-tab {
+  flex: 1;
+  padding: 9px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #667085;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.route-admin-tab:hover {
+  color: #344054;
+}
+
+.route-admin-tab.active {
+  color: #2456d6;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(16, 24, 40, 0.12);
+}
+
+.ra-tab-ico {
+  margin-right: 4px;
+}
+
+.ra-card {
+  border: 1px solid #e4e7eb;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  background: #ffffff;
+}
+
+.ra-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #344054;
+  margin-bottom: 10px;
+  letter-spacing: 0.02em;
+}
+
+.ra-draft-card {
+  border: 1px dashed #93b4f5;
+  background: linear-gradient(180deg, #f7faff 0%, #ffffff 100%);
+}
+
+.ra-draft-desc {
+  font-size: 12px;
+  color: #667085;
+  margin: 0 0 8px;
+  line-height: 1.6;
+}
+
+.ra-draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.route-admin-uploadbtn {
+  align-self: flex-start;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #175cd3;
+  background: #ffffff;
+  border: 1px solid #b2ccff;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.route-admin-uploadbtn:hover:not(:disabled) {
+  background: #eff4ff;
+}
+
+.route-admin-uploadbtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.route-admin-genbtn {
+  align-self: flex-start;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #ffffff;
+  background: linear-gradient(135deg, #4f7cff 0%, #2456d6 100%);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(36, 86, 214, 0.3);
+}
+
+.route-admin-genbtn:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+
+.route-admin-genbtn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.route-admin-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 14px;
+}
+
+.route-admin-tags-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px;
+  background: #f7f9fc;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  max-height: 110px;
+  overflow-y: auto;
+}
+
+.route-admin-tags-empty {
+  font-size: 12px;
+  color: #98a2b3;
+}
+
+.route-admin-prompt-help {
+  margin-bottom: 8px;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+}
+
+.route-admin-prompt-help summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.route-admin-prompt-help ol {
+  margin: 6px 0 2px 18px;
+  font-size: 12px;
+  color: #475467;
+  line-height: 1.7;
+}
+
+.route-admin-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.route-admin-save {
+  padding: 9px 22px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  background: linear-gradient(135deg, #4f7cff 0%, #2456d6 100%);
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(36, 86, 214, 0.3);
+}
+
+.route-admin-save:hover {
+  filter: brightness(1.06);
+}
+
+.route-admin-cancel {
+  padding: 9px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475467;
+  background: #ffffff;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.route-admin-cancel:hover {
+  background: #f9fafb;
+}
+
+/* 校验器联动规则可编辑卡片（可折叠） */
+.ra-vrule-card {
+  margin-bottom: 14px;
+  background: #fbfcfe;
+  padding: 0;
+}
+
+.ra-vrule-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ra-vrule-arrow {
+  font-size: 10px;
+  color: #667085;
+  transition: transform 0.15s ease;
+}
+
+.ra-vrule-card.open .ra-vrule-arrow {
+  transform: rotate(90deg);
+}
+
+.ra-vrule-toggle-text {
+  font-size: 13px;
+  font-weight: 700;
+  color: #344054;
+}
+
+.ra-vrule-toggle-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #98a2b3;
+}
+
+.ra-vrule-body {
+  padding: 0 14px 14px;
+  border-top: 1px solid #eef1f5;
+}
+
+.ra-vrule-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.ra-vrule-row label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #344054;
+  margin-bottom: 4px;
+}
+
+.ra-vrule-hint {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #98a2b3;
+}
+
+.ra-vrule-input {
+  min-height: 84px;
+  font-size: 12px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.ra-vrule-readonly {
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: #f2f4f7;
+  border-radius: 8px;
+}
+
+.ra-vrule-readonly p {
+  margin: 4px 0;
+  font-size: 11px;
+  color: #667085;
+  line-height: 1.6;
+}
+
+.ra-vrule-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.route-admin-linkage {
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+}
+
+.route-admin-linkage summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.route-admin-linkage-body p {
+  margin: 6px 0;
+  font-size: 12px;
+  color: #475467;
+  line-height: 1.6;
+}
+
+.route-admin-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: #ffffff;
+}
+
+.route-admin-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.route-admin-item-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #101828;
+}
+
+.route-admin-item-id {
+  font-size: 12px;
+  color: #667085;
+  background: #f2f4f7;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.route-admin-item-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.route-admin-item-badge.on {
+  color: #067647;
+  background: #ecfdf3;
+}
+
+.route-admin-item-badge.off {
+  color: #b42318;
+  background: #fef3f2;
+}
+
+.route-admin-item-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.route-admin-item-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #667085;
+}
+
+.route-admin-form-row {
+  margin-bottom: 10px;
+}
+
+.route-admin-form-row label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #344054;
+  margin-bottom: 4px;
+}
+
+.route-admin-tags {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.route-admin-prompt {
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.route-admin-ref {
+  font-size: 12px;
+}
+
 .report-sections {
   padding: 20px;
 }
@@ -5693,12 +6327,12 @@ body {
   color: #ffffff;
 }
 
+/* 追问卡片：编号徽标 + 左侧蓝色强调条的白卡堆叠，替代旧黄色嵌套框 */
 .report-chat-questions {
-  margin-top: 12px;
-  padding: 12px;
-  background: #fff9e6;
-  border: 1px solid #ffe7a3;
-  border-radius: 8px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .report-chat-time {
@@ -5709,21 +6343,69 @@ body {
 }
 
 .report-chat-question-item {
-  padding: 8px 10px;
-  margin-bottom: 6px;
+  padding: 10px 12px;
   background: #ffffff;
-  border: 1px solid #ffe7a3;
-  border-radius: 6px;
+  border: 1px solid #e4e7eb;
+  border-left: 3px solid #2456d6;
+  border-radius: 8px;
   font-size: 12px;
   color: #667085;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
 }
 
-.report-chat-question-item:last-child {
-  margin-bottom: 0;
+.report-q-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.report-q-index {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #2456d6;
+  color: #ffffff;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.report-q-multi {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  font-size: 10px;
+  color: #7a5af8;
+  background: #f3efff;
+  border: 1px solid #ddd1ff;
+  border-radius: 8px;
 }
 
 .report-chat-question-item strong {
-  color: #344054;
+  color: #1d2939;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* 已答复态：整组追问灰化禁点，保留已选值供回溯 */
+.report-chat-questions.answered {
+  position: relative;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.report-q-answered-tag {
+  position: absolute;
+  top: -8px;
+  right: 8px;
+  padding: 1px 8px;
+  font-size: 10px;
+  color: #667085;
+  background: #f2f4f7;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
 }
 
 /* 输入区域 */
@@ -5766,6 +6448,15 @@ body {
   color: #2456d6;
 }
 
+/* 胶囊选中态：高亮表示已插入输入框，再点可撤销（须置于 hover 之后以覆盖 hover） */
+.report-quick-tag.selected,
+.report-quick-tag.selected:hover {
+  background: #2456d6;
+  border-color: #2456d6;
+  color: #ffffff;
+  font-weight: 500;
+}
+
 /* 导出格式菜单 */
 .report-export-menu {
   position: absolute;
@@ -5802,17 +6493,18 @@ body {
 .report-question-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 24px;
 }
 
 .report-question-option-btn {
-  padding: 3px 10px;
+  padding: 4px 12px;
   font-size: 12px;
   color: #2456d6;
-  background: #eef4ff;
-  border: 1px solid #b9ccf7;
-  border-radius: 12px;
+  background: #f5f8ff;
+  border: 1px solid #c7d7fb;
+  border-radius: 14px;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -5880,6 +6572,25 @@ body {
 .report-send-btn:disabled {
   background: #d0d5dd;
   cursor: not-allowed;
+}
+
+/* 停止生成按钮：流式期间替换发送按钮位置 */
+.report-stop-btn {
+  padding: 10px 20px;
+  background: #ffffff;
+  color: #d92d20;
+  border: 1px solid #fda29b;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  align-self: flex-end;
+}
+
+.report-stop-btn:hover {
+  background: #fef3f2;
+  border-color: #f97066;
 }
 
 /* 右侧工具栏 */

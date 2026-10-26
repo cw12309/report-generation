@@ -6195,6 +6195,15 @@ async function initReportWorkbench() {
   document.getElementById("routeAdminClose")?.addEventListener("click", closeRouteAdmin);
   document.getElementById("routeAdminNewBtn")?.addEventListener("click", () => openRouteEditor(null));
 
+  // 报告模板库管理 + 收藏
+  document.getElementById("reportTemplateAdminBtn")?.addEventListener("click", openTemplateAdmin);
+  document.getElementById("templateAdminClose")?.addEventListener("click", closeTemplateAdmin);
+  document.getElementById("templateAdminNewBtn")?.addEventListener("click", () => openTemplateEditor(null));
+  document.getElementById("reportFavoriteBtn")?.addEventListener("click", favoriteCurrentReport);
+  document.getElementById("favoriteClose")?.addEventListener("click", closeFavoritePanel);
+  document.getElementById("fvCancel")?.addEventListener("click", closeFavoritePanel);
+  document.getElementById("fvSave")?.addEventListener("click", submitFavorite);
+
   // 复制按钮事件委托
   document.addEventListener("click", (e) => {
     if (e.target.classList.contains("report-copy-btn")) {
@@ -7575,4 +7584,299 @@ function exportCurrentReport() {
   a.download = `报告_${currentReportSession.route_name}_${Date.now()}.md`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ===== 报告模板库管理（收藏/编辑/启停/删除；启用模板在生成时自动注入为范例参照） =====
+let templateAdminCache = { templates: [] };
+
+function setTemplateAdminHint(text, ok = false) {
+  const el = document.getElementById("templateAdminHint");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.color = ok ? "#00a854" : "#d92d20";
+}
+
+async function openTemplateAdmin() {
+  const panel = document.getElementById("templateAdminPanel");
+  if (!panel) return;
+  panel.style.display = "flex";
+  setTemplateAdminHint("加载中…");
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/templates?t=${Date.now()}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    templateAdminCache = await resp.json();
+    renderTemplateAdminList();
+    setTemplateAdminHint("");
+  } catch (e) {
+    console.error("加载模板库失败:", e);
+    setTemplateAdminHint("加载失败: " + e.message);
+  }
+}
+
+function closeTemplateAdmin() {
+  const panel = document.getElementById("templateAdminPanel");
+  if (panel) panel.style.display = "none";
+  const editor = document.getElementById("templateAdminEditor");
+  if (editor) editor.style.display = "none";
+}
+
+function renderTemplateAdminList() {
+  const list = document.getElementById("templateAdminList");
+  const editor = document.getElementById("templateAdminEditor");
+  if (!list) return;
+  list.style.display = "block";
+  if (editor) editor.style.display = "none";
+
+  const tpls = templateAdminCache.templates || [];
+  const routeName = (rid) => (reportRoutesCache.find((r) => r.id === rid) || {}).name || rid;
+  if (!tpls.length) {
+    list.innerHTML = `<div class="ra-empty">暂无模板。可在报告页点 ⭐收藏 当前优秀报告，或点下方「＋ 新增模板」手工录入；启用后同类报告生成时自动作为范例参照注入。</div>`;
+    return;
+  }
+  list.innerHTML = tpls
+    .map((t) => {
+      const enabled = t.enabled !== false;
+      return `
+      <div class="route-admin-item" data-tpl-id="${escapeHtml(t.id)}">
+        <div class="route-admin-item-head">
+          <span class="route-admin-item-name">${escapeHtml(t.name)}</span>
+          <code class="route-admin-item-id">${escapeHtml(t.route_id)} · ${escapeHtml(routeName(t.route_id))}</code>
+          <span class="route-admin-item-badge ${enabled ? "on" : "off"}">${enabled ? "已启用" : "已停用"}</span>
+          <span class="ra-tpl-src">${escapeHtml(t.source === "session" ? "收藏" : "手工")}</span>
+          <span class="route-admin-item-actions">
+            <button class="btn btn-sm" data-act="edit">编辑</button>
+            <button class="btn btn-sm" data-act="toggle">${enabled ? "停用" : "启用"}</button>
+            <button class="btn btn-sm btn-danger" data-act="del">删除</button>
+          </span>
+        </div>
+        <div class="route-admin-item-meta">
+          标签：${(t.tags || []).map(escapeHtml).join("、") || "—"} ｜ 命中词：${(t.match_keywords || []).map(escapeHtml).join("、") || "—"} ｜ 引用 ${t.usage_count || 0} 次 ｜ 质量分 ${t.quality_score || 5}
+        </div>
+        <div class="ra-tpl-preview">
+          <div class="ra-tpl-preview-row"><span>所见</span>${escapeHtml((t.imaging_findings || "").split("\n")[0] || "")}</div>
+          <div class="ra-tpl-preview-row"><span>诊断</span>${escapeHtml((t.imaging_diagnosis || "").split("\n")[0] || "")}</div>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  list.querySelectorAll(".route-admin-item [data-act]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const item = e.target.closest(".route-admin-item");
+      const tid = item?.dataset.tplId;
+      const act = btn.dataset.act;
+      if (act === "edit") {
+        openTemplateEditor((templateAdminCache.templates || []).find((x) => x.id === tid));
+      } else if (act === "toggle") {
+        try {
+          setTemplateAdminHint("切换中…");
+          const resp = await fetch(`/api/report-workbench/admin/templates/${encodeURIComponent(tid)}/toggle`, { method: "POST" });
+          if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+          await openTemplateAdmin();
+          setTemplateAdminHint("已切换启停状态", true);
+        } catch (err) {
+          setTemplateAdminHint("操作失败: " + err.message);
+        }
+      } else if (act === "del") {
+        if (!confirm("确认删除该模板？删除后不再参与生成注入。")) return;
+        try {
+          const resp = await fetch(`/api/report-workbench/admin/templates/${encodeURIComponent(tid)}`, { method: "DELETE" });
+          if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+          await openTemplateAdmin();
+          setTemplateAdminHint("模板已删除", true);
+        } catch (err) {
+          setTemplateAdminHint("删除失败: " + err.message);
+        }
+      }
+    });
+  });
+}
+
+function openTemplateEditor(tpl) {
+  const list = document.getElementById("templateAdminList");
+  const editor = document.getElementById("templateAdminEditor");
+  if (!editor) return;
+  if (list) list.style.display = "none";
+  editor.style.display = "block";
+  const isNew = !tpl;
+  const t = tpl || { id: "", name: "", route_id: currentReportSession?.route_id || "", tags: [], match_keywords: [], imaging_findings: "", imaging_diagnosis: "", enabled: true, quality_score: 5 };
+  const routeOptions = (reportRoutesCache.length ? reportRoutesCache : [{ id: t.route_id, name: t.route_id }])
+    .map((r) => `<option value="${escapeHtml(r.id)}" ${r.id === t.route_id ? "selected" : ""}>${escapeHtml(r.name)}</option>`)
+    .join("");
+  editor.innerHTML = `
+    <div class="route-admin-form">
+      <div class="route-admin-editor-top">
+        <button type="button" class="route-admin-back" id="taBack">← 返回列表</button>
+        <div class="route-admin-editor-title">
+          <span class="ra-title-text">${isNew ? "新增模板" : "编辑模板"}</span>
+          ${isNew ? "" : `<code class="ra-title-id">${escapeHtml(t.id)}</code>`}
+          <span class="ra-title-sub">${isNew ? "入库前自动跑范文结构校验" : "保存后立即对生成生效"}</span>
+        </div>
+      </div>
+      <div class="ra-card">
+        <div class="route-admin-form-grid">
+          <div class="route-admin-form-row">
+            <label>模板名称</label>
+            <input class="config-input" id="taName" value="${escapeHtml(t.name)}" placeholder="如 肝血管瘤典型演绎式" />
+          </div>
+          <div class="route-admin-form-row">
+            <label>归属路由</label>
+            <select class="config-input" id="taRoute">${routeOptions}</select>
+          </div>
+        </div>
+        <div class="route-admin-form-grid">
+          <div class="route-admin-form-row">
+            <label>标签（逗号分隔，匹配用）</label>
+            <input class="config-input" id="taTags" value="${escapeHtml((t.tags || []).join("，"))}" placeholder="肝血管瘤、演绎式" />
+          </div>
+          <div class="route-admin-form-row">
+            <label>命中关键词（逗号分隔，输入含词即优先命中）</label>
+            <input class="config-input" id="taKeywords" value="${escapeHtml((t.match_keywords || []).join("，"))}" placeholder="血管瘤、栅栏征" />
+          </div>
+        </div>
+      </div>
+      <div class="ra-card">
+        <div class="ra-card-title">影像所见范文（三行纯文本）</div>
+        <textarea class="config-input route-admin-prompt" id="taFindings" placeholder="第1行 病灶病变&#10;第2行 组织器官基线&#10;第3行 图像区域">${escapeHtml(t.imaging_findings)}</textarea>
+      </div>
+      <div class="ra-card">
+        <div class="ra-card-title">影像诊断范文</div>
+        <textarea class="config-input route-admin-prompt" id="taDiagnosis" placeholder="演绎式单段 / 归纳式三行">${escapeHtml(t.imaging_diagnosis)}</textarea>
+      </div>
+      <div class="ra-card ra-tpl-actions">
+        <label class="ra-tpl-enabled"><input type="checkbox" id="taEnabled" ${t.enabled !== false ? "checked" : ""} /> 启用（启用后同类报告生成时自动注入为范例参照）</label>
+        <button class="route-admin-save" id="taSave">💾 保存模板</button>
+      </div>
+    </div>`;
+
+  editor.querySelector("#taBack").addEventListener("click", () => {
+    editor.style.display = "none";
+    if (list) list.style.display = "block";
+  });
+  editor.querySelector("#taSave").addEventListener("click", async () => {
+    const splitCsv = (v) => v.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+    const payload = {
+      name: editor.querySelector("#taName").value.trim(),
+      route_id: editor.querySelector("#taRoute").value,
+      tags: splitCsv(editor.querySelector("#taTags").value),
+      match_keywords: splitCsv(editor.querySelector("#taKeywords").value),
+      imaging_findings: editor.querySelector("#taFindings").value.trim(),
+      imaging_diagnosis: editor.querySelector("#taDiagnosis").value.trim(),
+      enabled: editor.querySelector("#taEnabled").checked,
+      quality_score: t.quality_score || 5,
+      source: t.source || "manual",
+    };
+    setTemplateAdminHint("保存中…");
+    try {
+      const url = isNew
+        ? "/api/report-workbench/admin/templates"
+        : `/api/report-workbench/admin/templates/${encodeURIComponent(t.id)}`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+      await openTemplateAdmin();
+      setTemplateAdminHint("模板已保存并生效", true);
+    } catch (e) {
+      setTemplateAdminHint("保存失败: " + e.message);
+    }
+  });
+}
+
+// 收藏弹窗模板名称自动填充：从影像诊断首句提炼病种摘要，拼路由名前缀
+// 规则：取首行→截首句（。；）→剥离建议/随访子句与枚举前缀→超长按逗号边界截断→重名加序号
+function buildFavoriteName() {
+  const routeName = currentReportSession.route_name || "报告";
+  const diag = ((currentReportSession.report || {}).imaging_diagnosis || "").trim();
+  const fallback = `${routeName}优秀范例_${new Date().toISOString().slice(5, 10)}`;
+  if (!diag) return fallback;
+  let first = diag.split(/\n+/).map((s) => s.trim()).filter(Boolean)[0] || "";
+  first = first.split(/[。；;]/)[0] || first;
+  first = first.replace(/^[\d一二三四五六七八九十]+[\.、\)\]】]\s*/, "");
+  first = first.replace(/[，,]?\s*(建议|推荐|随访|复查请|请结合).*/ , "");
+  first = first.trim();
+  if (!first) return fallback;
+  if (first.length > 26) {
+    const cut = first.slice(0, 26);
+    const idx = Math.max(cut.lastIndexOf("，"), cut.lastIndexOf(","), cut.lastIndexOf("、"));
+    first = idx > 8 ? cut.slice(0, idx) : cut;
+  }
+  let name = `${routeName}·${first}`;
+  const exists = (n) => (templateAdminCache.templates || []).some((t) => t.name === n);
+  if (exists(name)) {
+    let i = 2;
+    while (exists(`${name}_${i}`)) i += 1;
+    name = `${name}_${i}`;
+  }
+  return name;
+}
+
+// 收藏当前报告为模板：弹窗预览所见/诊断并可编辑，确认后入模板库
+async function favoriteCurrentReport() {
+  if (!currentReportSession) {
+    alert("当前没有报告可收藏");
+    return;
+  }
+  const panel = document.getElementById("favoritePanel");
+  if (!panel) return;
+  // 先拉模板列表：用于名称重名去重
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/templates?t=${Date.now()}`);
+    if (resp.ok) templateAdminCache = await resp.json();
+  } catch (e) {
+    console.warn("模板列表加载失败（忽略去重）:", e);
+  }
+  const routes = reportRoutesCache.length ? reportRoutesCache : [{ id: currentReportSession.route_id, name: currentReportSession.route_name || currentReportSession.route_id }];
+  document.getElementById("fvRoute").innerHTML = routes
+    .map((r) => `<option value="${escapeHtml(r.id)}" ${r.id === currentReportSession.route_id ? "selected" : ""}>${escapeHtml(r.name)}</option>`)
+    .join("");
+  document.getElementById("fvName").value = buildFavoriteName();
+  document.getElementById("fvTags").value = "";
+  document.getElementById("fvKeywords").value = "";
+  document.getElementById("fvFindings").value = currentReportSession.report.imaging_findings || "";
+  document.getElementById("fvDiagnosis").value = currentReportSession.report.imaging_diagnosis || "";
+  document.getElementById("fvEnabled").checked = true;
+  setFavoriteHint("");
+  panel.style.display = "flex";
+}
+
+function closeFavoritePanel() {
+  const panel = document.getElementById("favoritePanel");
+  if (panel) panel.style.display = "none";
+}
+
+function setFavoriteHint(text, ok = false) {
+  const el = document.getElementById("favoriteHint");
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.color = ok ? "#00a854" : "#d92d20";
+}
+
+async function submitFavorite() {
+  const splitCsv = (v) => v.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
+  const payload = {
+    name: document.getElementById("fvName").value.trim(),
+    route_id: document.getElementById("fvRoute").value,
+    tags: splitCsv(document.getElementById("fvTags").value),
+    match_keywords: splitCsv(document.getElementById("fvKeywords").value),
+    imaging_findings: document.getElementById("fvFindings").value.trim(),
+    imaging_diagnosis: document.getElementById("fvDiagnosis").value.trim(),
+    enabled: document.getElementById("fvEnabled").checked,
+  };
+  setFavoriteHint("保存中…");
+  try {
+    const resp = await fetch(`/api/report-workbench/sessions/${encodeURIComponent(reportConversationId)}/favorite`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    closeFavoritePanel();
+    setTemplateAdminHint("已加入模板库" + (payload.enabled ? "并启用" : "（停用状态）"), true);
+    openTemplateAdmin();
+  } catch (e) {
+    setFavoriteHint("收藏失败: " + e.message);
+  }
 }

@@ -615,6 +615,95 @@ async def admin_create_route(payload: dict):
     return {"success": True, "route_id": route.id}
 
 
+# ===== 报告模板库管理 =====
+
+@router.get("/admin/templates")
+async def admin_list_templates():
+    """模板库全量列表（含禁用模板）"""
+    from . import template_admin
+
+    return {"templates": template_admin.load_templates()}
+
+
+@router.post("/admin/templates")
+async def admin_create_template(payload: dict):
+    """新增模板（手工录入），入库前跑范文结构校验"""
+    from . import template_admin
+
+    payload = dict(payload or {})
+    payload.pop("id", None)
+    errors = template_admin.validate_template_payload(payload, [])
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    tpl = template_admin.upsert_template(payload)
+    return {"success": True, "template_id": tpl["id"]}
+
+
+@router.post("/admin/templates/{template_id}")
+async def admin_update_template(template_id: str, payload: dict):
+    """编辑模板（所见/诊断/标签/名称），保存后立即对生成生效"""
+    from . import template_admin
+
+    payload = dict(payload or {})
+    payload["id"] = template_id
+    errors = template_admin.validate_template_payload(payload, [], allow_same=True)
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    template_admin.upsert_template(payload)
+    return {"success": True}
+
+
+@router.post("/admin/templates/{template_id}/toggle")
+async def admin_toggle_template(template_id: str):
+    """启用/停用模板（停用后不再参与生成注入）"""
+    from . import template_admin
+
+    enabled = template_admin.toggle_template(template_id)
+    if enabled is None:
+        raise HTTPException(status_code=404, detail="模板不存在")
+    return {"success": True, "enabled": enabled}
+
+
+@router.delete("/admin/templates/{template_id}")
+async def admin_delete_template(template_id: str):
+    """删除模板"""
+    from . import template_admin
+
+    if not template_admin.delete_template(template_id):
+        raise HTTPException(status_code=404, detail="模板不存在")
+    return {"success": True}
+
+
+@router.post("/sessions/{conversation_id}/favorite")
+async def admin_favorite_session(conversation_id: str, payload: dict):
+    """收藏当前会话报告为模板候选（默认停用，待医生在模板库确认启用）"""
+    from . import template_admin
+
+    session = _get_or_restore_session(conversation_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    payload = dict(payload or {})
+    # 医生在确认弹窗中可编辑所见/诊断范文；未提供则取当前会话报告原文
+    findings = str(payload.get("imaging_findings") or "").strip() or session.report.imaging_findings
+    diagnosis = str(payload.get("imaging_diagnosis") or "").strip() or session.report.imaging_diagnosis
+    tpl = {
+        "route_id": payload.get("route_id") or session.route_id,
+        "name": str(payload.get("name") or f"{session.route_name or '报告'}优秀范例").strip(),
+        "tags": payload.get("tags") or [],
+        "match_keywords": payload.get("match_keywords") or [],
+        "imaging_findings": findings,
+        "imaging_diagnosis": diagnosis,
+        "source": "session",
+        "enabled": bool(payload.get("enabled", True)),
+        "quality_score": 5,
+    }
+    errors = template_admin.validate_template_payload(tpl, [])
+    if errors:
+        raise HTTPException(status_code=400, detail="；".join(errors))
+    created = template_admin.upsert_template(tpl)
+    return {"success": True, "template_id": created["id"], "enabled": created.get("enabled", True)}
+
+
 @router.post("/sessions/{conversation_id}/export/word")
 async def export_word(conversation_id: str):
     """导出报告为 Word 文档（.docx），返回文件流"""

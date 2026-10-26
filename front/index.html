@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=71" />
+    <link rel="stylesheet" href="/static/style.css?v=73" />
   </head>
   <body>
     <div class="app">
@@ -282,6 +282,12 @@
                   <button class="report-action-btn" id="reportRouteAdminBtn" title="路由配置管理">
                     🧭<br><span>路由</span>
                   </button>
+                  <button class="report-action-btn" id="reportTemplateAdminBtn" title="报告模板库管理">
+                    📚<br><span>模板</span>
+                  </button>
+                  <button class="report-action-btn" id="reportFavoriteBtn" title="收藏当前报告为模板">
+                    ⭐<br><span>收藏</span>
+                  </button>
                 </aside>
               </div>
             </div>
@@ -301,6 +307,75 @@
             <div class="route-admin-footer">
               <button class="btn btn-sm btn-primary" id="routeAdminNewBtn">＋ 新增路由</button>
               <span class="route-admin-hint" id="routeAdminHint"></span>
+            </div>
+          </div>
+
+          <!-- 报告模板库管理弹窗 -->
+          <div class="route-admin-panel" id="templateAdminPanel" style="display: none">
+            <div class="route-admin-header">
+              <h3>报告模板库管理</h3>
+              <button class="llm-config-close" id="templateAdminClose">✕</button>
+            </div>
+            <div class="route-admin-body" id="templateAdminBody">
+              <div class="route-admin-list" id="templateAdminList"></div>
+              <div class="route-admin-editor" id="templateAdminEditor" style="display: none"></div>
+            </div>
+            <div class="route-admin-footer">
+              <button class="btn btn-sm btn-primary" id="templateAdminNewBtn">＋ 新增模板</button>
+              <span class="route-admin-hint" id="templateAdminHint"></span>
+            </div>
+          </div>
+
+          <!-- 收藏确认弹窗：预览并可编辑所见/诊断范文，确认后入模板库 -->
+          <div class="route-admin-panel" id="favoritePanel" style="display: none">
+            <div class="route-admin-header">
+              <h3>⭐ 收藏为报告模板</h3>
+              <button class="llm-config-close" id="favoriteClose">✕</button>
+            </div>
+            <div class="route-admin-body" id="favoriteBody">
+              <div class="route-admin-form">
+                <p class="ra-fav-desc">以下为当前报告的影像所见与影像诊断，可直接编辑修订；确认后将作为本院优秀范例加入模板库，同类报告生成时自动注入参照。</p>
+                <div class="ra-card">
+                  <div class="route-admin-form-grid">
+                    <div class="route-admin-form-row">
+                      <label>模板名称</label>
+                      <input class="config-input" id="fvName" placeholder="如 腰椎间盘突出典型演绎式" />
+                    </div>
+                    <div class="route-admin-form-row">
+                      <label>归属路由</label>
+                      <select class="config-input" id="fvRoute"></select>
+                    </div>
+                  </div>
+                  <div class="route-admin-form-grid">
+                    <div class="route-admin-form-row">
+                      <label>标签（逗号分隔）</label>
+                      <input class="config-input" id="fvTags" placeholder="腰椎间盘突出、演绎式" />
+                    </div>
+                    <div class="route-admin-form-row">
+                      <label>命中关键词（逗号分隔，输入含词优先参照）</label>
+                      <input class="config-input" id="fvKeywords" placeholder="椎间盘突出、突出" />
+                    </div>
+                  </div>
+                </div>
+                <div class="ra-card">
+                  <div class="ra-card-title">影像所见（可编辑）</div>
+                  <textarea class="config-input route-admin-prompt" id="fvFindings"></textarea>
+                </div>
+                <div class="ra-card">
+                  <div class="ra-card-title">影像诊断（可编辑）</div>
+                  <textarea class="config-input route-admin-prompt" id="fvDiagnosis"></textarea>
+                </div>
+                <div class="ra-card ra-tpl-actions">
+                  <label class="ra-tpl-enabled"><input type="checkbox" id="fvEnabled" checked /> 启用（加入后立即参与生成注入）</label>
+                  <span>
+                    <button class="route-admin-cancel" id="fvCancel">取消</button>
+                    <button class="route-admin-save" id="fvSave">⭐ 确认加入收藏</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="route-admin-footer">
+              <span class="route-admin-hint" id="favoriteHint"></span>
             </div>
           </div>
 
@@ -1863,6 +1938,6 @@ data: [DONE]</code></pre>
       hidden
     ></div>
 
-    <script src="/static/app.js?v=108"></script>
+    <script src="/static/app.js?v=111"></script>
   </body>
 </html>

@@ -1,0 +1,19 @@
+templates:
+- route_id: lumbar_mri
+  name: 腰椎 MRI优秀范例_10-25
+  tags: []
+  match_keywords:
+  - 腰椎退行性病变
+  imaging_findings: '腰4-5椎间盘向后突出，致中央椎管中度狭窄(Lee 2级)，硬膜囊受压，神经根未见明确受压。
+
+    腰椎序列规整，腰骶椎生理曲度正常。其余腰椎椎体骨质形态、骨髓信号未见异常；附件结构完整。其余椎间盘形态、信号正常（Pfirrmann I~II级）。腰4-5节段椎间孔未见明显狭窄，马尾神经走行自然。
+
+    扫描范围内未见异常。'
+  imaging_diagnosis: 腰椎退行性变：腰4-5椎间盘突出，伴中央椎管中度狭窄(Lee 2级)。建议骨科门诊结合临床症状对症处理，6~12个月复查腰椎MRI评估病情。
+  source: session
+  enabled: false
+  quality_score: 5
+  id: tpl_20261026_003106
+  updated_at: '2026-10-26 00:31:06'
+  usage_count: 0
+  created_at: '2026-10-26 00:31:06'

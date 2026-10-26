@@ -299,6 +299,20 @@ class ReportService:
         self.prompt_loader._prompt_cache.clear()
         logger.info(f"路由配置已重载: {len(self.route_resolver.routes)} 个路由")
 
+    def _template_injection(self, route_id: str, doctor_input: str) -> str:
+        """模板库匹配注入：命中启用模板时返回范例章节文本并计数，否则空串"""
+        try:
+            from . import template_admin
+
+            tpl = template_admin.match_template(route_id, doctor_input or "")
+            if not tpl:
+                return ""
+            template_admin.bump_usage(tpl["id"])
+            return template_admin.build_injection_block(tpl)
+        except Exception as e:
+            logger.warning(f"模板库匹配失败（忽略注入）: {e}")
+            return ""
+
     @staticmethod
     def is_report_intent(text: str) -> bool:
         """判断输入是否为报告生成意图（否则走闲聊标准回复）"""
@@ -369,6 +383,11 @@ class ReportService:
             question_round=0,
             operation="generate",
         )
+
+        # 模板库注入：命中本院优秀范例时追加范例章节（风格参照，数值以本次输入为准）
+        injection = self._template_injection(route.id, request.input_text)
+        if injection:
+            system_prompt += injection
 
         # 模板直选线路：医生未输入阅片结论，仅点选模板按钮触发
         template_only = bool(request.route_id) and not (request.input_text or "").strip()
@@ -520,6 +539,11 @@ class ReportService:
             question_round=new_round,
             operation="iterate",
         )
+
+        # 模板库注入：迭代修订同样参照本院优秀范例风格
+        injection = self._template_injection(route.id, request.input_text)
+        if injection:
+            system_prompt += injection
 
         user_prompt = self.prompt_loader.build_user_prompt(
             doctor_input=request.input_text,

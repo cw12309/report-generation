@@ -5978,6 +5978,74 @@ body {
   filter: brightness(1.06);
 }
 
+/* 模板库列表/编辑器补充样式 */
+.ra-empty {
+  padding: 40px 20px;
+  text-align: center;
+  color: #98a2b3;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.ra-tpl-src {
+  padding: 1px 7px;
+  font-size: 10px;
+  color: #7a5af8;
+  background: #f3efff;
+  border: 1px solid #ddd1ff;
+  border-radius: 8px;
+}
+
+.ra-tpl-preview {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #667085;
+}
+
+.ra-tpl-preview-row {
+  display: flex;
+  gap: 8px;
+  line-height: 1.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ra-tpl-preview-row span {
+  flex: 0 0 auto;
+  color: #98a2b3;
+}
+
+.ra-tpl-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ra-tpl-enabled {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #475467;
+  cursor: pointer;
+}
+
+.ra-fav-desc {
+  margin: 0 0 10px 0;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #475467;
+  background: #f5f8ff;
+  border: 1px solid #c7d7fb;
+  border-radius: 8px;
+}
+
 .route-admin-cancel {
   padding: 9px 18px;
   font-size: 13px;

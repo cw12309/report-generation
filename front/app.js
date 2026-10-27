@@ -6252,14 +6252,12 @@ function renderTemplatePicker() {
     return;
   }
   bar.classList.add("template-mode");
-  bar.innerHTML =
-    `<div class="report-template-picker-title">选择检查模板（可先不输入阅片结论；点选后加载对应术语胶囊，发送后生成报告）</div>` +
-    routes
-      .map(
-        (r) =>
-          `<button class="report-template-btn" data-route="${escapeHtml(r.id)}">${escapeHtml(r.name)}</button>`
-      )
-      .join("");
+  bar.innerHTML = routes
+    .map(
+      (r) =>
+        `<button class="report-template-btn" data-route="${escapeHtml(r.id)}">${escapeHtml(r.name)}</button>`
+    )
+    .join("");
   bar.style.display = "flex";
 }
 

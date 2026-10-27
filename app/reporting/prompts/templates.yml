@@ -15,7 +15,7 @@ templates:
   quality_score: 5
   id: tpl_20261026_003106
   updated_at: '2026-10-26 00:31:06'
-  usage_count: 1
+  usage_count: 3
   created_at: '2026-10-26 00:31:06'
 - route_id: cervical_mri
   name: 颈椎 MRI·颈椎退行性变：C5-6椎间盘右侧椎间孔型突出

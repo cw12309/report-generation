@@ -11,9 +11,26 @@ templates:
     扫描范围内未见异常。'
   imaging_diagnosis: 腰椎退行性变：腰4-5椎间盘突出，伴中央椎管中度狭窄(Lee 2级)。建议骨科门诊结合临床症状对症处理，6~12个月复查腰椎MRI评估病情。
   source: session
-  enabled: false
+  enabled: true
   quality_score: 5
   id: tpl_20261026_003106
   updated_at: '2026-10-26 00:31:06'
-  usage_count: 0
+  usage_count: 1
   created_at: '2026-10-26 00:31:06'
+- route_id: cervical_mri
+  name: 颈椎 MRI·颈椎退行性变：C5-6椎间盘右侧椎间孔型突出
+  tags: []
+  match_keywords: []
+  imaging_findings: 'C5-6椎间盘向右侧椎间孔方向突出，硬膜囊受压，颈髓受压伴髓内T2WI高信号；C5-6椎体边缘骨质增生，右侧C5-6椎间孔狭窄。
+
+    颅颈交界及寰枢关节对位正常，颈椎序列规整，生理曲度存在；其余颈椎椎体骨质形态、骨髓信号未见异常，附件结构完整，其余节段椎管前后径正常，其余节段颈髓走行自然。
+
+    扫描范围内颅底、甲状腺、上段胸椎及皮下软组织未见异常。'
+  imaging_diagnosis: 颈椎退行性变：C5-6椎间盘右侧椎间孔型突出，伴颈髓受压及髓内高信号改变。建议脊柱外科门诊结合临床症状评估手术指征，完善颈椎MRI增强扫描或CT评估椎间孔狭窄程度，治疗后3~6个月复查颈椎MRI评估脊髓信号恢复情况。
+  source: session
+  enabled: true
+  quality_score: 5
+  id: tpl_20261026_173331
+  updated_at: '2026-10-26 17:33:31'
+  usage_count: 0
+  created_at: '2026-10-26 17:33:31'

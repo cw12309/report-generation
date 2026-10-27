@@ -198,19 +198,22 @@ def match_template(route_id: str, doctor_input: str, threshold: float = 0.18) ->
     text = doctor_input or ""
     scored: list[tuple[float, dict]] = []
     for t in templates:
-        score = 0.0
+        # 文本证据分：命中关键词/标签 + bigram 相似度；不足阈值直接跳过（先验不得单独触发）
+        base = 0.0
         for kw in (t.get("match_keywords") or []) + (t.get("tags") or []):
             if kw and kw in text:
-                score += 2.0 + len(kw) * 0.1
+                base += 2.0 + len(kw) * 0.1
         sim = _jaccard(_bigrams(text), _bigrams(f"{t.get('imaging_findings', '')} {t.get('imaging_diagnosis', '')}"))
-        score += sim * 3.0
-        # 质量分与使用次数作为微弱先验
-        score += int(t.get("quality_score") or 5) * 0.02 + min(int(t.get("usage_count") or 0), 20) * 0.005
+        base += sim * 3.0
+        if base < threshold:
+            continue
+        # 质量分与使用次数仅作同分排序先验
+        score = base + int(t.get("quality_score") or 5) * 0.02 + min(int(t.get("usage_count") or 0), 20) * 0.005
         scored.append((score, t))
+    if not scored:
+        return None
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best = scored[0]
-    if best_score < threshold:
-        return None
     logger.info(f"模板库命中: {best.get('id')} score={best_score:.2f}")
     return best
 
@@ -223,7 +226,8 @@ def build_injection_block(tpl: dict) -> str:
         "### 本院优秀范例参考（风格与结构参照）\n\n"
         f"以下为本院医生认可的{tpl.get('route_id', '')}优秀报告《{name}》，"
         "生成时请参照其行文风格、三行结构、分级书写与建议句专业度；"
-        "**数值、节段、病灶位置等一律以医生本次输入为准，严禁照抄范例数值**。\n\n"
+        "**数值、节段、病灶位置等一律以医生本次输入为准，严禁照抄范例数值**；"
+        "范式选择（演绎/归纳）、追问设计、章节标题仍以上文路由规则为准，范例仅作风格参照。\n\n"
         "影像所见：\n"
         f"{tpl.get('imaging_findings', '')}\n"
         "影像诊断：\n"

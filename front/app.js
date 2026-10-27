@@ -7627,7 +7627,9 @@ function renderTemplateAdminList() {
   list.style.display = "block";
   if (editor) editor.style.display = "none";
 
-  const tpls = templateAdminCache.templates || [];
+  const tpls = (templateAdminCache.templates || [])
+    .slice()
+    .sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0) || String(b.updated_at || "").localeCompare(String(a.updated_at || "")));
   const routeName = (rid) => (reportRoutesCache.find((r) => r.id === rid) || {}).name || rid;
   if (!tpls.length) {
     list.innerHTML = `<div class="ra-empty">暂无模板。可在报告页点 ⭐收藏 当前优秀报告，或点下方「＋ 新增模板」手工录入；启用后同类报告生成时自动作为范例参照注入。</div>`;
@@ -7636,6 +7638,7 @@ function renderTemplateAdminList() {
   list.innerHTML = tpls
     .map((t) => {
       const enabled = t.enabled !== false;
+      const usage = t.usage_count || 0;
       return `
       <div class="route-admin-item" data-tpl-id="${escapeHtml(t.id)}">
         <div class="route-admin-item-head">
@@ -7643,6 +7646,7 @@ function renderTemplateAdminList() {
           <code class="route-admin-item-id">${escapeHtml(t.route_id)} · ${escapeHtml(routeName(t.route_id))}</code>
           <span class="route-admin-item-badge ${enabled ? "on" : "off"}">${enabled ? "已启用" : "已停用"}</span>
           <span class="ra-tpl-src">${escapeHtml(t.source === "session" ? "收藏" : "手工")}</span>
+          <span class="ra-tpl-usage ${usage > 0 ? "hot" : ""}" title="生成时命中注入次数">📈 引用 ${usage}</span>
           <span class="route-admin-item-actions">
             <button class="btn btn-sm" data-act="edit">编辑</button>
             <button class="btn btn-sm" data-act="toggle">${enabled ? "停用" : "启用"}</button>
@@ -7650,7 +7654,7 @@ function renderTemplateAdminList() {
           </span>
         </div>
         <div class="route-admin-item-meta">
-          标签：${(t.tags || []).map(escapeHtml).join("、") || "—"} ｜ 命中词：${(t.match_keywords || []).map(escapeHtml).join("、") || "—"} ｜ 引用 ${t.usage_count || 0} 次 ｜ 质量分 ${t.quality_score || 5}
+          标签：${(t.tags || []).map(escapeHtml).join("、") || "—"} ｜ 命中词：${(t.match_keywords || []).map(escapeHtml).join("、") || "—"} ｜ 质量分 ${t.quality_score || 5} ｜ 更新 ${escapeHtml(String(t.updated_at || t.created_at || ""))}
         </div>
         <div class="ra-tpl-preview">
           <div class="ra-tpl-preview-row"><span>所见</span>${escapeHtml((t.imaging_findings || "").split("\n")[0] || "")}</div>
@@ -7710,7 +7714,7 @@ function openTemplateEditor(tpl) {
         <div class="route-admin-editor-title">
           <span class="ra-title-text">${isNew ? "新增模板" : "编辑模板"}</span>
           ${isNew ? "" : `<code class="ra-title-id">${escapeHtml(t.id)}</code>`}
-          <span class="ra-title-sub">${isNew ? "入库前自动跑范文结构校验" : "保存后立即对生成生效"}</span>
+          <span class="ra-title-sub">${isNew ? "入库前自动跑范文结构校验" : `保存后立即对生成生效 ｜ 📈 累计引用 ${t.usage_count || 0} 次`}</span>
         </div>
       </div>
       <div class="ra-card">

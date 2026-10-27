@@ -5996,6 +5996,23 @@ body {
   border-radius: 8px;
 }
 
+/* 引用次数徽标：生成命中注入计数，>0 时高亮 */
+.ra-tpl-usage {
+  padding: 1px 7px;
+  font-size: 10px;
+  color: #667085;
+  background: #f2f4f7;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+}
+
+.ra-tpl-usage.hot {
+  color: #b54708;
+  background: #fffaeb;
+  border-color: #fedf89;
+  font-weight: 600;
+}
+
 .ra-tpl-preview {
   margin-top: 6px;
   padding: 6px 10px;

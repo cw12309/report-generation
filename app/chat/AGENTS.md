@@ -263,3 +263,7 @@ server.py (路由注册)
 - 修改 Recovery 白名单或错误分类逻辑后，必须运行 `pytest app/test/test_report_pipeline.py -v` 验证全部 30 个测试
 - 切换 Chat 模型时注意推理模型：`reasoning` 与正文共享 `max_tokens`，预算不足时 `chat_stream()` 会返回空字符串并触发 `REPORT_SCHEMA_INVALID`（报告缺少 results）。诊断时应记录 `finish_reason=length` 与 `completion_tokens`
 - `collect_edit_fact_violations()` 的单位守卫用 `_UNIT_RE` 提取英文单位（mm/cm/HU/ml/%），判断指令授权时必须同时接受英文符号与中文写法（毫米/厘米/毫升），否则"改成3.2×1.8cm"这类合法编辑会被误判为 `EDIT_REPAIR_FAILED`
+
+Template retrieval outcomes: NO_MATCHING_TEMPLATES is a user-facing terminal result, not a schema/internal failure and must not trigger recovery. Missing-modality clarification names the default modality; explicit continuation accepts CT when available, otherwise a modality present in the selected KB metadata. Explicitly supplied modality remains authoritative.
+
+Slow-model streams emit heartbeat events every 15 seconds of silence and fail only after 300 seconds without a real pipeline event. Heartbeats do not reset the idle deadline; public Deployment mapping exposes them as ordinary status events. Browser consumers can ignore heartbeat payloads while keeping the connection alive.

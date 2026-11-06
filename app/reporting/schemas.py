@@ -59,6 +59,8 @@ class ChatMessage(BaseModel):
     role: str = Field(..., description="角色: user/assistant")
     content: str = Field(default="", description="消息内容")
     questions: list[ReportQuestion] = Field(default_factory=list, description="该条助手消息附带的追问列表")
+    template_reference: Optional[dict] = Field(default=None, description="该次生成使用的范例及匹配原因")
+    review: Optional[dict] = Field(default=None, description="报告更新评价卡（采纳/修改/拒绝），记录用户选择")
     created_at: str = Field(default="", description="时间戳")
 
 
@@ -77,6 +79,7 @@ class ReportSession(BaseModel):
     report: ReportContent = Field(default_factory=ReportContent, description="报告内容")
     questions: list[ReportQuestion] = Field(default_factory=list, description="追问列表")
     messages: list[ChatMessage] = Field(default_factory=list, description="对话记录（用户输入与AI回复）")
+    template_reference: Optional[dict] = Field(default=None, description="当前生成版本使用的范例；历史版本见 messages")
     is_dirty: bool = Field(default=False, description="是否有未保存修改")
     elapsed_seconds: float = Field(default=0.0, description="完整生成耗时（秒）")
     created_at: str = Field(..., description="创建时间")
@@ -102,6 +105,13 @@ class IterateRequest(BaseModel):
     language: str = Field(default="zh-CN", description="语言")
     llm_name: str = Field(default="", description="指定使用的模型名称（为空则用全局激活模型）")
     enable_thinking: bool = Field(default=False, description="是否开启模型思考（默认关闭）")
+
+
+class ReviewRequest(BaseModel):
+    """报告更新评价请求：追问达到上限后的每次更新，由用户标记采纳程度"""
+    choice: Literal["adopt", "modify", "reject"] = Field(..., description="采纳/修改/拒绝")
+    message_index: int = Field(..., ge=0, description="评价卡所在的消息下标（messages 数组）")
+    comment: str = Field(default="", description="可选备注（选择修改/拒绝时的说明）")
 
 
 class SaveRequest(BaseModel):

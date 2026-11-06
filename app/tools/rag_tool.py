@@ -304,7 +304,8 @@ def create_rag_search_handler(
                 return json.dumps(
                     {
                         "error": "未检索到相关报告",
-                        "message": "知识库中未找到与您查询相关的报告，请尝试更换查询词或检查部位。",
+                        "error_code": "NO_MATCHING_TEMPLATES",
+                        "message": "当前选中的知识库未检索到匹配模板，请检查知识库是否已构建，并确认检查类型、部位或更换知识库。",
                         "_is_final": False,
                     },
                     ensure_ascii=False,

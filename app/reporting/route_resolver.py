@@ -55,11 +55,13 @@ class RouteResolver:
         self._load_routes()
 
     def _load_routes(self):
-        """加载路由配置"""
+        """加载路由配置（基线 routes.yml + 当前登录用户的个人覆写/新增路由）"""
         try:
             with open(self.config_path, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
-            
+            from . import user_env
+
+            config = user_env.merged_routes(user_env.current_user(), config or {})
             for route_data in config.get("routes", []):
                 route = RouteInfo(**route_data)
                 if route.enabled:

@@ -1,0 +1,24 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync("front/app.js", "utf8");
+const start = source.indexOf("function renderReportTemplateReference(");
+const end = source.indexOf("function updateReportStatus(", start);
+const elements = Object.fromEntries(["reportTemplateReference", "reportTemplateReferenceSummary", "reportTemplateReferenceDetail"].map(id => [id, {style: {}, textContent: "", open: true}]));
+const context = vm.createContext({document: {getElementById: id => elements[id]}});
+vm.runInContext(source.slice(start, end), context);
+const render = context.renderReportTemplateReference;
+render({template_id: "t1", template_name: "<img src=x onerror=alert(1)>", template_version: "abc123", report_version: 2,
+        match_reason: "关键词/标签命中", matched_keywords: ["突出"], match_score: 2.45});
+assert.equal(elements.reportTemplateReference.style.display, "block");
+assert.equal(elements.reportTemplateReference.open, false);
+assert.ok(elements.reportTemplateReferenceSummary.textContent.includes("<img src=x"));
+assert.ok(elements.reportTemplateReferenceDetail.textContent.includes("突出"));
+assert.ok(elements.reportTemplateReferenceDetail.textContent.includes("2.450（非概率）"));
+assert.equal(elements.reportTemplateReferenceSummary.innerHTML, undefined);
+render(null);
+assert.equal(elements.reportTemplateReference.style.display, "none");
+assert.equal(elements.reportTemplateReferenceSummary.textContent, "");
+assert.equal(elements.reportTemplateReferenceDetail.textContent, "");
+render(undefined);
+console.log("Template reference rendering passed");

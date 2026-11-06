@@ -103,6 +103,7 @@ from tools.rag_tool import create_rag_search_handler
 # Report 工作台路由
 try:
     from reporting.router import router as report_router
+    from reporting.auth import router as report_auth_router
     REPORT_WORKBENCH_AVAILABLE = True
 except ImportError:
     REPORT_WORKBENCH_AVAILABLE = False
@@ -112,6 +113,9 @@ except ImportError:
 _ambiguity_cache = {}
 
 logger = logging.getLogger(__name__)
+
+_CHAT_HEARTBEAT_SECONDS = 15.0
+_CHAT_IDLE_TIMEOUT_SECONDS = 300.0
 
 # 从配置加载常量
 COLLECTION_NAME = get_collection_name()
@@ -366,16 +370,18 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     if os.path.isdir(front_dir):
         app.mount("/static", StaticFiles(directory=front_dir), name="static")
 
-    # 注册 Report 工作台路由
+    # 注册 Report 工作台路由（鉴权路由先行，业务路由全量需登录）
     if REPORT_WORKBENCH_AVAILABLE:
+        app.include_router(report_auth_router)
         app.include_router(report_router)
-        logger.info("Report 工作台路由已注册")
+        logger.info("Report 工作台路由已注册（含登录鉴权）")
 
     @app.get("/")
     async def index():
         index_path = os.path.join(front_dir, "index.html")
         if os.path.exists(index_path):
-            return FileResponse(index_path)
+            # 入口 HTML 禁止缓存，确保始终加载最新版本的 app.js/style.css 引用
+            return FileResponse(index_path, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
         return {"message": "影像报告生成Agent v2", "docs": "/docs"}
 
     @app.get("/health", tags=["internal"])
@@ -1092,15 +1098,20 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 await execute()
 
         asyncio.create_task(run())
+        last_event_at = time.monotonic()
         while True:
             try:
-                event = await asyncio.wait_for(event_queue.get(), timeout=120)
+                event = await asyncio.wait_for(event_queue.get(), timeout=min(_CHAT_HEARTBEAT_SECONDS, _CHAT_IDLE_TIMEOUT_SECONDS))
             except asyncio.TimeoutError:
+                idle = time.monotonic() - last_event_at
+                if idle < _CHAT_IDLE_TIMEOUT_SECONDS:
+                    yield request_event("heartbeat", {"message": "模型正在生成报告，请稍候", "idle_seconds": round(idle, 1)})
+                    continue
                 timeout_event = request_event("error", {
                     "code": "CHAT_TIMEOUT",
                     "message": "等待 Agent 响应超时",
                 })
-                done_event = request_event("done", {"total_time": 120.0})
+                done_event = request_event("done", {"total_time": round(idle, 1)})
                 observability_store.record_pipeline_event(
                     trace_request_id,
                     "error",
@@ -1118,6 +1129,7 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
                 break
             if event is stream_finished:
                 break
+            last_event_at = time.monotonic()
             yield event
 
     def _sse_response(event_stream) -> StreamingResponse:

@@ -1474,3 +1474,49 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         args = [__file__] + sys.argv[1:]
     sys.exit(pytest.main(args))
+
+def test_empty_template_search_is_actionable_without_recovery(monkeypatch):
+    result, calls, _registry, stm, _tracker, _last, events = _run_pipeline_with_report_result(
+        monkeypatch,
+        ToolResult(content=json.dumps({
+            "error": "未检索到相关报告",
+            "error_code": "NO_MATCHING_TEMPLATES",
+            "message": "当前选中的知识库未检索到匹配模板，请确认已构建。"
+        }), is_final=False),
+        tool_name="rag_search",
+    )
+    assert len(calls) == 1
+    assert "未检索到匹配模板" in result
+    assert any(e["type"] == "error" and e["code"] == "NO_MATCHING_TEMPLATES" for e in events)
+    assert not any(e.get("code") == "UNKNOWN_TOOL_ERROR" for e in events)
+
+
+@pytest.mark.parametrize("follow,modalities,expected", [
+    ("继续", {"CT": {}, "MR": {}}, "CT"),
+    ("继续", {"MR": {}}, "MR"),
+    ("CT", {"MR": {}}, "CT"),
+])
+def test_modality_clarification_then_generate(monkeypatch, follow, modalities, expected):
+    registry = _FakeRegistry(ToolResult(content=serialize_report(BASE_REPORT), is_final=True), tool_name="rag_search")
+    async def chat(*args, **kwargs):
+        return "", [{"id":"rag", "name":"rag_search", "arguments":{"query":"脑梗"}}]
+    monkeypatch.setattr(pipeline_module, "chat_with_tools", chat)
+    monkeypatch.setattr(pipeline_module, "needs_rewrite", lambda q: False)
+    monkeypatch.setattr(pipeline_module, "MemoryRetriever", _FakeRetriever)
+    monkeypatch.setattr(pipeline_module, "_build_tool_registry", lambda *a, **k: registry)
+    tracker, stm, last, events = EntityTracker(), _FakeSTM(), [""], []
+    def emit(kind, data):
+        events.append({"type":kind, **data})
+    async def run():
+        first = await pipeline_module.run_pipeline("脑梗","clarification-test",stm,tracker,None,last,emit,
+            knowledge_bases=[{"metadata_tree":{"检查类型":modalities}}])
+        assert "未指定检查类型" in first
+        assert "默认检查类型（" in first
+        assert not last[0]
+        assert not any(e["type"] == "error" for e in events)
+        await pipeline_module.run_pipeline(follow,"clarification-test",stm,tracker,None,last,emit,
+            knowledge_bases=[{"metadata_tree":{"检查类型":modalities}}])
+    asyncio.run(run())
+    assert tracker.slots["modality"] == expected
+    assert last[0]
+    assert any(e["type"] == "report" for e in events)

@@ -274,6 +274,65 @@ def get_retrieval_index_config() -> dict:
         "hnsw_ef_construction": _resolve("retrieval.hnsw_ef_construction", 256),
     }
 
+# 模型上下文窗口估计表（tokens）：按模型名子串匹配，条目内 context_window 字段可精确覆盖
+_DEFAULT_CONTEXT_WINDOWS = [
+    ("max", 131072),
+    ("32b", 32768),
+    ("27b", 32768),
+    ("14b", 32768),
+    ("8b", 32768),
+    ("7b", 32768),
+]
+
+
+def get_llm_context_window(name: str = "") -> int:
+    """返回指定模型（空=当前激活模型）的上下文窗口 token 数。
+
+    优先读 llms 条目内的 context_window 字段；否则按模型名子串估计；兜底 32768。
+    """
+    entry = get_llm_entry_by_name(name) or {}
+    if entry.get("context_window"):
+        return int(entry["context_window"])
+    model = str(entry.get("model") or get_llm_model()).lower()
+    for pat, win in _DEFAULT_CONTEXT_WINDOWS:
+        if pat in model:
+            return win
+    return 32768
+
+
+def get_kb_style_reference_config() -> dict:
+    """报告生成知识库风格参照开关与预算（config.yml reporting.kb_style_reference）"""
+    return {
+        "enabled": bool(_resolve("reporting.kb_style_reference.enabled", True)),
+        "top_k": int(_resolve("reporting.kb_style_reference.top_k", 3)),
+        "max_chars": int(_resolve("reporting.kb_style_reference.max_chars", 2500)),
+    }
+
+
+def get_route_draft_context_config(llm_name: str = "") -> dict:
+    """AI 草稿生成上下文预算（字符）：上传文档/联网检索/最终注入三级上限。
+
+    config.yml 中值 <=0 表示 auto：按所选模型上下文窗口派生
+    （final = window*0.55 - 10000 指令预留；doc = final；web = final/2），
+    即默认吃满模型可用上下文、实际内容不足时自然用不到那么多。
+    """
+    cfg = {
+        "doc_max_chars": int(_resolve("route_draft.doc_max_chars", 0)),
+        "web_search_max_chars": int(_resolve("route_draft.web_search_max_chars", 0)),
+        "final_ref_max_chars": int(_resolve("route_draft.final_ref_max_chars", 0)),
+    }
+    if all(v > 0 for v in cfg.values()):
+        return cfg
+    window = get_llm_context_window(llm_name)
+    final = max(8000, int(window * 0.55) - 10000)
+    derived = {
+        "doc_max_chars": final,
+        "web_search_max_chars": max(6000, final // 2),
+        "final_ref_max_chars": final,
+    }
+    return {k: (cfg[k] if cfg[k] > 0 else derived[k]) for k in derived}
+
+
 def get_rag_top_k() -> int:
     return _resolve("retrieval.rag_top_k", 10)
 

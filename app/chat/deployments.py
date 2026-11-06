@@ -86,7 +86,7 @@ def map_public_event(
     knowledge_bases: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[dict[str, Any]]:
     """Map internal pipeline events to the stable public SSE contract."""
-    if event_type == "status":
+    if event_type in {"status", "heartbeat"}:
         message = str(data.get("message") or "正在处理请求")
         lowered = message.lower()
         if "检索" in message or "search" in lowered:

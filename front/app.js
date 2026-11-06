@@ -370,6 +370,7 @@ sidebarBtns.forEach((btn) => {
       eval: "pageEval",
       config: "pageConfig",
       monitor: "pageMonitor",
+      insights: "pageInsights",
     };
     const target = document.getElementById(pageMap[page] || "pageWorkspace");
     if (target) target.classList.add("active");
@@ -392,6 +393,9 @@ sidebarBtns.forEach((btn) => {
       activateMonitorTab(monitorActiveTab);
     } else {
       stopMonitorLogStream();
+    }
+    if (page === "insights") {
+      loadInsights();
     }
   });
 });
@@ -440,6 +444,13 @@ document.addEventListener("DOMContentLoaded", function () {
     tab.addEventListener("click", () => {
       switchWorkspaceTab(tab.dataset.workspaceTab);
     });
+  });
+  // 登录门禁：先探会话，未登录停留在登录层，不初始化工作台
+  initAuthGate().then((user) => {
+    if (!user) return;
+    // 首屏即初始化默认选中的工作台页签（如"基于规则"），
+    // 否则默认页签无点击事件、initReportWorkbench 不执行，导致历史/按钮无响应
+    switchWorkspaceTab(workspaceActiveTab);
   });
 });
 
@@ -1330,7 +1341,7 @@ async function loadEvalDataset() {
 }
 
 async function clearEvalDataset() {
-  if (!confirm("确定要清空所有测试用例吗？此操作不可恢复！")) return;
+  if (!(await uiConfirm("确定要清空所有测试用例吗？此操作不可恢复！", { danger: true, title: "清空测试集" }))) return;
   if (btnClearEvalDataset) btnClearEvalDataset.disabled = true;
   try {
     const response = await fetch(`${API_BASE}/eval/dataset`, {
@@ -1355,7 +1366,7 @@ async function clearEvalDataset() {
 }
 
 async function deleteEvalCase(chunkId, button) {
-  if (!chunkId || !confirm("确定删除这条用例吗？")) return;
+  if (!chunkId || !(await uiConfirm("确定删除这条用例吗？", { danger: true, title: "删除用例" }))) return;
   if (button) button.disabled = true;
   try {
     const response = await fetch(
@@ -2022,7 +2033,7 @@ async function startKnowledgeBaseBuild(kbId) {
 }
 
 async function deleteKnowledgeBase(kbId) {
-  if (!confirm("确定删除该知识库及其 Milvus 数据吗？")) return;
+  if (!(await uiConfirm("确定删除该知识库及其 Milvus 数据吗？", { danger: true, title: "删除知识库" }))) return;
   try {
     const resp = await fetch(`${API_BASE}/kb/${encodeURIComponent(kbId)}`, {
       method: "DELETE",
@@ -2057,13 +2068,14 @@ function setKBBtnsDisabled(disabled) {
 async function runKBBuild(rebuild) {
   // 全量重建需要确认
   if (rebuild) {
-    const confirmed = confirm(
+    const confirmed = await uiConfirm(
       "全量重建将执行以下操作：\n\n" +
         "1. 清空所有已生成的切片文件\n" +
         "2. 重新对 xlsx 文件进行切片\n" +
         "3. 删除向量数据库中的所有数据\n" +
         "4. 重新向量化并入库\n\n" +
         "此操作不可逆，是否继续？",
+      { danger: true, title: "全量重建确认", okText: "继续重建" }
     );
     if (!confirmed) {
       return;
@@ -5684,13 +5696,13 @@ async function viewSessionDetail(sessionId) {
 
     sessionDetailModal.style.display = "flex";
   } catch (e) {
-    alert(`加载会话详情失败: ${e.message}`);
+    showAlert(`加载会话详情失败: ${e.message}`, { title: "加载失败", iconClass: "danger", icon: "!" });
   }
 }
 
 // 删除会话
 async function deleteSession(sessionId) {
-  if (!confirm(`确定要删除会话 ${sessionId} 吗？此操作不可恢复。`)) {
+  if (!(await uiConfirm(`确定要删除会话 ${sessionId} 吗？此操作不可恢复。`, { danger: true, title: "删除会话" }))) {
     return;
   }
 
@@ -5703,7 +5715,7 @@ async function deleteSession(sessionId) {
     );
     await loadSessionsList();
   } catch (e) {
-    alert(`删除会话失败: ${e.message}`);
+    showAlert(`删除会话失败: ${e.message}`, { title: "删除失败", iconClass: "danger", icon: "!" });
   }
 }
 
@@ -5793,7 +5805,8 @@ let reportStoppedByUser = false;  // 用户手动停止标记（抑制 AbortErro
 
 // ===== 报告工作台模型选择 =====
 let reportModels = [];       // [{name, base_url, model}]
-let reportSelectedModel = ""; // 选中的模型 name（空=全局激活模型）
+let reportSelectedModel = ""; // 报告模型 name（报告生成/迭代使用；空=全局激活模型）
+let routeSelectedModel = "";  // 路由模型 name（新建路由 AI 草稿使用；空=全局激活模型）
 let reportRoutesCache = []; // 路由列表缓存（含 quick_tags）
 let reportPendingRouteId = ""; // 模板直选：已选定但尚未发送生成的路由ID
 
@@ -5837,6 +5850,12 @@ async function loadReportModels() {
     } else {
       reportSelectedModel = data.active || (reportModels[0]?.name || "");
     }
+    const savedRoute = localStorage.getItem("route_selected_model") || "";
+    if (savedRoute && reportModels.some((m) => m.name === savedRoute)) {
+      routeSelectedModel = savedRoute;
+    } else {
+      routeSelectedModel = data.active || (reportModels[0]?.name || "");
+    }
     renderReportModelMenu();
   } catch (e) {
     console.error("加载模型列表失败:", e);
@@ -5844,8 +5863,7 @@ async function loadReportModels() {
 }
 
 function renderReportModelMenu() {
-  const list = document.getElementById("reportModelList");
-  // 按钮上显示当前选中的模型名 + 思考标记
+  // 按钮上显示当前选中的报告模型名 + 思考标记
   const btnLabel = document.querySelector("#reportModelBtn span");
   if (btnLabel) {
     const selected = reportModels.find((m) => m.name === reportSelectedModel);
@@ -5854,17 +5872,19 @@ function renderReportModelMenu() {
     if (selected && isReportThinkingEnabled(selected.name)) label += " ·思";
     btnLabel.textContent = label;
     btnLabel.title = selected
-      ? `${selected.name} (${selected.model})${isReportThinkingEnabled(selected.name) ? " — 思考模式已开启" : ""}`
-      : "选择生成模型";
+      ? `报告模型: ${selected.name} (${selected.model})${isReportThinkingEnabled(selected.name) ? " — 思考模式已开启" : ""}`
+      : "选择报告模型与路由模型";
   }
-  if (!list) return;
 
-  list.innerHTML =
-    reportModels
-      .map((m) => {
-        const on = isReportThinkingEnabled(m.name);
-        const cached = reportThinkingTestCache[m.name];
-        return `
+  // 报告模型区：完整行（含思考开关/实测）
+  const reportList = document.getElementById("reportModelList");
+  if (reportList) {
+    reportList.innerHTML =
+      reportModels
+        .map((m) => {
+          const on = isReportThinkingEnabled(m.name);
+          const cached = reportThinkingTestCache[m.name];
+          return `
       <div class="report-model-row" data-model-name="${escapeHtml(m.name)}">
         <div class="report-model-main">
           <button class="report-model-item ${m.name === reportSelectedModel ? "active" : ""}" data-model-name="${escapeHtml(m.name)}">
@@ -5881,15 +5901,40 @@ function renderReportModelMenu() {
         </div>
         <div class="report-think-result ${cached ? cached.mode : ""}" data-model-name="${escapeHtml(m.name)}" style="${cached ? "" : "display:none"}">${cached ? escapeHtml(cached.message + (cached.detail || "")) : ""}</div>
       </div>`;
-      })
-      .join("") +
-    `<button class="report-think-test-all" id="reportThinkTestAll">实测全部模型的思考开关</button>`;
+        })
+        .join("") +
+      `<button class="report-think-test-all" id="reportThinkTestAll">实测全部模型的思考开关</button>`;
+    bindReportModelListEvents(reportList, "report");
+  }
 
+  // 路由模型区：仅选择（草稿生成固定关闭思考，无需思考开关/实测）
+  const routeList = document.getElementById("routeModelList");
+  if (routeList) {
+    routeList.innerHTML = reportModels
+      .map(
+        (m) => `
+      <div class="report-model-row" data-model-name="${escapeHtml(m.name)}">
+        <div class="report-model-main">
+          <button class="report-model-item ${m.name === routeSelectedModel ? "active" : ""}" data-model-name="${escapeHtml(m.name)}">
+            <span class="model-dot"></span>
+            <span class="model-name" title="${escapeHtml(m.model)}">${escapeHtml(m.name)}</span>
+          </button>
+        </div>
+      </div>`
+      )
+      .join("");
+    bindReportModelListEvents(routeList, "route");
+  }
+}
+
+/** 绑定模型选择/思考开关/实测事件。scope: report=报告模型区, route=路由模型区 */
+function bindReportModelListEvents(list, scope) {
   // 选择模型（探活后切换）
   list.querySelectorAll(".report-model-item").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const name = btn.dataset.modelName;
-      if (name === reportSelectedModel) {
+      const current = scope === "route" ? routeSelectedModel : reportSelectedModel;
+      if (name === current) {
         document.getElementById("reportModelMenu").style.display = "none";
         return;
       }
@@ -5918,15 +5963,25 @@ function renderReportModelMenu() {
       btn.disabled = false;
       nameEl.textContent = oldText;
       if (!ok) {
-        alert(`模型「${name}」无法响应：${message}\n请选择其他模型。`);
+        showAlert(`模型「${name}」无法响应：${message}\n请选择其他模型。`, { title: "模型不可用", iconClass: "danger", icon: "!" });
         return;
       }
-      reportSelectedModel = name;
-      localStorage.setItem("report_selected_model", name);
+      if (scope === "route") {
+        routeSelectedModel = name;
+        const routeEditor = document.getElementById("routeAdminEditor");
+        if (routeEditor?.querySelector("#raRef")) loadRouteReferenceLimits(routeEditor);
+        localStorage.setItem("route_selected_model", name);
+      } else {
+        reportSelectedModel = name;
+        localStorage.setItem("report_selected_model", name);
+      }
       renderReportModelMenu();
       document.getElementById("reportModelMenu").style.display = "none";
     });
   });
+
+  // 思考开关/实测仅报告模型区提供
+  if (scope !== "report") return;
 
   // 单模型思考开关
   list.querySelectorAll(".report-think-switch input").forEach((input) => {
@@ -5943,9 +5998,10 @@ function renderReportModelMenu() {
           input.disabled = false;
         }
         if (cached && cached.mode === "content_mixed") {
-          const go = confirm(
+          const go = await uiConfirm(
             `模型「${name}」开启思考后，思考内容会混入报告正文：\n\n${cached.message}\n\n` +
-              `这可能导致报告生成失败或内容不完整。仍要开启吗？`
+              `这可能导致报告生成失败或内容不完整。仍要开启吗？`,
+            { title: "思考模式风险", okText: "仍要开启" }
           );
           if (!go) {
             input.checked = false;
@@ -5953,7 +6009,7 @@ function renderReportModelMenu() {
           }
         }
         if (cached && cached.mode === "unsupported") {
-          alert(`模型「${name}」无法响应，已保持关闭思考。\n${cached.message}`);
+          showAlert(`模型「${name}」无法响应，已保持关闭思考。\n${cached.message}`, { title: "思考模式不可用", iconClass: "danger", icon: "!" });
           input.checked = false;
           return;
         }
@@ -6038,6 +6094,86 @@ function toggleReportModelMenu() {
   if (opening) loadReportModels();
 }
 
+// ===== 自绘提示弹窗（替代浏览器原生 alert/confirm，居中显示） =====
+let _uiModalSeq = 0;
+
+function _uiModalShell(icon, iconClass, title, bodyHtml) {
+  const seq = ++_uiModalSeq;
+  const overlay = document.createElement("div");
+  overlay.className = "ui-modal-overlay";
+  overlay.innerHTML = `
+    <div class="ui-modal" role="dialog" aria-modal="true">
+      <div class="ui-modal-head">
+        <span class="ui-modal-icon ${iconClass}">${icon}</span>
+        <span class="ui-modal-title">${escapeHtml(title)}</span>
+      </div>
+      <div class="ui-modal-body">${bodyHtml}</div>
+      <div class="ui-modal-actions" id="uiModalActions${seq}"></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add("show"));
+  return { overlay, actions: overlay.querySelector(`#uiModalActions${seq}`), seq };
+}
+
+function _uiModalClose(overlay) {
+  overlay.classList.remove("show");
+  setTimeout(() => overlay.remove(), 180);
+}
+
+// 信息提示：单按钮「知道了」，居中弹出，自动聚焦按钮（回车可确认）
+function showAlert(message, opts = {}) {
+  const { overlay, actions } = _uiModalShell(
+    opts.icon || "ℹ",
+    opts.iconClass || "info",
+    opts.title || "提示",
+    `<div class="ui-modal-text">${escapeHtml(String(message)).replace(/\n/g, "<br>")}</div>`
+  );
+  return new Promise((resolve) => {
+    const okBtn = document.createElement("button");
+    okBtn.type = "button";
+    okBtn.className = "ui-modal-btn primary";
+    okBtn.textContent = opts.okText || "知道了";
+    okBtn.addEventListener("click", () => {
+      _uiModalClose(overlay);
+      resolve();
+    });
+    actions.appendChild(okBtn);
+    okBtn.focus();
+  });
+}
+
+// 二次确认：取消/确认双按钮，返回 Promise<boolean>；danger 时确认按钮红色
+async function uiConfirm(message, opts = {}) {
+  const { overlay, actions } = _uiModalShell(
+    opts.danger ? "" : "❓",
+    opts.danger ? "danger" : "info",
+    opts.title || "请确认",
+    `<div class="ui-modal-text">${escapeHtml(String(message)).replace(/\n/g, "<br>")}</div>`
+  );
+  return new Promise((resolve) => {
+    const done = (val) => {
+      _uiModalClose(overlay);
+      resolve(val);
+    };
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ui-modal-btn";
+    cancelBtn.textContent = opts.cancelText || "取消";
+    cancelBtn.addEventListener("click", () => done(false));
+    const okBtn = document.createElement("button");
+    okBtn.type = "button";
+    okBtn.className = `ui-modal-btn ${opts.danger ? "danger" : "primary"}`;
+    okBtn.textContent = opts.okText || "确定";
+    okBtn.addEventListener("click", () => done(true));
+    actions.appendChild(cancelBtn);
+    actions.appendChild(okBtn);
+    okBtn.focus();
+    overlay.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") done(false);
+    });
+  });
+}
+
 // ===== 报告历史 =====
 async function loadReportHistory() {
   const list = document.getElementById("reportHistoryList");
@@ -6052,8 +6188,8 @@ async function loadReportHistory() {
     }
     list.innerHTML = items
       .map((h) => {
-        const t = h.updated_at ? new Date(h.updated_at).toLocaleString("zh-CN", { hour12: false }) : "";
-        const active = h.conversation_id === reportConversationId ? "active" : "";
+        const t = formatReportMessageTime(h.updated_at);
+        const active = h.conversation_id === (reportHistoryPendingId || reportConversationId) ? "active" : "";
         return `
         <div class="report-history-item ${active}" data-conv-id="${escapeHtml(h.conversation_id)}" title="${escapeHtml(h.preview || h.route_name)}">
           <div class="report-history-item-title">${escapeHtml(h.route_name || "报告")}</div>
@@ -6064,18 +6200,146 @@ async function loadReportHistory() {
       .join("");
     list.querySelectorAll(".report-history-item").forEach((el) => {
       el.addEventListener("click", () => openHistoryReport(el.dataset.convId));
+      el.addEventListener("contextmenu", (ev) =>
+        showHistoryContextMenu(ev, el.dataset.convId, el.querySelector(".report-history-item-title")?.textContent || "")
+      );
     });
   } catch (e) {
     console.error("加载报告历史失败:", e);
   }
 }
 
-async function openHistoryReport(conversationId) {
+// ===== 报告历史右键菜单（收藏 / 删除） =====
+let historyCtxTarget = { conversationId: "", title: "" };
+
+function showHistoryContextMenu(ev, conversationId, title) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  historyCtxTarget = { conversationId, title };
+  let menu = document.getElementById("historyContextMenu");
+  if (!menu) {
+    menu = document.createElement("div");
+    menu.id = "historyContextMenu";
+    menu.className = "history-context-menu";
+    menu.innerHTML = `
+      <button type="button" class="history-ctx-item admin-only" data-act="favorite">⭐ 收藏为模板</button>
+      <button type="button" class="history-ctx-item danger" data-act="delete">🗑 删除</button>`;
+    document.body.appendChild(menu);
+    menu.addEventListener("click", (e) => {
+      const act = e.target.closest(".history-ctx-item")?.dataset.act;
+      hideHistoryContextMenu();
+      if (act === "favorite") favoriteHistoryReport(historyCtxTarget.conversationId);
+      if (act === "delete") deleteHistoryReport(historyCtxTarget.conversationId, historyCtxTarget.title);
+    });
+    document.addEventListener("click", hideHistoryContextMenu);
+    document.addEventListener("scroll", hideHistoryContextMenu, true);
+    window.addEventListener("blur", hideHistoryContextMenu);
+  }
+  menu.style.display = "block";
+  // 先显示再测量，避免超出视口
+  const rect = menu.getBoundingClientRect();
+  const x = Math.min(ev.clientX, window.innerWidth - rect.width - 8);
+  const y = Math.min(ev.clientY, window.innerHeight - rect.height - 8);
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${Math.max(8, y)}px`;
+}
+
+function hideHistoryContextMenu() {
+  const menu = document.getElementById("historyContextMenu");
+  if (menu) menu.style.display = "none";
+}
+
+async function favoriteHistoryReport(conversationId) {
+  if (!conversationId) return;
   try {
     const resp = await fetch(`/api/report-workbench/history/${encodeURIComponent(conversationId)}?t=${Date.now()}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
+    await favoriteCurrentReport(data.session);
+  } catch (e) {
+    showAlert("收藏失败：读取该历史报告出错（" + e.message + "）", { title: "收藏失败", iconClass: "danger", icon: "!" });
+  }
+}
+
+async function deleteHistoryReport(conversationId, title) {
+  if (!conversationId) return;
+  if (!(await uiConfirm(`确定删除历史报告「${title || conversationId}」？删除后不可恢复。`, { danger: true, title: "删除历史报告" }))) return;
+  try {
+    const resp = await fetch(`/api/report-workbench/history/${encodeURIComponent(conversationId)}`, { method: "DELETE" });
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    if (reportConversationId === conversationId) {
+      // 删除的是当前打开的报告：重置为新建态
+      reportConversationId = "";
+      currentReportSession = null;
+      createNewReportSession();
+    }
+    loadReportHistory();
+  } catch (e) {
+    showAlert("删除失败：" + e.message, { title: "删除失败", iconClass: "danger", icon: "!" });
+  }
+}
+
+let reportHistoryLoadId = 0;
+let reportHistoryLoadController = null;
+let reportHistoryPendingId = "";
+
+function setReportHistoryLoading(loading, message = "") {
+  const list = document.getElementById("reportHistoryList");
+  list?.setAttribute("aria-busy", String(loading));
+  let notice = document.getElementById("reportHistoryLoading");
+  const panel = document.getElementById("reportSections")?.parentElement;
+  if (!notice && panel) {
+    notice = document.createElement("div");
+    notice.id = "reportHistoryLoading";
+    notice.className = "report-history-loading";
+    notice.setAttribute("role", "status");
+    panel.prepend(notice);
+  }
+  if (notice) {
+    notice.hidden = !loading && !message;
+    notice.textContent = message || "正在加载历史报告…";
+  }
+}
+
+function setActiveHistoryItem(conversationId) {
+  document.querySelectorAll(".report-history-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.convId === conversationId);
+  });
+}
+
+function cancelHistoryReportLoad() {
+  reportHistoryLoadId += 1;
+  reportHistoryLoadController?.abort();
+  reportHistoryLoadController = null;
+  reportHistoryPendingId = "";
+  setReportHistoryLoading(false);
+}
+
+async function openHistoryReport(conversationId) {
+  if (!conversationId) return;
+  cancelHistoryReportLoad();
+  const requestId = reportHistoryLoadId;
+  const controller = new AbortController();
+  reportHistoryLoadController = controller;
+  reportHistoryPendingId = conversationId;
+  setActiveHistoryItem(conversationId);
+  setReportHistoryLoading(true);
+  let timedOut = false;
+  let errorMessage = "";
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 15000);
+  try {
+    const resp = await fetch("/api/report-workbench/history/" + encodeURIComponent(conversationId), {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    if (requestId !== reportHistoryLoadId) return;
     const session = data.session;
+    if (!session?.report) throw new Error("报告内容不完整");
     reportConversationId = conversationId;
     currentReportSession = session;
     updateReportDisplay(session);
@@ -6083,10 +6347,20 @@ async function openHistoryReport(conversationId) {
     updateReportStatus("completed", session.route_name || "", session.question_round || 0);
     if (typeof session.elapsed_seconds === "number") setReportElapsed(session.elapsed_seconds);
     renderHistoryMessages(session);
-    loadReportHistory(); // 刷新高亮
+    setActiveHistoryItem(conversationId);
   } catch (e) {
+    if (requestId !== reportHistoryLoadId) return;
+    if (e.name === "AbortError" && !timedOut) return;
+    errorMessage = timedOut ? "历史报告加载超时，请再次点击该报告重试。" : "历史报告加载失败：" + e.message + "，请点击重试。";
+    setActiveHistoryItem(reportConversationId);
     console.error("打开历史报告失败:", e);
-    alert("打开历史报告失败：" + e.message);
+  } finally {
+    clearTimeout(timeout);
+    if (requestId === reportHistoryLoadId) {
+      reportHistoryLoadController = null;
+      reportHistoryPendingId = "";
+      setReportHistoryLoading(false, errorMessage);
+    }
   }
 }
 
@@ -6096,13 +6370,16 @@ function renderHistoryMessages(session) {
   if (!container) return;
   container.innerHTML = "";
   const messages = (session && session.messages) || [];
-  messages.forEach((m) => {
+  messages.forEach((m, i) => {
     const div = addReportChatMessage(m.role === "user" ? "user" : "assistant", m.content || "");
     if (m.role !== "user") {
       setReportChatTime(div, m.created_at);
     }
     if (m.questions && m.questions.length > 0) {
       addReportQuestions(div, m.questions);
+    }
+    if (m.review) {
+      addReportReviewCard(div, m.review, i);
     }
   });
   // 历史追问卡默认已答复态；仅当会话最后一条消息仍是带追问的助手回复时保留可点
@@ -6199,7 +6476,9 @@ async function initReportWorkbench() {
   document.getElementById("reportTemplateAdminBtn")?.addEventListener("click", openTemplateAdmin);
   document.getElementById("templateAdminClose")?.addEventListener("click", closeTemplateAdmin);
   document.getElementById("templateAdminNewBtn")?.addEventListener("click", () => openTemplateEditor(null));
-  document.getElementById("reportFavoriteBtn")?.addEventListener("click", favoriteCurrentReport);
+  document.getElementById("reportFavoriteBtn")?.addEventListener("click", () => favoriteCurrentReport());
+  document.getElementById("reportUserAdminBtn")?.addEventListener("click", openUserAdmin);
+  document.getElementById("userAdminClose")?.addEventListener("click", closeUserAdmin);
   document.getElementById("favoriteClose")?.addEventListener("click", closeFavoritePanel);
   document.getElementById("fvCancel")?.addEventListener("click", closeFavoritePanel);
   document.getElementById("fvSave")?.addEventListener("click", submitFavorite);
@@ -6217,6 +6496,7 @@ async function initReportWorkbench() {
 }
 
 function createNewReportSession() {
+  cancelHistoryReportLoad();
   reportConversationId = generateSessionId();
   currentReportSession = null;
   reportPendingRouteId = "";
@@ -6369,6 +6649,7 @@ async function generateReport(input, routeId = "") {
 
   let assistantMessageDiv = null;
   const streamRenderer = createStreamReportRenderer();
+  const questionsRenderer = createStreamQuestionsRenderer();
   let thinkingPanel = null; // 思考过程面板（仅开启思考模式时创建）
 
   reportEventSource.onmessage = (event) => {
@@ -6410,6 +6691,14 @@ async function generateReport(input, routeId = "") {
             setLiveSection("reportFindingsContent", partial.findings);
             setLiveSection("reportDiagnosisContent", partial.diagnosis);
           }
+          // 追问增量：每个追问对象输出完成即渲染，不等整流结束；
+          // 气泡延迟到首个追问到达时创建，避免无追问时留下空占位
+          questionsRenderer.push(streamRenderer.jsonText(), () => {
+            if (!assistantMessageDiv) {
+              assistantMessageDiv = addReportChatMessage("assistant", "报告已生成，我还有几个问题想确认：");
+            }
+            return assistantMessageDiv;
+          });
           break;
 
         case "route_resolved":
@@ -6433,11 +6722,12 @@ async function generateReport(input, routeId = "") {
           break;
 
         case "report_questions":
+          // 对账：增量渲染与最终校验结果一致则保留；不一致按最终列表重建
           if (data.questions && data.questions.length > 0) {
             if (!assistantMessageDiv) {
               assistantMessageDiv = addReportChatMessage("assistant", "报告已生成，我还有几个问题想确认：");
             }
-            addReportQuestions(assistantMessageDiv, data.questions);
+            reconcileReportQuestions(assistantMessageDiv, questionsRenderer, data.questions);
             setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
           }
           break;
@@ -6446,7 +6736,14 @@ async function generateReport(input, routeId = "") {
           if (!assistantMessageDiv) {
             assistantMessageDiv = addReportChatMessage("assistant", data.content);
           } else {
-            assistantMessageDiv.querySelector(".report-chat-bubble").textContent += data.content;
+            const bubble = assistantMessageDiv.querySelector(".report-chat-bubble");
+            const questionsDiv = bubble.querySelector(".report-chat-questions");
+            if (questionsDiv) {
+              // 追问卡片已增量渲染：文本插到卡片之前，避免 textContent 覆盖卡片
+              bubble.insertBefore(document.createTextNode(data.content), questionsDiv);
+            } else {
+              bubble.textContent += data.content;
+            }
           }
           setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
           break;
@@ -6524,6 +6821,7 @@ async function iterateReport(user_input) {
   const decoder = new TextDecoder();
   let assistantMessageDiv = null;
   const streamRenderer = createStreamReportRenderer();
+  const questionsRenderer = createStreamQuestionsRenderer();
   let thinkingPanel = null; // 思考过程面板（仅开启思考模式时创建）
   let sseBuffer = ""; // 跨 chunk 的行缓冲，防止大 JSON 事件被截断丢弃
 
@@ -6567,6 +6865,13 @@ async function iterateReport(user_input) {
               setLiveSection("reportFindingsContent", partial.findings);
               setLiveSection("reportDiagnosisContent", partial.diagnosis);
             }
+            // 追问增量：每个追问对象输出完成即渲染，不等整流结束
+            questionsRenderer.push(streamRenderer.jsonText(), () => {
+              if (!assistantMessageDiv) {
+                assistantMessageDiv = addReportChatMessage("assistant", "报告已更新，我还有几个问题：");
+              }
+              return assistantMessageDiv;
+            });
             break;
 
           case "report_updated":
@@ -6581,11 +6886,12 @@ async function iterateReport(user_input) {
             break;
 
           case "report_questions":
+            // 对账：增量渲染与最终校验结果一致则保留；不一致按最终列表重建
             if (data.questions && data.questions.length > 0) {
               if (!assistantMessageDiv) {
                 assistantMessageDiv = addReportChatMessage("assistant", "报告已更新，我还有几个问题：");
               }
-              addReportQuestions(assistantMessageDiv, data.questions);
+              reconcileReportQuestions(assistantMessageDiv, questionsRenderer, data.questions);
               setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
             }
             break;
@@ -6603,6 +6909,10 @@ async function iterateReport(user_input) {
               }
             }
             setReportChatTime(assistantMessageDiv, currentReportSession?.updated_at);
+            // 追问达上限后的更新消息：渲染 采纳/修改/拒绝 评价卡
+            if (data.review && typeof data.message_index === "number" && data.message_index >= 0) {
+              addReportReviewCard(assistantMessageDiv, data.review, data.message_index);
+            }
             break;
 
           case "done":
@@ -6654,6 +6964,26 @@ function updateReportDisplay(session) {
 
   renderReportContent(findingsContent, session.report.imaging_findings || "");
   renderReportContent(diagnosisContent, session.report.imaging_diagnosis || "");
+  renderReportTemplateReference(session.template_reference);
+}
+
+function renderReportTemplateReference(reference) {
+  const panel = document.getElementById("reportTemplateReference");
+  const summary = document.getElementById("reportTemplateReferenceSummary");
+  const detail = document.getElementById("reportTemplateReferenceDetail");
+  if (!panel || !summary || !detail) return;
+  panel.style.display = reference ? "block" : "none";
+  panel.open = false;
+  if (!reference) {
+    summary.textContent = "";
+    detail.textContent = "";
+    return;
+  }
+  summary.textContent = `范例参考：${reference.template_name || reference.template_id}（生成版本 v${reference.report_version}）`;
+  const keywords = (reference.matched_keywords || []).join("、");
+  detail.textContent = `模板 ID：${reference.template_id}；模板版本：${reference.template_version}；` +
+    `匹配原因：${reference.match_reason}${keywords ? "（" + keywords + "）" : ""}；` +
+    `匹配分：${Number(reference.match_score).toFixed(3)}（非概率）；仅供文风与结构参考。`;
 }
 
 function updateReportStatus(status, routeName, questionRound) {
@@ -6773,6 +7103,85 @@ function extractPartialJsonString(text, key) {
   return { value: out, done: false };
 }
 
+/** 从（可能不完整的）JSON 文本中增量解析 questions 数组。
+ *  仅返回已闭合完整的追问对象；最后一个对象未闭合时等待后续 token。 */
+function extractPartialQuestions(text) {
+  const marker = '"questions"';
+  const idx = text.indexOf(marker);
+  if (idx === -1) return [];
+  const open = text.indexOf("[", idx + marker.length);
+  if (open === -1) return [];
+  const out = [];
+  let i = open + 1;
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "]") break;
+    if (ch !== "{") { i += 1; continue; }
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let j = i;
+    for (; j < text.length; j += 1) {
+      const c = text[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') inStr = true;
+      else if (c === "{") depth += 1;
+      else if (c === "}") { depth -= 1; if (depth === 0) { j += 1; break; } }
+    }
+    if (depth !== 0) break; // 最后一个对象未闭合，等后续 token
+    try {
+      const obj = JSON.parse(text.slice(i, j));
+      if (obj && obj.question) out.push(obj);
+    } catch (_) { /* 片段非法，跳过 */ }
+    i = j;
+  }
+  return out;
+}
+
+/** 追问流式增量渲染器：每个追问对象输出完成即渲染，不等整流结束 */
+function createStreamQuestionsRenderer() {
+  let rendered = 0;
+  return {
+    push(jsonText, getDiv) {
+      const qs = extractPartialQuestions(jsonText || "");
+      if (qs.length <= rendered) return null;
+      const fresh = qs.slice(rendered);
+      rendered = qs.length;
+      const div = getDiv ? getDiv() : null;
+      if (!div) return fresh;
+      const bubble = div.querySelector(".report-chat-bubble");
+      let container = bubble.querySelector(".report-chat-questions");
+      if (!container) {
+        container = document.createElement("div");
+        container.className = "report-chat-questions";
+        bubble.appendChild(container);
+      }
+      addReportQuestions(div, fresh, container);
+      const msgs = document.getElementById("reportChatMessages");
+      if (msgs) msgs.scrollTop = msgs.scrollHeight;
+      return fresh;
+    },
+    get count() { return rendered; },
+    reset() { rendered = 0; },
+    markRendered(n) { rendered = n; },
+  };
+}
+
+/** 追问对账：增量渲染与最终结果一致则保留；不一致（如校验修正改了追问）按最终列表重建 */
+function reconcileReportQuestions(messageDiv, renderer, questions) {
+  if (!messageDiv) return;
+  if (renderer.count === questions.length) return;
+  const bubble = messageDiv.querySelector(".report-chat-bubble");
+  const old = bubble.querySelector(".report-chat-questions");
+  if (old) old.remove();
+  renderer.reset();
+  addReportQuestions(messageDiv, questions);
+  renderer.markRendered(questions.length);
+}
+
 /** 定位报告 JSON 的起始位置。
  *  开启思考且模型无独立 reasoning 通道时，思考文本会混入正文，
  *  其中可能自带 "imaging_findings" 等字段名，直接用 indexOf 会误取思考内容。
@@ -6798,10 +7207,15 @@ function createStreamReportRenderer() {
         diagnosis: extractPartialJsonString(json, "imaging_diagnosis"),
       };
     },
+    /** 当前已缓冲的真实 JSON 片段（供追问增量解析复用） */
+    jsonText() {
+      return jsonStart === -1 ? "" : buffer.slice(jsonStart);
+    },
   };
 }
 
 function showReportSectionsLive() {
+  renderReportTemplateReference(null);
   const emptyState = document.getElementById("reportEmptyState");
   const sections = document.getElementById("reportSections");
   if (emptyState) emptyState.style.display = "none";
@@ -6840,8 +7254,13 @@ function addReportChatMessage(role, content) {
   bubble.className = "report-chat-bubble";
   bubble.textContent = content;
 
+  // 列容器：气泡/时间戳/追问卡/评价卡纵向堆叠，避免被消息行横向 flex 排到气泡右侧
+  const column = document.createElement("div");
+  column.className = "report-chat-column";
+  column.appendChild(bubble);
+
   messageDiv.appendChild(avatar);
-  messageDiv.appendChild(bubble);
+  messageDiv.appendChild(column);
   messagesContainer.appendChild(messageDiv);
 
   // 滚动到底部
@@ -6850,11 +7269,21 @@ function addReportChatMessage(role, content) {
   return messageDiv;
 }
 
-/** 消息时间戳格式化：ISO/空格分隔 → "YYYY-MM-DD HH:MM:SS" */
+/** Report time in Asia/Shanghai; legacy offset-free values are UTC. */
 function formatReportMessageTime(value) {
   if (!value) return "";
-  const s = String(value).replace("T", " ").replace(/\.\d+.*$/, "");
-  return s.length > 19 ? s.slice(0, 19) : s;
+  // Legacy report timestamps were written in UTC without an offset.
+  let timestamp = String(value).trim().replace(" ", "T");
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(timestamp)) timestamp += "Z";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const fields = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}:${fields.second}`;
 }
 
 /** 在消息气泡下方追加/更新时间戳小字 */
@@ -6866,9 +7295,13 @@ function setReportChatTime(messageDiv, value) {
   if (!timeDiv) {
     timeDiv = document.createElement("div");
     timeDiv.className = "report-chat-time";
-    messageDiv.appendChild(timeDiv);
+    // 挂到气泡所在列内：紧跟气泡下方、评价卡之前，而非消息行末尾
+    const column = messageDiv.querySelector(".report-chat-column");
+    if (column) column.insertBefore(timeDiv, column.querySelector(".report-review-card"));
+    else messageDiv.appendChild(timeDiv);
   }
   timeDiv.textContent = text;
+  timeDiv.title = "北京时间（UTC+8）";
 }
 
 /**
@@ -6926,18 +7359,21 @@ function createReportThinkingPanel() {
   };
 }
 
-function addReportQuestions(messageDiv, questions) {
+function addReportQuestions(messageDiv, questions, container) {
   const bubble = messageDiv.querySelector(".report-chat-bubble");
-  
-  const questionsDiv = document.createElement("div");
-  questionsDiv.className = "report-chat-questions";
+
+  // 增量渲染复用已有容器，仅追加新追问；否则新建容器
+  const questionsDiv = container || document.createElement("div");
+  if (!container) questionsDiv.className = "report-chat-questions";
+  // 编号接续容器内已渲染条数（增量批次不重排）
+  const baseIndex = questionsDiv.children.length;
 
   questions.forEach((q, idx) => {
     const qItem = document.createElement("div");
     qItem.className = "report-chat-question-item";
     const multi = q.multi_select === true;
     // 编号徽标 + 问题标题 + 可多选标记
-    qItem.innerHTML = `<div class="report-q-head"><span class="report-q-index">${idx + 1}</span><strong>${escapeHtml(q.question)}</strong>${multi ? '<span class="report-q-multi">可多选</span>' : ""}</div>`;
+    qItem.innerHTML = `<div class="report-q-head"><span class="report-q-index">${baseIndex + idx + 1}</span><strong>${escapeHtml(q.question)}</strong>${multi ? '<span class="report-q-multi">可多选</span>' : ""}</div>`;
     // 候选选项按钮：点选后填入输入框，医生可继续补充后发送
     const opts = q.options || [];
     if (opts.length > 0) {
@@ -7009,7 +7445,346 @@ function addReportQuestions(messageDiv, questions) {
     questionsDiv.appendChild(qItem);
   });
 
-  bubble.appendChild(questionsDiv);
+  if (!container) bubble.appendChild(questionsDiv);
+  return questionsDiv;
+}
+
+// ===== 报告更新评价卡（采纳/修改/拒绝）=====
+const REVIEW_CHOICES = [
+  { key: "adopt", label: "采纳", cls: "adopt", icon: "✓" },
+  { key: "modify", label: "修改", cls: "modify", icon: "✎" },
+  { key: "reject", label: "拒绝", cls: "reject", icon: "✕" },
+];
+
+/** 在助手消息气泡下渲染评价卡；已选择则显示记录态 */
+function addReportReviewCard(messageDiv, review, messageIndex) {
+  if (!messageDiv || !review) return null;
+  const existing = messageDiv.querySelector(".report-review-card");
+  if (existing) existing.remove();
+  const card = document.createElement("div");
+  card.className = "report-review-card";
+  card.dataset.messageIndex = String(messageIndex);
+  card.innerHTML = `
+    <div class="report-review-head">
+      <span class="report-review-icon">✦</span>
+      <span class="report-review-title">本次更新（v${review.version ?? "?"}）是否符合预期？</span>
+    </div>`;
+  const btnRow = document.createElement("div");
+  btnRow.className = "report-review-btns";
+  REVIEW_CHOICES.forEach((c) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `report-review-btn ${c.cls}`;
+    b.innerHTML = `<span class="report-review-btn-ic">${c.icon}</span><span>${c.label}</span>`;
+    b.dataset.choice = c.key;
+    b.addEventListener("click", () => onReviewChoice(card, messageIndex, c.key));
+    btnRow.appendChild(b);
+  });
+  card.appendChild(btnRow);
+  // 挂到气泡所在列内（气泡/时间戳之下），避免被消息行横向 flex 排到右侧
+  const column = messageDiv.querySelector(".report-chat-column");
+  (column || messageDiv).appendChild(card);
+  if (review.choice) applyReviewChosenState(card, review);
+  return card;
+}
+
+/** 点击评价按钮：采纳直接提交；修改/拒绝先展开备注输入（可留空） */
+function onReviewChoice(card, messageIndex, choice) {
+  if (!card || card.classList.contains("chosen")) return;
+  if (choice !== "adopt" && !card.querySelector(".report-review-comment-row")) {
+    const row = document.createElement("div");
+    row.className = "report-review-comment-row";
+    row.innerHTML = `<input type="text" class="report-review-comment" placeholder="可选：说明修改/拒绝原因" maxlength="200">
+      <button type="button" class="btn btn-sm primary">确认</button>
+      <button type="button" class="btn btn-sm">取消</button>`;
+    card.appendChild(row);
+    const [confirmBtn, cancelBtn] = row.querySelectorAll("button");
+    confirmBtn.addEventListener("click", () => submitReview(card, messageIndex, choice, row.querySelector("input").value.trim()));
+    cancelBtn.addEventListener("click", () => row.remove());
+    row.querySelector("input").focus();
+    return;
+  }
+  submitReview(card, messageIndex, choice, card.querySelector(".report-review-comment")?.value?.trim() || "");
+}
+
+async function submitReview(card, messageIndex, choice, comment) {
+  if (!currentReportSession) return;
+  try {
+    const resp = await fetch(`/api/report-workbench/sessions/${encodeURIComponent(currentReportSession.conversation_id)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice, message_index: messageIndex, comment }),
+    });
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    const data = await resp.json();
+    applyReviewChosenState(card, data.review);
+  } catch (e) {
+    showAlert("记录评价失败：" + e.message, { title: "评价失败", iconClass: "danger", icon: "!" });
+  }
+}
+
+/** 记录态：禁用按钮、高亮所选项、显示结果标签 */
+function applyReviewChosenState(card, review) {
+  if (!card || !review || !review.choice) return;
+  card.classList.add("chosen");
+  const meta = REVIEW_CHOICES.find((c) => c.key === review.choice);
+  card.querySelectorAll(".report-review-btn").forEach((b) => {
+    b.disabled = true;
+    if (b.dataset.choice === review.choice) b.classList.add("picked");
+  });
+  card.querySelector(".report-review-comment-row")?.remove();
+  let tag = card.querySelector(".report-review-tag");
+  if (!tag) {
+    tag = document.createElement("div");
+    tag.className = "report-review-tag";
+    card.appendChild(tag);
+  }
+  tag.textContent = `已记录：${meta ? meta.label : review.choice}${review.comment ? `（${review.comment}）` : ""}`;
+}
+
+// ==================== 管理中台（Insights）====================
+let insightsData = null;
+let insightsFiltersBound = false;
+let insightsPage = 1;
+const INSIGHTS_CHOICE_META = [
+  { key: "adopt", label: "采纳", color: "#12b76a" },
+  { key: "modify", label: "修改", color: "#f79009" },
+  { key: "reject", label: "拒绝", color: "#f04438" },
+  { key: "pending", label: "未评", color: "#d0d5dd" },
+];
+
+async function loadInsights() {
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/insights?t=${Date.now()}`);
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    insightsData = await resp.json();
+    renderInsights();
+  } catch (e) {
+    const cards = document.getElementById("insightsCards");
+    if (cards) cards.innerHTML = `<div class="insights-empty">加载失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderInsights() {
+  if (!insightsData) return;
+  const t = insightsData.totals || {};
+  const dist = t.review_dist || {};
+  const pct = (n) => (t.rated ? Math.round((n / t.rated) * 100) : 0);
+
+  // 指标卡
+  const cards = document.getElementById("insightsCards");
+  if (cards) {
+    cards.innerHTML = `
+      <div class="insight-card"><div class="insight-num">${t.reports ?? 0}</div><div class="insight-label">报告总数</div></div>
+      <div class="insight-card"><div class="insight-num">${t.users ?? 0}</div><div class="insight-label">活跃用户</div></div>
+      <div class="insight-card"><div class="insight-num">${t.rated ?? 0}<span class="insight-sub">/${t.reviews ?? 0}</span></div><div class="insight-label">已评价 / 评价卡</div></div>
+      <div class="insight-card"><div class="insight-num accent">${t.adopt_rate != null ? Math.round(t.adopt_rate * 100) + "%" : "—"}</div><div class="insight-label">总体采纳率</div></div>`;
+  }
+
+  // 总体比例条
+  const bar = document.getElementById("insightsOverallBar");
+  if (bar) {
+    const total = (t.reviews ?? 0) || 1;
+    bar.innerHTML = `<div class="insights-stack">${INSIGHTS_CHOICE_META.map((m) => {
+      const n = dist[m.key] || 0;
+      const w = (n / total) * 100;
+      return w > 0 ? `<div class="insights-seg" style="width:${w}%;background:${m.color}" title="${m.label} ${n}"></div>` : "";
+    }).join("")}</div>`;
+  }
+  const legend = document.getElementById("insightsLegend");
+  if (legend) {
+    legend.innerHTML = INSIGHTS_CHOICE_META.map((m) =>
+      `<span class="insights-legend-item"><i style="background:${m.color}"></i>${m.label} ${dist[m.key] || 0}（${pct(m.key === "pending" ? 0 : dist[m.key] || 0)}%）</span>`
+    ).join("");
+  }
+
+  // 分用户堆叠条
+  const userBars = document.getElementById("insightsUserBars");
+  if (userBars) {
+    const users = insightsData.users || [];
+    userBars.innerHTML = users.length ? users.map((u) => {
+      const total = (u.adopt + u.modify + u.reject + u.pending) || 1;
+      return `<div class="insights-user-row">
+        <div class="insights-user-name">${escapeHtml(u.username)}<span class="insights-user-count">${u.reports} 份</span></div>
+        <div class="insights-stack small">${INSIGHTS_CHOICE_META.map((m) => {
+          const n = u[m.key] || 0;
+          const w = (n / total) * 100;
+          return w > 0 ? `<div class="insights-seg" style="width:${w}%;background:${m.color}" title="${m.label} ${n}"></div>` : "";
+        }).join("")}</div>
+        <div class="insights-user-rate">${u.adopt_rate != null ? "采纳率 " + Math.round(u.adopt_rate * 100) + "%" : "暂无评价"}</div>
+      </div>`;
+    }).join("") : '<div class="insights-empty">暂无数据</div>';
+  }
+
+  // 用户/路由筛选下拉（保留当前选中值）
+  const filter = document.getElementById("insightsUserFilter");
+  if (filter) {
+    const cur = filter.value;
+    filter.innerHTML = `<option value="">全部用户</option>` + (insightsData.users || []).map((u) =>
+      `<option value="${escapeHtml(u.username)}">${escapeHtml(u.username)}</option>`
+    ).join("");
+    filter.value = cur;
+  }
+  const routeFilter = document.getElementById("insightsRouteFilter");
+  if (routeFilter) {
+    const cur = routeFilter.value;
+    const routes = [...new Set((insightsData.reports || []).map((r) => r.route_name || "—"))];
+    routeFilter.innerHTML = `<option value="">全部路由</option>` + routes.map((r) =>
+      `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`
+    ).join("");
+    routeFilter.value = cur;
+  }
+  // 筛选/排序控件仅绑定一次
+  if (!insightsFiltersBound) {
+    insightsFiltersBound = true;
+    ["insightsUserFilter", "insightsRouteFilter", "insightsChoiceFilter", "insightsSort"].forEach((id) => {
+      document.getElementById(id)?.addEventListener("change", () => {
+        insightsPage = 1;
+        renderInsightsReports();
+        renderInsightsRoutes();
+      });
+    });
+  }
+  renderInsightsReports();
+  renderInsightsRoutes();
+}
+
+/** 按当前筛选条件（用户/路由/最终评价）过滤报告 */
+function filterInsightsReports() {
+  const filterUser = document.getElementById("insightsUserFilter")?.value || "";
+  const filterRoute = document.getElementById("insightsRouteFilter")?.value || "";
+  const filterChoice = document.getElementById("insightsChoiceFilter")?.value || "";
+  return (insightsData?.reports || []).filter((r) => {
+    if (filterUser && r.owner !== filterUser) return false;
+    if (filterRoute && (r.route_name || "—") !== filterRoute) return false;
+    if (filterChoice) {
+      const c = r.last_choice || "none";
+      if (c !== filterChoice) return false;
+    }
+    return true;
+  });
+}
+
+function renderInsightsReports() {
+  const tbody = document.getElementById("insightsReportRows");
+  if (!tbody || !insightsData) return;
+  let rows = filterInsightsReports();
+  const sort = document.getElementById("insightsSort")?.value || "time_desc";
+  const words = (r) => (r.findings_len || 0) + (r.diagnosis_len || 0);
+  const cmp = {
+    time_desc: (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
+    time_asc: (a, b) => String(a.updated_at || "").localeCompare(String(b.updated_at || "")),
+    words_desc: (a, b) => words(b) - words(a),
+    words_asc: (a, b) => words(a) - words(b),
+    round_desc: (a, b) => (b.question_round || 0) - (a.question_round || 0),
+  }[sort];
+  if (cmp) rows = rows.slice().sort(cmp);
+  const count = document.getElementById("insightsReportCount");
+  if (count) count.textContent = `共 ${rows.length} 份`;
+
+  // 分页：每页 10 条；筛选后页码越界则回落到末页
+  const pageSize = 10;
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  if (insightsPage > pages) insightsPage = pages;
+  if (insightsPage < 1) insightsPage = 1;
+  const pageRows = rows.slice((insightsPage - 1) * pageSize, insightsPage * pageSize);
+
+  const choiceTag = (c) => {
+    const meta = INSIGHTS_CHOICE_META.find((m) => m.key === c);
+    if (!meta) return '<span class="insights-tag none">未评</span>';
+    return `<span class="insights-tag" style="color:${meta.color};border-color:${meta.color}">${meta.label}</span>`;
+  };
+  tbody.innerHTML = pageRows.length ? pageRows.map((r, i) => `
+    <tr>
+      <td>${escapeHtml(r.owner)}</td>
+      <td>${escapeHtml(r.route_name || "—")}</td>
+      <td>v${r.version ?? 0}</td>
+      <td>${r.question_round ?? 0} 轮</td>
+      <td>${INSIGHTS_CHOICE_META.filter((m) => (r.review_dist || {})[m.key]).map((m) => `${m.label}×${r.review_dist[m.key]}`).join(" ") || "—"}</td>
+      <td>${choiceTag(r.last_choice)}</td>
+      <td>${escapeHtml(formatReportMessageTime(r.updated_at))}</td>
+      <td>${words(r)}</td>
+      <td><button class="btn btn-sm" data-view-report="${i}">查看</button></td>
+    </tr>`).join("") : '<tr><td colspan="9" class="insights-empty">暂无报告</td></tr>';
+  tbody.querySelectorAll("[data-view-report]").forEach((b) => {
+    b.addEventListener("click", () => showInsightsReport(pageRows[Number(b.dataset.viewReport)]));
+  });
+
+  // 分页条：上一页 / 页码 / 下一页
+  const pager = document.getElementById("insightsPager");
+  if (pager) {
+    pager.innerHTML = rows.length > pageSize ? `
+      <button type="button" class="insights-page-btn" data-page="${insightsPage - 1}" ${insightsPage <= 1 ? "disabled" : ""}>上一页</button>
+      <span class="insights-page-info">第 ${insightsPage} / ${pages} 页</span>
+      <button type="button" class="insights-page-btn" data-page="${insightsPage + 1}" ${insightsPage >= pages ? "disabled" : ""}>下一页</button>` : "";
+    pager.querySelectorAll(".insights-page-btn").forEach((b) => {
+      b.addEventListener("click", () => {
+        insightsPage = Number(b.dataset.page);
+        renderInsightsReports();
+      });
+    });
+  }
+}
+
+/** 路由维度聚合：报告数/评价分布/堆叠条/采纳率，按采纳率→报告数降序 */
+function renderInsightsRoutes() {
+  const tbody = document.getElementById("insightsRouteRows");
+  if (!tbody || !insightsData) return;
+  const rows = filterInsightsReports();
+  const agg = {};
+  rows.forEach((r) => {
+    const name = r.route_name || "—";
+    const st = (agg[name] ||= { name, reports: 0, adopt: 0, modify: 0, reject: 0, pending: 0 });
+    st.reports += 1;
+    INSIGHTS_CHOICE_META.forEach((m) => { st[m.key] += (r.review_dist || {})[m.key] || 0; });
+  });
+  const list = Object.values(agg).map((st) => {
+    const rated = st.adopt + st.modify + st.reject;
+    st.rated = rated;
+    st.adopt_rate = rated ? st.adopt / rated : null;
+    st.modify_rate = rated ? st.modify / rated : null;
+    st.reject_rate = rated ? st.reject / rated : null;
+    return st;
+  }).sort((a, b) => (b.adopt_rate ?? -1) - (a.adopt_rate ?? -1) || b.reports - a.reports || a.name.localeCompare(b.name));
+  const count = document.getElementById("insightsRouteCount");
+  if (count) count.textContent = `共 ${list.length} 个路由`;
+  const rateCell = (v, cls) => (v != null
+    ? `<span class="insights-rate ${cls}">${Math.round(v * 100)}%</span>`
+    : '<span class="insights-tag none">—</span>');
+  tbody.innerHTML = list.length ? list.map((st) => {
+    const total = (st.adopt + st.modify + st.reject + st.pending) || 1;
+    return `<tr>
+      <td class="insights-route-name">${escapeHtml(st.name)}</td>
+      <td>${st.reports}</td>
+      <td>${INSIGHTS_CHOICE_META.filter((m) => st[m.key]).map((m) => `<span class="insights-dist-chip" style="color:${m.color};border-color:${m.color}">${m.label} ${st[m.key]}</span>`).join(" ") || '<span class="insights-tag none">未评</span>'}</td>
+      <td class="insights-th-bar"><div class="insights-stack small">${INSIGHTS_CHOICE_META.map((m) => {
+        const w = (st[m.key] / total) * 100;
+        return w > 0 ? `<div class="insights-seg" style="width:${w}%;background:${m.color}" title="${m.label} ${st[m.key]}"></div>` : "";
+      }).join("")}</div></td>
+      <td>${rateCell(st.adopt_rate, st.adopt_rate >= 0.6 ? "good" : st.adopt_rate >= 0.3 ? "mid" : "bad")}</td>
+      <td>${rateCell(st.modify_rate, st.modify_rate >= 0.5 ? "mid" : "plain")}</td>
+      <td>${rateCell(st.reject_rate, st.reject_rate >= 0.3 ? "bad" : "plain")}</td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="7" class="insights-empty">暂无数据</td></tr>';
+}
+
+/** 查看某份报告的最终内容（影像所见 + 影像诊断） */
+function showInsightsReport(report) {
+  if (!report) return;
+  const body = `
+    <div class="ua-meta ua-preview-meta">用户 ${escapeHtml(report.owner)} ｜ 路由 ${escapeHtml(report.route_name || "—")} ｜ v${report.version ?? 0} ｜ ${escapeHtml(formatReportMessageTime(report.updated_at))}</div>
+    <h5 class="ua-sec">影像所见</h5>
+    <pre class="ua-pre ua-preview-pre">${escapeHtml(report.findings || "（空）")}</pre>
+    <h5 class="ua-sec">影像诊断</h5>
+    <pre class="ua-pre ua-preview-pre">${escapeHtml(report.diagnosis || "（空）")}</pre>`;
+  const { overlay, actions } = _uiModalShell("📄", "info", "最终报告内容", body);
+  const okBtn = document.createElement("button");
+  okBtn.type = "button";
+  okBtn.className = "ui-modal-btn primary";
+  okBtn.textContent = "关闭";
+  okBtn.addEventListener("click", () => _uiModalClose(overlay));
+  actions.appendChild(okBtn);
+  okBtn.focus();
 }
 
 // 追问卡已答复态：灰化 + 禁点 + 标注"已答复"，防止旧轮次选项被误点写入输入框
@@ -7130,12 +7905,13 @@ function renderRouteAdminList() {
 
   const routes = routeAdminCache.routes || [];
   const linkage = routeAdminCache.validator_linkage || {};
+  // 校验器联动规则为全局配置，仅管理员可见可改
   const ruleField = (key, label, hint) => `
     <div class="ra-vrule-row">
       <label>${label}<span class="ra-vrule-hint">${hint}</span></label>
       <textarea class="config-input ra-vrule-input" data-rule="${key}">${escapeHtml((linkage[key] || []).join("\n"))}</textarea>
     </div>`;
-  const linkageHtml = `
+  const linkageHtml = isAdminUser() ? `
     <div class="ra-card ra-vrule-card">
       <button type="button" class="ra-vrule-toggle" id="raVruleToggle">
         <span class="ra-vrule-arrow">▶</span>
@@ -7161,7 +7937,7 @@ function renderRouteAdminList() {
         <button class="route-admin-save" id="raSaveRules">💾 保存规则并启用</button>
       </div>
       </div>
-    </div>`;
+    </div>` : "";
 
   list.innerHTML =
     linkageHtml +
@@ -7174,6 +7950,7 @@ function renderRouteAdminList() {
             <span class="route-admin-item-name">${escapeHtml(r.name)}</span>
             <code class="route-admin-item-id">${escapeHtml(r.id)}</code>
             <span class="route-admin-item-badge ${enabled ? "on" : "off"}">${enabled ? "已启用" : "已停用"}</span>
+            ${r.is_custom ? '<span class="ra-badge-custom">个人新增</span>' : r.has_override ? '<span class="ra-badge-custom">个人改</span>' : ""}
             <span class="route-admin-item-actions">
               <button class="btn btn-sm" data-act="edit">编辑</button>
               ${r.id !== "generic" ? `<button class="btn btn-sm" data-act="toggle">${enabled ? "停用" : "启用"}</button>` : ""}
@@ -7240,6 +8017,95 @@ function renderRouteAdminList() {
   });
 }
 
+function renderRouteReferenceSources(container, data) {
+  if (!container) return;
+  container.replaceChildren();
+  const summary = document.createElement("p");
+  summary.className = "ra-reference-summary";
+  summary.textContent = "已获取完整原文段落 " + (data.matched_lines || 0) + " 段 · " + (data.chars || 0).toLocaleString("zh-CN") + " 字符"
+    + (data.excluded_count ? "；" + data.excluded_count + " 个来源未获取到完整正文，未纳入资料。" : "")
+    + (data.omitted_paragraphs ? " 容量内保留完整段落，另有 " + data.omitted_paragraphs + " 段未纳入。" : "");
+  container.appendChild(summary);
+  const details = document.createElement("details");
+  const heading = document.createElement("summary");
+  const items = data.source_details || [];
+  heading.textContent = "查看本次检索来源（" + items.length + "）";
+  details.appendChild(heading);
+  const list = document.createElement("ul");
+  for (const item of items) {
+    const row = document.createElement("li");
+    const status = document.createElement("span");
+    status.className = "ra-reference-status";
+    status.textContent = "完整原文段落";
+    row.appendChild(status);
+    let url;
+    try {
+      const parsed = new URL(item.url);
+      if (["http:", "https:"].includes(parsed.protocol)) url = parsed;
+    } catch {}
+    const title = document.createElement(url ? "a" : "span");
+    title.textContent = item.title || (url ? url.hostname : "来源未提供链接");
+    if (url) {
+      title.href = url.href;
+      title.target = "_blank";
+      title.rel = "noopener noreferrer";
+      title.title = url.href;
+    }
+    row.appendChild(title);
+    list.appendChild(row);
+  }
+  details.appendChild(list);
+  container.appendChild(details);
+  container.hidden = false;
+}
+
+function updateRouteReferenceCount(editor) {
+  const ref = editor.querySelector("#raRef");
+  const counter = editor.querySelector("#raRefCount");
+  if (!ref || !counter) return false;
+  const count = Array.from(ref.value.trim()).length;
+  const limit = Number(ref.dataset.finalLimit || 0);
+  const webLimit = Number(ref.dataset.webLimit || 0);
+  const ready = ref.dataset.limitsReady === "true";
+  const over = ready && count > limit;
+  counter.textContent = "资料字数：" + count.toLocaleString("zh-CN") + " 字符"
+    + (ready ? " / 生成上限 " + limit.toLocaleString("zh-CN") + "；联网单次上限 " + webLimit.toLocaleString("zh-CN") : " · 正在读取当前模型容量…")
+    + (over ? "；超出 " + (count - limit).toLocaleString("zh-CN") + " 字符，请删减或更换模型。" : "");
+  counter.classList.toggle("is-over-limit", over);
+  const button = editor.querySelector("#raGenDraft");
+  if (button) button.disabled = !ready || over || button.dataset.busy === "true";
+  return ready && !over;
+}
+
+async function loadRouteReferenceLimits(editor) {
+  const ref = editor.querySelector("#raRef");
+  if (!ref) return;
+  const modelName = routeSelectedModel || "";
+  const requestId = String(Number(ref.dataset.limitRequestId || 0) + 1);
+  ref.dataset.limitRequestId = requestId;
+  ref.dataset.limitsReady = "false";
+  updateRouteReferenceCount(editor);
+  const retry = editor.querySelector("#raRefLimitRetry");
+  if (retry) retry.hidden = true;
+  try {
+    const resp = await fetch("/api/report-workbench/admin/routes/reference-limits?llm_name=" + encodeURIComponent(modelName));
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    if (editor.querySelector("#raRef") !== ref || ref.dataset.limitRequestId !== requestId) return;
+    if (modelName !== (routeSelectedModel || "")) return loadRouteReferenceLimits(editor);
+    if (!(data.final_ref_max_chars > 0 && data.web_search_max_chars > 0)) throw new Error("容量配置无效");
+    ref.dataset.finalLimit = String(data.final_ref_max_chars);
+    ref.dataset.webLimit = String(data.web_search_max_chars);
+    ref.dataset.limitsReady = "true";
+    updateRouteReferenceCount(editor);
+  } catch (e) {
+    if (editor.querySelector("#raRef") !== ref || ref.dataset.limitRequestId !== requestId) return;
+    if (modelName !== (routeSelectedModel || "")) return loadRouteReferenceLimits(editor);
+    editor.querySelector("#raRefCount").textContent = "容量读取失败，请重试：" + e.message;
+    if (retry) retry.hidden = false;
+  }
+}
+
 function openRouteEditor(route) {
   const list = document.getElementById("routeAdminList");
   const editor = document.getElementById("routeAdminEditor");
@@ -7247,7 +8113,7 @@ function openRouteEditor(route) {
   if (list) list.style.display = "none";
   editor.style.display = "block";
   const isNew = !route;
-  const r = route || { id: "", name: "", aliases: [], modalities: ["MRI"], body_parts: [], quick_tags: [], prompt_md: "", enabled: true };
+  const r = route || { id: "", name: "", aliases: [], modalities: [], body_parts: [], quick_tags: [], prompt_md: "", enabled: true };
   editor.innerHTML = `
     <div class="route-admin-form">
       <div class="route-admin-editor-top">
@@ -7274,7 +8140,7 @@ function openRouteEditor(route) {
               <input class="config-input" id="raId" value="${escapeHtml(r.id)}" ${isNew ? "" : "disabled"} placeholder="如 liver_mri" />
             </div>
             <div class="route-admin-form-row">
-              <label>路由名称</label>
+              <label>路由名称<span class="ra-required" title="生成草稿与保存路由的必填项">必填</span></label>
               <input class="config-input" id="raName" value="${escapeHtml(r.name)}" placeholder="如 肝脏 MRI" />
             </div>
           </div>
@@ -7299,11 +8165,22 @@ function openRouteEditor(route) {
         ${isNew ? `
         <div class="ra-card ra-draft-card">
           <div class="ra-card-title">⚡ AI 草稿生成</div>
-          <p class="ra-draft-desc">上传该部位的报告模板/诊断规范/术语表（可选，支持 PDF、Word(docx)、Excel(xlsx)、txt/md/csv），系统会按「路由名称/部位/别名」优先抽取相关材料，再生成 ID、别名、胶囊与专科 Prompt 草稿并自动填充三个页签。</p>
+          <p class="ra-draft-desc">上传该部位的报告模板/诊断规范/术语表（可选，支持 PDF、Word(docx)、Excel(xlsx)、txt/md/csv），或点「联网检索」自动抓取公开资料；系统会按「路由名称/部位/别名」过滤相关材料（仅作参考），再生成 ID、别名、胶囊与专科 Prompt 草稿并自动填充三个页签。</p>
           <textarea class="config-input route-admin-ref" id="raRef" placeholder="可选：参考资料文本；留空则按部位名生成"></textarea>
+          <div class="ra-reference-capacity">
+            <span id="raRefCount" role="status" aria-live="polite"></span>
+            <button type="button" id="raRefLimitRetry" class="ra-ref-toggle" hidden>重试容量读取</button>
+            <small>按字符计数，包含标点和内部空白；超出上限时不截断正文，请删减后生成。</small>
+          </div>
+          <div class="ra-reference-toolbar">
+            <span>参考资料可滚动查看或拖动右下角调整高度</span>
+            <button type="button" class="ra-ref-toggle" id="raRefToggle" aria-expanded="false" aria-controls="raRef">展开资料</button>
+          </div>
+          <div id="raRefSources" class="ra-reference-sources" hidden></div>
           <div class="ra-draft-actions">
             <input type="file" id="raRefFile" accept=".pdf,.docx,.xlsx,.txt,.md,.csv,.markdown" hidden />
             <button class="route-admin-uploadbtn" id="raUploadRef" title="上传 pdf/docx/xlsx/txt/md/csv 参考资料，按路由名称抽取相关材料后填入上方文本框">📎 上传文档</button>
+            <button class="route-admin-uploadbtn ra-websearch-btn" id="raWebSearch" title="联网检索该部位的公开报告规范/术语资料，过滤后追加到参考资料（需先填路由名称）">🌐 联网检索</button>
             <button class="route-admin-genbtn" id="raGenDraft">⚡ 生成草稿</button>
           </div>
         </div>` : ""}
@@ -7375,6 +8252,16 @@ function openRouteEditor(route) {
   editor.querySelector("#raBack").addEventListener("click", () => renderRouteAdminList());
 
   if (isNew) {
+    editor.querySelector("#raRef").addEventListener("input", () => updateRouteReferenceCount(editor));
+    editor.querySelector("#raRefLimitRetry").addEventListener("click", () => loadRouteReferenceLimits(editor));
+    loadRouteReferenceLimits(editor);
+    editor.querySelector("#raRefToggle").addEventListener("click", (event) => {
+      const ref = editor.querySelector("#raRef");
+      const expanded = ref.classList.toggle("is-expanded");
+      ref.style.height = "";
+      event.currentTarget.textContent = expanded ? "收起资料" : "展开资料";
+      event.currentTarget.setAttribute("aria-expanded", String(expanded));
+    });
     editor.querySelector("#raUploadRef").addEventListener("click", () => {
       editor.querySelector("#raRefFile").click();
     });
@@ -7396,6 +8283,7 @@ function openRouteEditor(route) {
           .filter(Boolean)
           .join(" ");
         fd.append("focus", focus);
+        fd.append("llm_name", routeSelectedModel || "");
         const resp = await fetch("/api/report-workbench/admin/routes/parse-doc", {
           method: "POST",
           body: fd,
@@ -7403,6 +8291,7 @@ function openRouteEditor(route) {
         if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
         const data = await resp.json();
         editor.querySelector("#raRef").value = data.text;
+        updateRouteReferenceCount(editor);
         const detail = data.matched_lines
           ? `，命中 ${data.matched_lines} 条与本路由相关${data.filtered_lines ? `（已过滤 ${data.filtered_lines} 条无关记录）` : ""}`
           : "，未命中与本路由相关的内容（请检查路由名称/部位是否填写，或该文档确实不含本部位材料）";
@@ -7415,8 +8304,78 @@ function openRouteEditor(route) {
       }
     });
 
+    // 联网检索：抓取公开报告规范/术语资料，过滤后追加到参考资料框（仅作参考）
+    editor.querySelector("#raWebSearch").addEventListener("click", async () => {
+      const name = editor.querySelector("#raName").value.trim();
+      if (!name) {
+        showAlert("请先输入路由名称，再联网检索相关资料", { title: "缺少路由名称" });
+        editor.querySelector("#raName").focus();
+        return;
+      }
+      const btn = editor.querySelector("#raWebSearch");
+      btn.disabled = true;
+      const oldText = btn.textContent;
+      const restoreBtn = () => {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      };
+      btn.textContent = "检测中…";
+      setRouteAdminHint("正在检测联网检索通道…");
+      // 先探活：检索端点可达才发起正式分面检索，避免长时间空等
+      try {
+        const chkResp = await fetch(`/api/report-workbench/admin/routes/web-search/check?t=${Date.now()}`);
+        if (!chkResp.ok) throw new Error(`探活接口不可用（HTTP ${chkResp.status}），请重启后端服务`);
+        const chk = await chkResp.json();
+        if (!chk.ok) {
+          showAlert(`联网检索不可用：${chk.message}\n\n请改用「上传文档」或手动填写参考资料。`, { title: "联网检索不可用", iconClass: "danger", icon: "!" });
+          setRouteAdminHint(`联网检索不可用：${chk.message}`);
+          restoreBtn();
+          return;
+        }
+      } catch (e) {
+        showAlert(`联网检索通道检测失败：${e.message}`, { title: "检测失败", iconClass: "danger", icon: "!" });
+        setRouteAdminHint("联网检索通道检测失败: " + e.message);
+        restoreBtn();
+        return;
+      }
+      btn.textContent = "检索中…";
+      setRouteAdminHint(`联网检索「${name}」相关公开资料中…`);
+      try {
+        const resp = await fetch("/api/report-workbench/admin/routes/web-search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ focus: name, llm_name: routeSelectedModel || "" }),
+        });
+        const responseText = await resp.text();
+        let data;
+        try { data = JSON.parse(responseText); }
+        catch { throw new Error("检索服务返回异常（HTTP " + resp.status + "），请重试"); }
+        if (!resp.ok) throw new Error(data?.detail || "HTTP " + resp.status);
+        const refEl = editor.querySelector("#raRef");
+        const block = data.text;
+        refEl.value = refEl.value ? refEl.value.trim() + "\n\n" + block : block.trim();
+        renderRouteReferenceSources(editor.querySelector("#raRefSources"), data);
+        updateRouteReferenceCount(editor);
+        const facets = (data.facets || []).map((f) => `${f.label}${f.matched}条`).join("、");
+        setRouteAdminHint("联网检索完成：已填入 " + data.matched_lines + " 段完整原文，共 " + data.chars.toLocaleString("zh-CN") + " 字符。", true);
+      } catch (e) {
+        setRouteAdminHint("联网检索失败: " + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = oldText;
+      }
+    });
+
     editor.querySelector("#raGenDraft").addEventListener("click", async () => {
+      const nameInput = editor.querySelector("#raName");
+      if (!nameInput.value.trim()) {
+        showAlert("请先输入路由名称，再生成草稿", { title: "缺少路由名称" });
+        nameInput.focus();
+        return;
+      }
+      if (!updateRouteReferenceCount(editor)) return;
       const btn = editor.querySelector("#raGenDraft");
+      btn.dataset.busy = "true";
       btn.disabled = true;
       setRouteAdminHint("草稿生成中（约30~60秒）…");
       try {
@@ -7426,12 +8385,28 @@ function openRouteEditor(route) {
           body: JSON.stringify({
             name: editor.querySelector("#raName").value.trim(),
             body_part: splitList(editor.querySelector("#raBodyParts").value)[0] || editor.querySelector("#raName").value.trim(),
-            modality: splitList(editor.querySelector("#raModalities").value)[0] || "MRI",
+            modality: splitList(editor.querySelector("#raModalities").value)[0] || "",
             reference_text: editor.querySelector("#raRef").value,
+            // 路由模型：新建路由草稿采用模型选择菜单「路由模型」区所选
+            llm_name: routeSelectedModel || "",
           }),
         });
-        if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
-        const { draft } = await resp.json();
+        const responseText = await resp.text();
+        let data;
+        try {
+          data = JSON.parse(responseText);
+        } catch {
+          throw new Error(resp.ok
+            ? "服务器返回的草稿格式异常，请重试"
+            : `服务器错误（HTTP ${resp.status}），请稍后重试`);
+        }
+        if (!resp.ok) {
+          throw new Error(typeof data?.detail === "string" ? data.detail : `请求失败（HTTP ${resp.status}）`);
+        }
+        if (!data?.draft || typeof data.draft !== "object" || Array.isArray(data.draft)) {
+          throw new Error("服务器未返回有效草稿，请重试");
+        }
+        const { draft } = data;
         editor.querySelector("#raId").value = draft.id || "";
         editor.querySelector("#raName").value = draft.name || "";
         editor.querySelector("#raAliases").value = (draft.aliases || []).join("，");
@@ -7445,7 +8420,8 @@ function openRouteEditor(route) {
       } catch (e) {
         setRouteAdminHint("草稿生成失败: " + e.message);
       } finally {
-        btn.disabled = false;
+        btn.dataset.busy = "false";
+        updateRouteReferenceCount(editor);
       }
     });
   }
@@ -7461,8 +8437,13 @@ function openRouteEditor(route) {
       prompt_md: editor.querySelector("#raPrompt").value,
       enabled: true,
     };
-    if (!payload.id || !payload.name) {
-      setRouteAdminHint("ID 与名称必填");
+    if (!payload.name) {
+      showAlert("请先输入路由名称（必填项）", { title: "缺少路由名称" });
+      editor.querySelector("#raName").focus();
+      return;
+    }
+    if (!payload.id) {
+      setRouteAdminHint("路由ID 必填（可先点生成草稿自动填充）");
       return;
     }
     setRouteAdminHint("保存中…");
@@ -7501,7 +8482,7 @@ function handleReportCopy(button) {
 
 async function saveCurrentReport() {
   if (!currentReportSession) {
-    alert("当前没有报告可保存");
+    showAlert("当前没有报告可保存", { title: "无法保存" });
     return;
   }
 
@@ -7529,16 +8510,16 @@ async function saveCurrentReport() {
     const data = await response.json();
     if (currentReportSession) currentReportSession.current_version = data.version;
     loadReportHistory();
-    alert("报告已保存");
+    showAlert("报告已保存", { title: "保存成功", icon: "✓" });
   } catch (error) {
     console.error("保存失败:", error);
-    alert("保存失败：" + error.message);
+    showAlert("保存失败：" + error.message, { title: "保存失败", iconClass: "danger", icon: "!" });
   }
 }
 
 async function exportReportWord() {
   if (!currentReportSession) {
-    alert("当前没有报告可导出");
+    showAlert("当前没有报告可导出", { title: "无法导出" });
     return;
   }
   try {
@@ -7560,13 +8541,13 @@ async function exportReportWord() {
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error("导出Word失败:", error);
-    alert("导出Word失败：" + error.message);
+    showAlert("导出Word失败：" + error.message, { title: "导出失败", iconClass: "danger", icon: "!" });
   }
 }
 
 function exportCurrentReport() {
   if (!currentReportSession) {
-    alert("当前没有报告可导出");
+    showAlert("当前没有报告可导出", { title: "无法导出" });
     return;
   }
 
@@ -7618,6 +8599,12 @@ function closeTemplateAdmin() {
   if (editor) editor.style.display = "none";
 }
 
+function templateUsageLabel(template) {
+  const legacy = Number(template.legacy_usage_count || 0);
+  if (template.stats_available === false) return `统计暂不可用 · 历史引用 ${legacy}`;
+  return `本用户引用 ${Number(template.injection_count || 0)} · 成功 ${Number(template.success_count || 0)} · 历史引用 ${legacy}`;
+}
+
 function renderTemplateAdminList() {
   const list = document.getElementById("templateAdminList");
   const editor = document.getElementById("templateAdminEditor");
@@ -7643,8 +8630,9 @@ function renderTemplateAdminList() {
           <span class="route-admin-item-name">${escapeHtml(t.name)}</span>
           <code class="route-admin-item-id">${escapeHtml(t.route_id)} · ${escapeHtml(routeName(t.route_id))}</code>
           <span class="route-admin-item-badge ${enabled ? "on" : "off"}">${enabled ? "已启用" : "已停用"}</span>
+          ${t.is_custom ? '<span class="ra-badge-custom">个人</span>' : t.has_override ? '<span class="ra-badge-custom">个人改</span>' : ""}
           <span class="ra-tpl-src">${escapeHtml(t.source === "session" ? "收藏" : "手工")}</span>
-          <span class="ra-tpl-usage ${usage > 0 ? "hot" : ""}" title="生成时命中注入次数">📈 引用 ${usage}</span>
+          <span class="ra-tpl-usage ${usage > 0 ? "hot" : ""}" title="本用户自本次升级起的注入次数与通过校验并保存的生成次数；历史引用不追溯成功状态">📈 ${templateUsageLabel(t)}</span>
           <span class="route-admin-item-actions">
             <button class="btn btn-sm" data-act="edit">编辑</button>
             <button class="btn btn-sm" data-act="toggle">${enabled ? "停用" : "启用"}</button>
@@ -7680,7 +8668,7 @@ function renderTemplateAdminList() {
           setTemplateAdminHint("操作失败: " + err.message);
         }
       } else if (act === "del") {
-        if (!confirm("确认删除该模板？删除后不再参与生成注入。")) return;
+        if (!(await uiConfirm("确认删除该模板？删除后不再参与生成注入。", { danger: true, title: "删除模板" }))) return;
         try {
           const resp = await fetch(`/api/report-workbench/admin/templates/${encodeURIComponent(tid)}`, { method: "DELETE" });
           if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
@@ -7712,7 +8700,7 @@ function openTemplateEditor(tpl) {
         <div class="route-admin-editor-title">
           <span class="ra-title-text">${isNew ? "新增模板" : "编辑模板"}</span>
           ${isNew ? "" : `<code class="ra-title-id">${escapeHtml(t.id)}</code>`}
-          <span class="ra-title-sub">${isNew ? "入库前自动跑范文结构校验" : `保存后立即对生成生效 ｜ 📈 累计引用 ${t.usage_count || 0} 次`}</span>
+          <span class="ra-title-sub">${isNew ? "入库前自动跑范文结构校验" : `保存后立即对生成生效 ｜ ${templateUsageLabel(t)}`}</span>
         </div>
       </div>
       <div class="ra-card">
@@ -7789,9 +8777,9 @@ function openTemplateEditor(tpl) {
 
 // 收藏弹窗模板名称自动填充：从影像诊断首句提炼病种摘要，拼路由名前缀
 // 规则：取首行→截首句（。；）→剥离建议/随访子句与枚举前缀→超长按逗号边界截断→重名加序号
-function buildFavoriteName() {
-  const routeName = currentReportSession.route_name || "报告";
-  const diag = ((currentReportSession.report || {}).imaging_diagnosis || "").trim();
+function buildFavoriteName(session = currentReportSession) {
+  const routeName = (session || {}).route_name || "报告";
+  const diag = (((session || {}).report || {}).imaging_diagnosis || "").trim();
   const fallback = `${routeName}优秀范例_${new Date().toISOString().slice(5, 10)}`;
   if (!diag) return fallback;
   let first = diag.split(/\n+/).map((s) => s.trim()).filter(Boolean)[0] || "";
@@ -7816,11 +8804,15 @@ function buildFavoriteName() {
 }
 
 // 收藏当前报告为模板：弹窗预览所见/诊断并可编辑，确认后入模板库
-async function favoriteCurrentReport() {
-  if (!currentReportSession) {
-    alert("当前没有报告可收藏");
+// sessionOverride 传入历史会话时收藏该会话（右键菜单），否则收藏当前打开的报告
+let favoriteTargetConvId = "";
+async function favoriteCurrentReport(sessionOverride) {
+  const session = sessionOverride || currentReportSession;
+  if (!session) {
+    showAlert("当前没有报告可收藏", { title: "无法收藏" });
     return;
   }
+  favoriteTargetConvId = session.conversation_id || reportConversationId;
   const panel = document.getElementById("favoritePanel");
   if (!panel) return;
   // 先拉模板列表：用于名称重名去重
@@ -7830,15 +8822,15 @@ async function favoriteCurrentReport() {
   } catch (e) {
     console.warn("模板列表加载失败（忽略去重）:", e);
   }
-  const routes = reportRoutesCache.length ? reportRoutesCache : [{ id: currentReportSession.route_id, name: currentReportSession.route_name || currentReportSession.route_id }];
+  const routes = reportRoutesCache.length ? reportRoutesCache : [{ id: session.route_id, name: session.route_name || session.route_id }];
   document.getElementById("fvRoute").innerHTML = routes
-    .map((r) => `<option value="${escapeHtml(r.id)}" ${r.id === currentReportSession.route_id ? "selected" : ""}>${escapeHtml(r.name)}</option>`)
+    .map((r) => `<option value="${escapeHtml(r.id)}" ${r.id === session.route_id ? "selected" : ""}>${escapeHtml(r.name)}</option>`)
     .join("");
-  document.getElementById("fvName").value = buildFavoriteName();
+  document.getElementById("fvName").value = buildFavoriteName(session);
   document.getElementById("fvTags").value = "";
   document.getElementById("fvKeywords").value = "";
-  document.getElementById("fvFindings").value = currentReportSession.report.imaging_findings || "";
-  document.getElementById("fvDiagnosis").value = currentReportSession.report.imaging_diagnosis || "";
+  document.getElementById("fvFindings").value = session.report.imaging_findings || "";
+  document.getElementById("fvDiagnosis").value = session.report.imaging_diagnosis || "";
   document.getElementById("fvEnabled").checked = true;
   setFavoriteHint("");
   panel.style.display = "flex";
@@ -7869,7 +8861,7 @@ async function submitFavorite() {
   };
   setFavoriteHint("保存中…");
   try {
-    const resp = await fetch(`/api/report-workbench/sessions/${encodeURIComponent(reportConversationId)}/favorite`, {
+    const resp = await fetch(`/api/report-workbench/sessions/${encodeURIComponent(favoriteTargetConvId || reportConversationId)}/favorite`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -7881,4 +8873,363 @@ async function submitFavorite() {
   } catch (e) {
     setFavoriteHint("收藏失败: " + e.message);
   }
+}
+
+// ==================== 登录鉴权（门禁 + 角色化 UI） ====================
+
+const AUTH_API = "/api/report-workbench/auth";
+let authCurrentUser = null; // {username, role, display_name}
+
+function authShowError(msg) {
+  const el = document.getElementById("authError");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.hidden = !msg;
+}
+
+function authSwitchTab(tab) {
+  document.querySelectorAll(".auth-tab").forEach((b) => {
+    b.classList.toggle("active", b.dataset.authTab === tab);
+  });
+  const loginForm = document.getElementById("authLoginForm");
+  const regForm = document.getElementById("authRegisterForm");
+  if (loginForm) loginForm.hidden = tab !== "login";
+  if (regForm) regForm.hidden = tab !== "register";
+  authShowError("");
+}
+
+async function authRequest(path, payload) {
+  const resp = await fetch(`${AUTH_API}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+  return data;
+}
+
+function isAdminUser() {
+  return !!authCurrentUser && authCurrentUser.role === "admin";
+}
+
+// ===== 用户环境查看面板（仅管理员） =====
+
+function setUserAdminHint(text, ok = false) {
+  const el = document.getElementById("userAdminHint");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("ok", ok);
+}
+
+async function openUserAdmin() {
+  if (!isAdminUser()) return;
+  const panel = document.getElementById("userAdminPanel");
+  if (!panel) return;
+  panel.style.display = "flex";
+  setUserAdminHint("加载中…");
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/users?t=${Date.now()}`);
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    userAdminCache = await resp.json();
+    renderUserAdminList();
+    setUserAdminHint("");
+  } catch (e) {
+    setUserAdminHint("加载失败: " + e.message);
+  }
+}
+
+function closeUserAdmin() {
+  const panel = document.getElementById("userAdminPanel");
+  if (panel) panel.style.display = "none";
+  const detail = document.getElementById("userAdminDetail");
+  if (detail) detail.style.display = "none";
+}
+
+let userAdminCache = { users: [] };
+
+function renderUserAdminList() {
+  const list = document.getElementById("userAdminList");
+  const detail = document.getElementById("userAdminDetail");
+  if (!list) return;
+  list.style.display = "block";
+  if (detail) detail.style.display = "none";
+  const users = userAdminCache.users || [];
+  list.innerHTML = users
+    .map((u) => {
+      const t = u.created_at ? new Date(u.created_at * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
+      return `
+      <div class="route-admin-item" data-username="${escapeHtml(u.username)}">
+        <div class="route-admin-item-head">
+          <span class="route-admin-item-name">${escapeHtml(u.display_name || u.username)}</span>
+          <code class="route-admin-item-id">${escapeHtml(u.username)}</code>
+          <span class="route-admin-item-badge ${u.role === "admin" ? "on" : "off"}">${u.role === "admin" ? "管理员" : "普通用户"}</span>
+          <span class="route-admin-item-actions">
+            <button class="btn btn-sm" data-act="view">查看环境</button>
+          </span>
+        </div>
+        <div class="route-admin-item-meta">
+          注册 ${escapeHtml(t)} ｜ 个人路由 ${u.custom_routes} 条 ｜ 个人模板 ${u.custom_templates} 条 ｜ 删除基线模板 ${u.deleted_templates} 条
+        </div>
+      </div>`;
+    })
+    .join("");
+  list.querySelectorAll(".route-admin-item [data-act='view']").forEach((btn) => {
+    btn.addEventListener("click", () => openUserEnvDetail(btn.closest(".route-admin-item").dataset.username));
+  });
+}
+
+// 默认展示该用户实际生效的全量路由/模板（人人都有）；个人改动以徽标高亮，可切"仅个人改动"过滤
+let userEnvDetailState = { username: "", scope: "all", data: null };
+
+async function openUserEnvDetail(username, scope = userEnvDetailState.scope || "all") {
+  const list = document.getElementById("userAdminList");
+  const detail = document.getElementById("userAdminDetail");
+  if (!detail) return;
+  if (list) list.style.display = "none";
+  detail.style.display = "block";
+  setUserAdminHint("加载中…");
+  try {
+    const resp = await fetch(`/api/report-workbench/admin/users/${encodeURIComponent(username)}/env?scope=${scope}&t=${Date.now()}`);
+    if (!resp.ok) throw new Error((await resp.json()).detail || `HTTP ${resp.status}`);
+    const env = await resp.json();
+    userEnvDetailState = { username, scope, data: env };
+    renderUserEnvDetail();
+    setUserAdminHint("");
+  } catch (e) {
+    setUserAdminHint("加载失败: " + e.message);
+  }
+}
+
+function renderUserEnvDetail() {
+  const detail = document.getElementById("userAdminDetail");
+  const env = userEnvDetailState.data;
+  if (!detail || !env) return;
+  const routes = env.routes || [];
+  const tpls = env.templates || [];
+  const deleted = env.deleted_templates || [];
+  const scopeBtn = (val, label) =>
+    `<button class="btn btn-sm ua-scope-btn ${userEnvDetailState.scope === val ? "active" : ""}" data-scope="${val}">${label}</button>`;
+  const isChanges = userEnvDetailState.scope === "changes";
+  const emptyRoute = isChanges ? "该用户暂无个人路由改动（生成时使用共享基线路由）" : "无路由记录";
+  const emptyTpl = isChanges ? "该用户暂无个人模板改动（生成时使用共享基线模板）" : "无模板记录";
+  detail.innerHTML = `
+    <div class="ra-card">
+      <div class="ra-editor-title">用户「${escapeHtml(env.username)}」的路由 / 模板环境</div>
+      <div class="ua-toolbar">
+        <button class="btn btn-sm" id="uaBack">← 返回用户列表</button>
+        <span class="ua-scope-group">${scopeBtn("all", "全部生效视图")}${scopeBtn("changes", "仅个人改动")}</span>
+      </div>
+      <h4 class="ua-sec">路由（${routes.length}）</h4>
+      ${routes.length ? routes.map((r, i) => `
+        <div class="ua-block">
+          <div class="ua-block-head">
+            ${escapeHtml(r.name || r.id)} <code>${escapeHtml(r.id)}</code>
+            ${r.is_custom ? '<span class="ra-badge-custom">个人新增</span>' : r.has_override ? '<span class="ra-badge-custom">个人改</span>' : '<span class="ua-badge-base">基线</span>'}
+            ${r.enabled === false ? '<span class="ua-badge-off">已停用</span>' : ""}
+            <span class="ua-block-actions"><button class="btn btn-sm" data-preview="route" data-idx="${i}">👁 预览</button></span>
+          </div>
+          <div class="ua-meta">模态 ${(r.modalities || []).join("/") || "—"} ｜ 部位 ${(r.body_parts || []).join("/") || "—"} ｜ 快捷标签 ${(r.quick_tags || []).slice(0, 6).join("、") || "—"}</div>
+          ${r.has_override && Object.keys(r.override_fields || {}).length ? `<div class="ua-meta ua-meta-ov">改动字段：${Object.keys(r.override_fields).join("、")}</div>` : ""}
+        </div>`).join("") : `<p class="ua-empty">${emptyRoute}</p>`}
+      <h4 class="ua-sec">模板（${tpls.length}）</h4>
+      ${tpls.length ? tpls.map((t, i) => `
+        <div class="ua-block">
+          <div class="ua-block-head">
+            ${escapeHtml(t.name || t.id)} <code>${escapeHtml(t.route_id || "")}</code>
+            ${t.is_custom ? '<span class="ra-badge-custom">个人</span>' : t.has_override ? '<span class="ra-badge-custom">个人改</span>' : '<span class="ua-badge-base">基线</span>'}
+            ${t.enabled === false ? '<span class="ua-badge-off">已停用</span>' : ""}
+            <span class="ua-block-actions"><button class="btn btn-sm" data-preview="tpl" data-idx="${i}">👁 预览</button></span>
+          </div>
+          <div class="ua-meta">来源 ${escapeHtml(t.source === "session" ? "收藏" : "手工")} ｜ 质量分 ${t.quality_score ?? "—"} ｜ 引用 ${t.usage_count ?? 0} 次 ｜ 关键词 ${(t.match_keywords || []).slice(0, 6).join("、") || "—"}</div>
+        </div>`).join("") : `<p class="ua-empty">${emptyTpl}</p>`}
+      <h4 class="ua-sec">删除的基线模板（${deleted.length}）</h4>
+      ${deleted.length ? `<p class="ua-empty">${deleted.map(escapeHtml).join("、")}</p>` : '<p class="ua-empty">无</p>'}
+    </div>`;
+  detail.querySelector("#uaBack")?.addEventListener("click", renderUserAdminList);
+  detail.querySelectorAll(".ua-scope-btn").forEach((b) => {
+    b.addEventListener("click", () => openUserEnvDetail(userEnvDetailState.username, b.dataset.scope));
+  });
+  detail.querySelectorAll("[data-preview]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const idx = Number(b.dataset.idx);
+      if (b.dataset.preview === "route") showUserEnvPreview("route", routes[idx]);
+      else showUserEnvPreview("tpl", tpls[idx]);
+    });
+  });
+}
+
+// 预览弹窗：路由专科 Prompt 全文 / 模板范文全文
+function showUserEnvPreview(kind, item) {
+  if (!item) return;
+  const isRoute = kind === "route";
+  const title = isRoute ? `路由预览：${item.name || item.id}` : `模板预览：${item.name || item.id}`;
+  const body = isRoute
+    ? `<div class="ua-meta ua-preview-meta">路由 <code>${escapeHtml(item.id)}</code> ｜ 模态 ${(item.modalities || []).join("/") || "—"} ｜ ${item.enabled === false ? "已停用" : "启用中"}</div>
+       <pre class="ua-pre ua-preview-pre">${escapeHtml(item.prompt_md || "（无专科 Prompt 内容）")}</pre>`
+    : `<div class="ua-meta ua-preview-meta">路由 <code>${escapeHtml(item.route_id || "")}</code> ｜ ${item.enabled === false ? "已停用" : "启用中"} ｜ 质量分 ${item.quality_score ?? "—"}</div>
+       <h5 class="ua-sec">影像所见范文</h5>
+       <pre class="ua-pre ua-preview-pre">${escapeHtml(item.imaging_findings || "（空）")}</pre>
+       <h5 class="ua-sec">影像诊断范文</h5>
+       <pre class="ua-pre ua-preview-pre">${escapeHtml(item.imaging_diagnosis || "（空）")}</pre>`;
+  const { overlay, actions } = _uiModalShell(isRoute ? "🧭" : "📚", "info", title, body);
+  const okBtn = document.createElement("button");
+  okBtn.type = "button";
+  okBtn.className = "ui-modal-btn primary";
+  okBtn.textContent = "关闭";
+  okBtn.addEventListener("click", () => _uiModalClose(overlay));
+  actions.appendChild(okBtn);
+  okBtn.focus();
+}
+
+// 应用角色化 UI：普通用户隐藏左侧边栏与管理入口
+function applyAuthRole(user) {
+  authCurrentUser = user || null;
+  document.body.classList.toggle("role-user", !!user && user.role !== "admin");
+  document.body.classList.toggle("role-admin", !!user && user.role === "admin");
+  const chip = document.getElementById("authUserChip");
+  if (chip) {
+    chip.hidden = !user;
+    const roleEl = document.getElementById("authUserRole");
+    const nameEl = document.getElementById("authUserName");
+    if (roleEl) roleEl.textContent = user && user.role === "admin" ? "管理员" : "普通用户";
+    if (nameEl) nameEl.textContent = user ? user.display_name || user.username : "";
+  }
+}
+
+// 登录/注册成功后进入工作台
+function enterWorkspace(user) {
+  applyAuthRole(user);
+  const overlay = document.getElementById("authOverlay");
+  const root = document.getElementById("appRoot");
+  if (overlay) overlay.hidden = true;
+  if (root) root.hidden = false;
+  resetReportWorkbenchForUser();
+}
+
+// 用户切换（登录/退出后再登录）时重置报告工作台：
+// 清掉上一用户的当前会话与历史侧栏，避免新用户看到他人历史、点开报 404
+function resetReportWorkbenchForUser() {
+  if (!reportWorkbenchLoaded) return;
+  createNewReportSession();
+  loadReportHistory();
+}
+
+// 退出登录：点击立即切回登录层（不等网络），服务端清会话在后台完成
+function authLogout() {
+  authCurrentUser = null;
+  applyAuthRole(null);
+  const overlay = document.getElementById("authOverlay");
+  const root = document.getElementById("appRoot");
+  if (root) root.hidden = true;
+  if (overlay) overlay.hidden = false;
+  authSwitchTab("login");
+  const lu = document.getElementById("authLoginUser");
+  const lp = document.getElementById("authLoginPass");
+  if (lu) lu.value = "";
+  if (lp) lp.value = "";
+  fetch(`${AUTH_API}/logout`, { method: "POST" }).catch(() => {});
+}
+
+// 退出前二次确认：居中自绘确认框，确认后才真正退出
+async function confirmLogout() {
+  const ok = await uiConfirm("确定要退出登录吗？退出后需重新登录才能使用工作台。", {
+    title: "退出登录",
+    okText: "退出",
+    cancelText: "取消",
+  });
+  if (ok) authLogout();
+}
+
+// 委托监听兜底：无论绑定是否执行，退出按钮点击都有响应
+document.addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest ? e.target.closest("#authLogoutBtn") : null;
+  if (btn) {
+    e.preventDefault();
+    confirmLogout();
+  }
+});
+
+// 启动门禁：探会话 → 已登录进工作台；未登录停留登录层（表单与退出按钮始终绑定）
+async function initAuthGate() {
+  bindAuthForms();
+  let user = null;
+  try {
+    const resp = await fetch(`${AUTH_API}/me`);
+    if (resp.ok) {
+      const data = await resp.json();
+      user = data.user || null;
+    }
+  } catch (e) {
+    console.warn("探测登录态失败:", e);
+  }
+  if (user) {
+    enterWorkspace(user);
+    return user;
+  }
+  return null;
+}
+
+let authFormsBound = false;
+
+function bindAuthForms() {
+  if (authFormsBound) return;
+  authFormsBound = true;
+
+  document.querySelectorAll(".auth-tab").forEach((btn) => {
+    btn.addEventListener("click", () => authSwitchTab(btn.dataset.authTab));
+  });
+
+  const loginForm = document.getElementById("authLoginForm");
+  if (loginForm) {
+    loginForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      authShowError("");
+      const btn = loginForm.querySelector(".auth-submit");
+      if (btn) btn.disabled = true;
+      try {
+        const data = await authRequest("/login", {
+          username: document.getElementById("authLoginUser").value.trim(),
+          password: document.getElementById("authLoginPass").value,
+        });
+        enterWorkspace(data.user);
+        switchWorkspaceTab(workspaceActiveTab);
+      } catch (err) {
+        authShowError(err.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  }
+
+  const regForm = document.getElementById("authRegisterForm");
+  if (regForm) {
+    regForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      authShowError("");
+      const pass = document.getElementById("authRegPass").value;
+      const pass2 = document.getElementById("authRegPass2").value;
+      if (pass !== pass2) {
+        authShowError("两次输入的密码不一致");
+        return;
+      }
+      const btn = regForm.querySelector(".auth-submit");
+      if (btn) btn.disabled = true;
+      try {
+        const data = await authRequest("/register", {
+          username: document.getElementById("authRegUser").value.trim(),
+          password: pass,
+          display_name: document.getElementById("authRegName").value.trim(),
+        });
+        enterWorkspace(data.user);
+        switchWorkspaceTab(workspaceActiveTab);
+      } catch (err) {
+        authShowError(err.message);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+  }
+
+  // 退出按钮由 document 委托监听统一处理，无需在此绑定
 }

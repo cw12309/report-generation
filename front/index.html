@@ -4,10 +4,35 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>影像报告生成系统</title>
-    <link rel="stylesheet" href="/static/style.css?v=75" />
+    <link rel="stylesheet" href="/static/style.css?v=95" />
   </head>
   <body>
-    <div class="app">
+    <!-- 登录/注册门禁层：未登录时唯一可见界面 -->
+    <div class="auth-overlay" id="authOverlay">
+      <div class="auth-card">
+        <div class="auth-brand">🏥</div>
+        <h2 class="auth-title">影像报告生成系统</h2>
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab active" data-auth-tab="login">登录</button>
+          <button type="button" class="auth-tab" data-auth-tab="register">注册</button>
+        </div>
+        <form id="authLoginForm" class="auth-form" autocomplete="on">
+          <label class="auth-field">用户名<input id="authLoginUser" autocomplete="username" placeholder="请输入用户名" required /></label>
+          <label class="auth-field">密码<input id="authLoginPass" type="password" autocomplete="current-password" placeholder="请输入密码" required /></label>
+          <button class="auth-submit" type="submit">登 录</button>
+        </form>
+        <form id="authRegisterForm" class="auth-form" hidden autocomplete="on">
+          <label class="auth-field">用户名<input id="authRegUser" autocomplete="username" placeholder="2-20 位中英文/数字/下划线" required /></label>
+          <label class="auth-field">昵称<input id="authRegName" maxlength="20" placeholder="选填，默认同用户名" /></label>
+          <label class="auth-field">密码<input id="authRegPass" type="password" autocomplete="new-password" placeholder="至少 6 位" required /></label>
+          <label class="auth-field">确认密码<input id="authRegPass2" type="password" autocomplete="new-password" placeholder="再次输入密码" required /></label>
+          <button class="auth-submit" type="submit">注册并登录</button>
+        </form>
+        <div class="auth-error" id="authError" hidden></div>
+      </div>
+    </div>
+
+    <div class="app" id="appRoot" hidden>
       <!-- 全局一级导航：固定保留在最左侧 -->
       <nav class="sidebar" id="sidebar">
         <div class="sidebar-brand">🏥</div>
@@ -15,30 +40,34 @@
           <button
             class="sidebar-btn active"
             data-page="workspace"
-            title="工作台"
+            title="报告生成"
           >
             <span class="sidebar-icon">💬</span>
-            <span class="sidebar-label">工作台</span>
+            <span class="sidebar-label">报告生成</span>
           </button>
-          <button class="sidebar-btn" data-page="kb" title="知识库管理">
+          <button class="sidebar-btn admin-only" data-page="insights" title="管理中台">
+            <span class="sidebar-icon">📈</span>
+            <span class="sidebar-label">中台</span>
+          </button>
+          <button class="sidebar-btn" data-page="kb" title="知识库">
             <span class="sidebar-icon">📚</span>
-            <span class="sidebar-label">Knowledge Base</span>
+            <span class="sidebar-label">知识库</span>
           </button>
           <button class="sidebar-btn" data-page="deployments" title="API 上线">
             <span class="sidebar-icon">🚀</span>
             <span class="sidebar-label">API 上线</span>
           </button>
-          <button class="sidebar-btn" data-page="eval" title="评测中心">
+          <button class="sidebar-btn" data-page="eval" title="评测">
             <span class="sidebar-icon">🧪</span>
-            <span class="sidebar-label">Eval</span>
+            <span class="sidebar-label">评测</span>
           </button>
-          <button class="sidebar-btn" data-page="monitor" title="会话记录">
+          <button class="sidebar-btn" data-page="monitor" title="监控">
             <span class="sidebar-icon">📊</span>
-            <span class="sidebar-label">Monitor</span>
+            <span class="sidebar-label">监控</span>
           </button>
-          <button class="sidebar-btn" data-page="config" title="系统配置">
+          <button class="sidebar-btn" data-page="config" title="设置">
             <span class="sidebar-icon">⚙️</span>
-            <span class="sidebar-label">Config</span>
+            <span class="sidebar-label">设置</span>
           </button>
         </div>
       </nav>
@@ -51,9 +80,9 @@
           <div class="page active" id="pageWorkspace">
             <!-- 工作台子导航 Tab 栏 -->
             <nav class="workspace-tabs">
-              <button class="workspace-tab active" data-workspace-tab="report">综合报告</button>
-              <button class="workspace-tab" data-workspace-tab="agent">通用 Agent</button>
-              <button class="workspace-tab" data-workspace-tab="breast-mri">乳腺 MRI</button>
+              <button class="workspace-tab active" data-workspace-tab="report">基于规则</button>
+              <button class="workspace-tab" data-workspace-tab="agent">基于模版</button>
+              <button class="workspace-tab" data-workspace-tab="breast-mri">基于结构化</button>
             </nav>
 
             <!-- Agent 子视图 -->
@@ -176,7 +205,6 @@
                 <!-- 左侧：历史会话 -->
                 <aside class="report-history-sidebar">
                   <div class="report-history-header">
-                    <h3>报告历史</h3>
                     <button id="reportNewSessionBtn" class="report-new-session-btn">
                       新建报告
                     </button>
@@ -208,6 +236,10 @@
 
                     <!-- 报告展示 -->
                     <div class="report-sections" id="reportSections" style="display: none">
+                      <details id="reportTemplateReference" style="display:none">
+                        <summary id="reportTemplateReferenceSummary"></summary>
+                        <p id="reportTemplateReferenceDetail"></p>
+                      </details>
                       <!-- 影像所见 -->
                       <div class="report-section">
                         <div class="report-section-header">
@@ -215,11 +247,9 @@
                           <button class="report-copy-btn" data-section="findings">复制</button>
                         </div>
                         <div class="report-section-content" id="reportFindingsContent"></div>
-                      </div>
 
-                      <!-- 影像诊断 -->
-                      <div class="report-section">
-                        <div class="report-section-header">
+                        <!-- 影像诊断 -->
+                        <div class="report-section-header report-section-header-gap">
                           <h3 class="report-section-title">影像诊断</h3>
                           <button class="report-copy-btn" data-section="diagnosis">复制</button>
                         </div>
@@ -267,26 +297,35 @@
                     <button class="report-export-menu-item" data-fmt="docx">Word</button>
                     <button class="report-export-menu-item" data-fmt="md">MD</button>
                   </div>
-                  <button class="report-action-btn" id="reportVersionBtn" title="历史版本">
+                  <button class="report-action-btn admin-only" id="reportVersionBtn" title="历史版本">
                     🕐<br><span>版本</span>
                   </button>
                   <div class="report-model-picker">
-                    <button class="report-action-btn" id="reportModelBtn" title="选择生成模型">
+                    <button class="report-action-btn" id="reportModelBtn" title="选择报告模型与路由模型">
                       🤖<br><span>模型</span>
                     </button>
                     <div class="report-model-menu" id="reportModelMenu" style="display: none">
-                      <div class="report-model-menu-title">生成模型</div>
+                      <div class="report-model-menu-title">
+                        报告模型<span class="report-model-scope-hint">报告生成 / 迭代</span>
+                      </div>
                       <div id="reportModelList"></div>
+                      <div class="report-model-menu-title report-model-menu-title-sub">
+                        路由模型<span class="report-model-scope-hint">新建路由 AI 草稿</span>
+                      </div>
+                      <div id="routeModelList"></div>
                     </div>
                   </div>
-                  <button class="report-action-btn" id="reportRouteAdminBtn" title="路由配置管理">
+                  <button class="report-action-btn" id="reportRouteAdminBtn" title="路由配置管理（个人环境，互不影响）">
                     🧭<br><span>路由</span>
                   </button>
-                  <button class="report-action-btn" id="reportTemplateAdminBtn" title="报告模板库管理">
+                  <button class="report-action-btn" id="reportTemplateAdminBtn" title="报告模板库管理（个人环境，互不影响）">
                     📚<br><span>模板</span>
                   </button>
-                  <button class="report-action-btn" id="reportFavoriteBtn" title="收藏当前报告为模板">
+                  <button class="report-action-btn" id="reportFavoriteBtn" title="收藏当前报告为模板（存入个人模板库）">
                     ⭐<br><span>收藏</span>
+                  </button>
+                  <button class="report-action-btn admin-only" id="reportUserAdminBtn" title="用户环境查看（仅管理员）">
+                    👥<br><span>用户</span>
                   </button>
                 </aside>
               </div>
@@ -297,7 +336,7 @@
           <!-- 路由配置管理弹窗 -->
           <div class="route-admin-panel" id="routeAdminPanel" style="display: none">
             <div class="route-admin-header">
-              <h3>路由配置管理</h3>
+              <h3>路由配置管理<span class="ra-scope-hint">个人环境：改动仅对自己生效，不影响其他用户</span></h3>
               <button class="llm-config-close" id="routeAdminClose">✕</button>
             </div>
             <div class="route-admin-body" id="routeAdminBody">
@@ -313,7 +352,7 @@
           <!-- 报告模板库管理弹窗 -->
           <div class="route-admin-panel" id="templateAdminPanel" style="display: none">
             <div class="route-admin-header">
-              <h3>报告模板库管理</h3>
+              <h3>报告模板库管理<span class="ra-scope-hint">个人环境：改动仅对自己生效，不影响其他用户</span></h3>
               <button class="llm-config-close" id="templateAdminClose">✕</button>
             </div>
             <div class="route-admin-body" id="templateAdminBody">
@@ -323,6 +362,21 @@
             <div class="route-admin-footer">
               <button class="btn btn-sm btn-primary" id="templateAdminNewBtn">＋ 新增模板</button>
               <span class="route-admin-hint" id="templateAdminHint"></span>
+            </div>
+          </div>
+
+          <!-- 用户环境查看弹窗（仅管理员） -->
+          <div class="route-admin-panel" id="userAdminPanel" style="display: none">
+            <div class="route-admin-header">
+              <h3>用户环境查看<span class="ra-scope-hint">仅管理员：查看各用户的个人路由与提示词覆写</span></h3>
+              <button class="llm-config-close" id="userAdminClose">✕</button>
+            </div>
+            <div class="route-admin-body" id="userAdminBody">
+              <div class="route-admin-list" id="userAdminList"></div>
+              <div class="route-admin-editor" id="userAdminDetail" style="display: none"></div>
+            </div>
+            <div class="route-admin-footer">
+              <span class="route-admin-hint" id="userAdminHint"></span>
             </div>
           </div>
 
@@ -1370,6 +1424,102 @@ data: [DONE]</code></pre>
           </div>
 
           <!-- 监控页面 -->
+          <div class="page" id="pageInsights">
+            <header class="header">
+              <h1>管理中台</h1>
+              <p class="subtitle">
+                报告生成实际效果监控：更新评价比例（采纳/修改/拒绝）、分用户统计与最终报告查看
+              </p>
+            </header>
+
+            <div class="insights-body">
+              <div class="insights-cards" id="insightsCards"></div>
+
+              <div class="insights-grid">
+                <div class="insights-panel">
+                  <h3 class="insights-panel-title">总体评价比例</h3>
+                  <div id="insightsOverallBar"></div>
+                  <div class="insights-legend" id="insightsLegend"></div>
+                </div>
+                <div class="insights-panel">
+                  <h3 class="insights-panel-title">分用户评价分布与采纳率</h3>
+                  <div id="insightsUserBars"></div>
+                </div>
+              </div>
+
+              <div class="insights-panel">
+                <div class="insights-list-head">
+                  <h3 class="insights-panel-title">报告列表</h3>
+                  <span class="insights-count" id="insightsReportCount"></span>
+                  <div class="insights-filter-bar">
+                    <select id="insightsUserFilter" class="insights-filter">
+                      <option value="">全部用户</option>
+                    </select>
+                    <select id="insightsRouteFilter" class="insights-filter">
+                      <option value="">全部路由</option>
+                    </select>
+                    <select id="insightsChoiceFilter" class="insights-filter">
+                      <option value="">全部最终评价</option>
+                      <option value="adopt">采纳</option>
+                      <option value="modify">修改</option>
+                      <option value="reject">拒绝</option>
+                      <option value="none">未评</option>
+                    </select>
+                    <select id="insightsSort" class="insights-filter">
+                      <option value="time_desc">最近更新</option>
+                      <option value="time_asc">最早更新</option>
+                      <option value="words_desc">字数多→少</option>
+                      <option value="words_asc">字数少→多</option>
+                      <option value="round_desc">追问多→少</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="insights-table-wrap">
+                  <table class="insights-table">
+                    <thead>
+                      <tr>
+                        <th>用户</th>
+                        <th>路由</th>
+                        <th>版本</th>
+                        <th>追问</th>
+                        <th>评价分布</th>
+                        <th>最终评价</th>
+                        <th>更新时间</th>
+                        <th>字数</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="insightsReportRows"></tbody>
+                  </table>
+                </div>
+                <div class="insights-pager" id="insightsPager"></div>
+              </div>
+
+              <div class="insights-panel">
+                <div class="insights-list-head">
+                  <h3 class="insights-panel-title">路由评价分布</h3>
+                  <span class="insights-count" id="insightsRouteCount"></span>
+                </div>
+                <div class="insights-table-wrap">
+                  <table class="insights-table insights-route-table">
+                    <thead>
+                      <tr>
+                        <th>路由</th>
+                        <th>报告数</th>
+                        <th>评价分布</th>
+                        <th class="insights-th-bar">分布</th>
+                        <th>采纳率</th>
+                        <th>修改率</th>
+                        <th>拒绝率</th>
+                      </tr>
+                    </thead>
+                    <tbody id="insightsRouteRows"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="page" id="pageMonitor">
             <header class="header">
               <h1>系统监控</h1>
@@ -1938,6 +2088,13 @@ data: [DONE]</code></pre>
       hidden
     ></div>
 
-    <script src="/static/app.js?v=113"></script>
+    <!-- 当前登录用户胶囊（含退出登录） -->
+    <div class="auth-user-chip" id="authUserChip" hidden>
+      <span class="auth-user-role" id="authUserRole"></span>
+      <span class="auth-user-name" id="authUserName"></span>
+      <button type="button" id="authLogoutBtn">退出登录</button>
+    </div>
+
+    <script src="/static/app.js?v=145"></script>
   </body>
 </html>

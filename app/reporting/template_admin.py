@@ -7,6 +7,11 @@
 """
 
 import logging
+import hashlib
+import json
+import threading
+import uuid
+from collections import OrderedDict
 import re
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +26,10 @@ TEMPLATES_FILE = Path(__file__).parent / "prompts" / "templates.yml"
 # 内存缓存（保存/热重载时刷新）
 _cache: list[dict] = []
 _cache_loaded = False
+_cache_stamp = None
+_cache_generation = 0
+_index_cache = OrderedDict()
+_index_lock = threading.Lock()
 
 
 def _now() -> str:
@@ -29,8 +38,13 @@ def _now() -> str:
 
 def load_templates(force: bool = False) -> list[dict]:
     """加载模板库（带缓存）"""
-    global _cache, _cache_loaded
-    if _cache_loaded and not force:
+    global _cache, _cache_loaded, _cache_stamp, _cache_generation
+    try:
+        st = TEMPLATES_FILE.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = None
+    if _cache_loaded and not force and stamp == _cache_stamp:
         return _cache
     _cache = []
     if TEMPLATES_FILE.exists():
@@ -43,6 +57,8 @@ def load_templates(force: bool = False) -> list[dict]:
         except Exception as e:
             logger.warning(f"读取模板库失败: {e}")
     _cache_loaded = True
+    _cache_stamp = stamp
+    _cache_generation += 1
     return _cache
 
 
@@ -52,12 +68,15 @@ def reload_templates() -> list[dict]:
 
 def save_templates(templates: list[dict]):
     """写盘并刷新缓存"""
-    global _cache, _cache_loaded
+    global _cache, _cache_loaded, _cache_stamp, _cache_generation
     TEMPLATES_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(TEMPLATES_FILE, "w", encoding="utf-8") as f:
         yaml.safe_dump({"templates": templates}, f, allow_unicode=True, sort_keys=False, width=1000)
     _cache = list(templates)
     _cache_loaded = True
+    st = TEMPLATES_FILE.stat()
+    _cache_stamp = (st.st_mtime_ns, st.st_size)
+    _cache_generation += 1
     logger.info(f"模板库已保存: {len(templates)} 条")
 
 
@@ -104,8 +123,25 @@ def validate_template_payload(payload: dict, existing_ids: list[str], allow_same
     return errors
 
 
+def normalize_template(payload: dict, existing: Optional[dict] = None) -> dict:
+    """字段规整（名称/路由/标签/关键词/范文/启停/质量分），供全局与个人环境共用"""
+    t = dict(existing or {})
+    t.update(payload or {})
+    t["name"] = str(t.get("name") or "").strip()
+    t["route_id"] = str(t.get("route_id") or "").strip()
+    t["tags"] = [str(x).strip() for x in (t.get("tags") or []) if str(x).strip()]
+    t["match_keywords"] = [str(k).strip() for k in (t.get("match_keywords") or []) if str(k).strip()]
+    t["imaging_findings"] = str(t.get("imaging_findings") or "").strip()
+    t["imaging_diagnosis"] = str(t.get("imaging_diagnosis") or "").strip()
+    t["source"] = str(t.get("source") or "manual")
+    t["enabled"] = bool(t.get("enabled", True))
+    t["quality_score"] = max(1, min(5, int(t.get("quality_score") or 5)))
+    t["updated_at"] = _now()
+    return t
+
+
 def upsert_template(payload: dict) -> dict:
-    """新增或更新模板，返回落盘后的模板"""
+    """新增或更新模板（全局基线库），返回落盘后的模板"""
     templates = load_templates()
     payload = dict(payload or {})
     tid = str(payload.get("id") or "").strip()
@@ -115,16 +151,7 @@ def upsert_template(payload: dict) -> dict:
         while any(t.get("id") == tid for t in templates):
             tid = _new_id() + "_x"
     payload["id"] = tid
-    payload["name"] = str(payload.get("name") or "").strip()
-    payload["route_id"] = str(payload.get("route_id") or "").strip()
-    payload["tags"] = [str(t).strip() for t in (payload.get("tags") or []) if str(t).strip()]
-    payload["match_keywords"] = [str(k).strip() for k in (payload.get("match_keywords") or []) if str(k).strip()]
-    payload["imaging_findings"] = str(payload.get("imaging_findings") or "").strip()
-    payload["imaging_diagnosis"] = str(payload.get("imaging_diagnosis") or "").strip()
-    payload["source"] = str(payload.get("source") or "manual")
-    payload["enabled"] = bool(payload.get("enabled", True))
-    payload["quality_score"] = max(1, min(5, int(payload.get("quality_score") or 5)))
-    payload["updated_at"] = _now()
+    payload = normalize_template(payload)
 
     replaced = False
     for i, t in enumerate(templates):
@@ -161,16 +188,6 @@ def toggle_template(tid: str) -> Optional[bool]:
     return None
 
 
-def bump_usage(tid: str):
-    """引用计数 +1（生成命中时调用，不触发全量重写缓存以外的 IO 风险）"""
-    templates = load_templates()
-    for t in templates:
-        if t.get("id") == tid:
-            t["usage_count"] = int(t.get("usage_count") or 0) + 1
-            save_templates(templates)
-            return
-
-
 # ===== 匹配与注入 =====
 
 _STOP = set("的了是在和有与及或等个一不未见明显大致约左右侧上下内外部行扫描范围本次检查图像质量")
@@ -187,35 +204,69 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
-def match_template(route_id: str, doctor_input: str, threshold: float = 0.18) -> Optional[dict]:
-    """按路由+医生输入匹配最佳启用模板。
+def template_version(template: dict) -> str:
+    fields = ("name", "route_id", "tags", "match_keywords", "imaging_findings", "imaging_diagnosis", "quality_score")
+    content = json.dumps({key: template.get(key) for key in fields}, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
-    优先级：match_keywords/tags 精确子串命中（计分）→ bigram Jaccard 相似度兜底。
-    """
-    templates = [t for t in load_templates() if t.get("enabled", True) and t.get("route_id") == route_id]
-    if not templates:
-        return None
+
+def _candidate_index(username: str) -> dict:
+    """Bounded per-user/route index. Template edits invalidate it; counters do not."""
+    from . import user_env
+    base = load_templates()
+    key = (username, _cache_generation, user_env.cache_version(username))
+    with _index_lock:
+        if key in _index_cache:
+            _index_cache.move_to_end(key)
+            return _index_cache[key]
+    by_route = {}
+    for template in user_env.merged_templates(username, base):
+        if not template.get("enabled", True):
+            continue
+        template = dict(template)
+        keywords = tuple((template.get("match_keywords") or []) + (template.get("tags") or []))
+        grams = frozenset(_bigrams(f"{template.get('imaging_findings', '')} {template.get('imaging_diagnosis', '')}"))
+        by_route.setdefault(template.get("route_id"), []).append((template, keywords, grams, template_version(template)))
+    with _index_lock:
+        _index_cache[key] = by_route
+        while len(_index_cache) > 64:
+            _index_cache.popitem(last=False)
+    return by_route
+
+
+def match_template_with_reference(route_id: str, doctor_input: str, threshold: float = 0.18):
+    from . import user_env
     text = doctor_input or ""
-    scored: list[tuple[float, dict]] = []
-    for t in templates:
-        # 文本证据分：命中关键词/标签 + bigram 相似度；不足阈值直接跳过（先验不得单独触发）
-        base = 0.0
-        for kw in (t.get("match_keywords") or []) + (t.get("tags") or []):
-            if kw and kw in text:
-                base += 2.0 + len(kw) * 0.1
-        sim = _jaccard(_bigrams(text), _bigrams(f"{t.get('imaging_findings', '')} {t.get('imaging_diagnosis', '')}"))
-        base += sim * 3.0
+    input_grams = _bigrams(text)
+    best = None
+    for template, keywords, grams, revision in _candidate_index(user_env.current_user()).get(route_id, []):
+        matched = [kw for kw in keywords if kw and kw in text]
+        similarity = _jaccard(input_grams, grams)
+        base = sum(2.0 + len(kw) * 0.1 for kw in matched) + similarity * 3.0
         if base < threshold:
             continue
-        # 质量分与使用次数仅作同分排序先验
-        score = base + int(t.get("quality_score") or 5) * 0.02 + min(int(t.get("usage_count") or 0), 20) * 0.005
-        scored.append((score, t))
-    if not scored:
-        return None
-    scored.sort(key=lambda x: x[0], reverse=True)
-    best_score, best = scored[0]
-    logger.info(f"模板库命中: {best.get('id')} score={best_score:.2f}")
-    return best
+        # Preserve existing matching weights; historical popularity cannot trigger a match.
+        score = base + int(template.get("quality_score") or 5) * 0.02 + min(int(template.get("usage_count") or 0), 20) * 0.005
+        if best is None or score > best[0]:
+            best = (score, template, revision, matched, similarity, base)
+    if best is None:
+        return None, None
+    score, template, revision, matched, similarity, base = best
+    reference = {
+        "attempt_id": uuid.uuid4().hex,
+        "template_id": template["id"], "template_name": template.get("name", ""),
+        "template_version": revision, "template_updated_at": template.get("updated_at", ""),
+        "route_id": route_id, "match_score": round(score, 4), "text_score": round(base, 4),
+        "matched_keywords": list(dict.fromkeys(matched)), "text_similarity": round(similarity, 4),
+        "match_reason": "关键词/标签命中" if matched else "范文文字相似度匹配",
+    }
+    logger.info("模板库命中: %s score=%.2f version=%s", template["id"], score, revision)
+    return dict(template), reference
+
+
+def match_template(route_id: str, doctor_input: str, threshold: float = 0.18) -> Optional[dict]:
+    template, _ = match_template_with_reference(route_id, doctor_input, threshold)
+    return template
 
 
 def build_injection_block(tpl: dict) -> str:

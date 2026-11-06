@@ -327,3 +327,44 @@ def test_deployment_management_auth_stateful_chat_and_regression(tmp_path, monke
     assert store.session_exists(
         store.get_api_conversation(deployment_id, conversation_id)["internal_session_id"]
     )
+
+
+def test_agent_stream_heartbeats_while_model_is_slow(tmp_path, monkeypatch):
+    import asyncio
+    store = SessionStore(str(tmp_path / "heartbeat.db"))
+    store.create_knowledge_base("kb", "Synthetic", status="active")
+    async def slow(query, session_id, stm, tracker, client, last, emit, **kwargs):
+        await asyncio.sleep(0.03)
+        emit("message", {"content":"ready"})
+        return "ready"
+    monkeypatch.setattr(server_module,"run_pipeline",slow)
+    monkeypatch.setattr(server_module,"_new_milvus_client",lambda:DummyMilvusClient())
+    monkeypatch.setattr(server_module,"ensure_collection_schema",lambda c:{"created":False})
+    monkeypatch.setattr(server_module,"_CHAT_HEARTBEAT_SECONDS",0.005)
+    monkeypatch.setattr(server_module,"_CHAT_IDLE_TIMEOUT_SECONDS",0.2)
+    app = server_module.create_app(session_store=store)
+    events = _sse_events(TestClient(app).post("/api/chat",json={"query":"synthetic","session_id":"heartbeat","selected_kbs":["kb"]}))
+    assert any(e["type"]=="heartbeat" for e in events)
+    assert any(e["type"]=="message" for e in events)
+    assert events[-1]["type"]=="done"
+    assert not any(e["type"]=="error" for e in events)
+    assert len({e["request_id"] for e in events})==1
+
+
+def test_agent_heartbeats_do_not_prevent_real_idle_timeout(tmp_path, monkeypatch):
+    import asyncio
+    store = SessionStore(str(tmp_path / "timeout.db"))
+    store.create_knowledge_base("kb", "Synthetic", status="active")
+    async def stalled(*args, **kwargs):
+        await asyncio.sleep(0.2)
+        return ""
+    monkeypatch.setattr(server_module,"run_pipeline",stalled)
+    monkeypatch.setattr(server_module,"_new_milvus_client",lambda:DummyMilvusClient())
+    monkeypatch.setattr(server_module,"ensure_collection_schema",lambda c:{"created":False})
+    monkeypatch.setattr(server_module,"_CHAT_HEARTBEAT_SECONDS",0.005)
+    monkeypatch.setattr(server_module,"_CHAT_IDLE_TIMEOUT_SECONDS",0.025)
+    app = server_module.create_app(session_store=store)
+    events = _sse_events(TestClient(app).post("/api/chat",json={"query":"synthetic","session_id":"timeout","selected_kbs":["kb"]}))
+    assert any(e["type"]=="heartbeat" for e in events)
+    assert any(e.get("code")=="CHAT_TIMEOUT" for e in events)
+    assert events[-1]["type"]=="done"

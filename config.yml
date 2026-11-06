@@ -1,28 +1,7 @@
 llms:
-- name: qwen36-27b
-  base_url: http://14.22.86.97:11001/v1
-  model: qwen36-27b
-  api_key: ${CHAT_API_KEY}
-  temperature: 0.3
-- name: qwen36_27b_lora
-  base_url: http://14.22.86.97:11001/v1
-  model: qwen36_27b_lora
-  api_key: ${CHAT_API_KEY}
-  max_tokens: 2048
-  temperature: 0.3
-- name: qwen3.8-27b-awq-int4
-  base_url: http://14.22.83.225:11001/v1
-  model: qwen3.8-27b-awq-int4
-  api_key: ${CHAT_API_KEY}
-  temperature: 0.1
 - name: qwen3.8-max
   base_url: https://llm-rtmmntkrmdtpfkn1.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
   model: qwen3.8-max
-  api_key: ${CHAT_API_KEY}
-  temperature: 0.1
-- name: qwen38-27b-int4
-  base_url: http://172.17.20.189:11001/v1
-  model: qwen38-27b-int4
   api_key: ${CHAT_API_KEY}
   temperature: 0.1
 - name: qwen38-27b-awq-int4
@@ -62,6 +41,15 @@ active_models:
   chat_llm: qwen3.8-max
   embedding: bge-m3-our
   rerank: bge-reranker-v2-m3
+route_draft:
+  doc_max_chars: 0
+  web_search_max_chars: 0
+  final_ref_max_chars: 0
+reporting:
+  kb_style_reference:
+    enabled: true
+    top_k: 3
+    max_chars: 2500
 breast_mri:
   host: 127.0.0.1
   port: 4173

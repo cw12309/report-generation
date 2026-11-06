@@ -188,3 +188,25 @@ Frontend setup, page usage and API examples belong in [README.md](README.md). Wh
 1. Read root [../AGENTS.md](../AGENTS.md), then this file; use Page/Change Map to select minimal frontend context.
 2. Read Backend only to change/verify a contract; coordinate DOM/behavior/styles and validate syntax, IDs, navigation, routes, SSE, state/security and cache versions.
 3. Update this file in the same change when structure, API, state ownership or responsibility changes.
+
+## Report timestamps
+
+`formatReportMessageTime()` renders report message, history and admin report times in `Asia/Shanghai`. New report timestamps include a UTC offset; legacy report timestamps without an offset are interpreted as UTC (the original deployment timezone).
+
+## Route reference sources
+
+renderRouteReferenceSources() renders source status and HTTP(S) links with DOM text nodes. The web-search response adds source_details, expanded_count, summary_count, and truncated; existing text/sources fields are preserved. raRefToggle expands the resizable reference textarea. Source details describe the latest appended search batch.
+
+## Full source references and capacity
+
+Web search returns only complete source paragraphs, with no fallback search summaries. updateRouteReferenceCount() counts Unicode code points after trimming outer whitespace; loadRouteReferenceLimits() loads model-specific limits and handles model-switch races. Draft submission is blocked while limits load or the reference exceeds final_ref_max_chars. The backend also rejects excess reference text without truncation.
+
+## History loading
+
+History detail requests use cancellation, a 15-second timeout and request IDs; only the latest selection can render. createNewReportSession cancels pending history loads. setReportHistoryLoading displays progress/errors and sets aria-busy. A successful selection only updates the highlight, without refetching the history list.
+
+History loading regression: node front/tests/history-loading.test.cjs verifies loading feedback, cancellation, late responses, timeout and preserved selection on errors using mocked fetch responses.
+
+## Template provenance
+
+Report details show the server-provided template name, content version, matching reason and non-probability score using textContent. Legacy sessions without template_reference hide this panel. Template management separates legacy usage from per-user injection_count and success_count (validated and persisted generation, not clinician approval). app.js cache version is 145.

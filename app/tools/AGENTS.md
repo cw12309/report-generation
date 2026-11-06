@@ -152,3 +152,5 @@ pipeline.py
 - 修改 `report_schema.py` 后，检查三个报告工具、Last Report、Public SSE 与 `json_to_display()`
 - 报告工具的非法 JSON 禁止包装成 raw report；edit 的 Schema/事实/Judge 校验在一次 repair 后仍失败必须返回 error
 - 工具 handler 必须是 async 函数
+
+Empty rag_search returns error_code=NO_MATCHING_TEMPLATES plus an actionable message. It must never fabricate a report when no source templates exist.

@@ -86,3 +86,19 @@ manifest 重复保存；修改统一 Milvus client 工厂后必须运行该测�
 - 部分测试依赖 Milvus 和 LLM API 可用，CI 环境可能需要 mock
 - 修改被测模块的 API 后，对应测试可能失败
 - `tests_api/` 中的测试包含真实 API 调用，注意不要在生产环境运行
+
+## Route draft reference regression
+
+`test_kb_reference.py` covers empty/filtered/deduplicated Milvus results, local Markdown fallback, retrieval failure, and the draft HTTP response. It uses unittest mocks and never calls external services or saves routes. Run: `python -m unittest app.test.test_kb_reference -v`.
+
+Test test_route_web_reference.py covers paragraph recovery, punctuation/inline markup, graceful fallback, source provenance, request reuse/bounds and truncation. Run: python -m unittest app.test.test_route_web_reference -v; all HTTP calls are mocked.
+
+Full reference policy regression: tests now verify source-only text, no cut paragraphs, source-provider fallback, Unicode character limits and rejection before model calls. Web search capacity may omit whole paragraphs; draft reference over capacity must return a clear error rather than truncate.
+
+Run python -m unittest app.test.test_reporting_concurrency -v to verify that report generation, iteration and route-draft retrieval leave the event loop and history HTTP requests responsive. Retrieval is delayed with local test doubles; no real model or patient data is used.
+
+Template pipeline regressions cover modality clarification followed by an explicit exam type or accepted default, and actionable NO_MATCHING_TEMPLATES without internal recovery. Run the full test_report_pipeline.py suite after changes to these outcomes.
+
+## Template usage regression
+
+Run `pytest app/test/test_template_usage.py app/test/test_template_reporting.py -q` for cached matching invalidation, user isolation, idempotent counters, concurrent increments, immutable per-version reference metadata, validation/LLM/persistence failures and authenticated template-list fields. Tests use temporary SQLite/YAML/JSON and local model replacements. Run `node front/tests/template-reference.test.cjs` for safe provenance rendering and legacy sessions.

@@ -109,6 +109,8 @@ def _classify_tool_error(result_content: str) -> str:
         return "REPORT_PARSE_FAILED"
 
     error_msg = str(data.get("error", "")).lower() if isinstance(data, dict) else ""
+    if isinstance(data, dict) and (data.get("error_code") == "NO_MATCHING_TEMPLATES" or "未检索到相关报告" in error_msg):
+        return "NO_MATCHING_TEMPLATES"
 
     if "judge" in error_msg:
         return "EDIT_JUDGE_FAILED"
@@ -126,7 +128,7 @@ def _classify_tool_error(result_content: str) -> str:
 
 def _is_user_facing_error(error_code: str) -> bool:
     """判断是否为需要用户处理的错误（非内部可恢复）。"""
-    return error_code in ("NO_LAST_REPORT", "LLM_SERVICE_ERROR")
+    return error_code in ("NO_LAST_REPORT", "LLM_SERVICE_ERROR", "NO_MATCHING_TEMPLATES")
 
 
 # =============================================================================
@@ -410,6 +412,21 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
         has_diagnosis = len(entity_tracker.slots.get("diagnosis", [])) > 0
         has_modality = entity_tracker.slots.get("modality") is not None
         
+        default_modality = "CT"
+        available_modalities = {
+            str(mod).upper().replace("MRI", "MR")
+            for kb in (knowledge_bases or [])
+            for mod in ((kb.get("metadata_tree") or {}).get("检查类型") or {})
+        }
+        if available_modalities:
+            default_modality = next((mod for mod in ("CT", "MR", "DR", "US", "MG") if mod in available_modalities), sorted(available_modalities)[0])
+        accept_default = query.strip() in {"继续", "继续生成", "使用默认检查类型", "默认检查类型"}
+        if not has_modality and (has_body_part or has_diagnosis) and accept_default:
+            entity_tracker.slots["modality"] = default_modality
+            has_modality = True
+            enhanced = standardize_query(entity_tracker.resolve_context(query))
+            _emit("entity_update", {"changes": {"modality": default_modality}, "slots": entity_tracker.slots})
+
         if not has_modality and (has_body_part or has_diagnosis):
             # 构建提示信息
             parts = []
@@ -424,7 +441,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
                 f"请补充检查类型（如 CT、MR、DR、超声等），例如：\n"
                 f"- 'CT 脑出血'\n"
                 f"- 'MR 脑部'\n\n"
-                f"或回复'继续'使用默认检查类型。"
+                f"或回复'继续'使用默认检查类型（{default_modality}）。"
             )
             _emit("message", {"content": clarification_msg})
             stm.add_turn(session_id, query, clarification_msg)
@@ -722,7 +739,7 @@ async def run_pipeline(query, session_id, stm, entity_tracker, client, last_repo
 
             if _is_user_facing_error(error_code):
                 error_msg = raw_result.get("error", "") if isinstance(raw_result, dict) else ""
-                display = error_msg or "当前没有可修改的报告，请先通过检索生成一份报告。"
+                display = (raw_result.get("message") if error_code == "NO_MATCHING_TEMPLATES" else "") or error_msg or "当前没有可修改的报告，请先通过检索生成一份报告。"
                 _emit("error", {"code": error_code, "message": display})
                 stm.add_turn(session_id, query, display)
                 return display

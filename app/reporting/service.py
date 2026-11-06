@@ -1,10 +1,11 @@
 """Report 工作台核心服务"""
 
+import asyncio
 import logging
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
 from app.chat.llm_client import chat_stream
@@ -299,18 +300,54 @@ class ReportService:
         self.prompt_loader._prompt_cache.clear()
         logger.info(f"路由配置已重载: {len(self.route_resolver.routes)} 个路由")
 
-    def _template_injection(self, route_id: str, doctor_input: str) -> str:
-        """模板库匹配注入：命中启用模板时返回范例章节文本并计数，否则空串"""
+    def _template_injection(self, route_id: str, doctor_input: str) -> tuple[str, Optional[dict]]:
+        """Prepare a single reference and record its injection without rewriting template files."""
         try:
-            from . import template_admin
-
-            tpl = template_admin.match_template(route_id, doctor_input or "")
-            if not tpl:
-                return ""
-            template_admin.bump_usage(tpl["id"])
-            return template_admin.build_injection_block(tpl)
+            from . import template_admin, template_usage, user_env
+            template, reference = template_admin.match_template_with_reference(route_id, doctor_input or "")
+            if not template:
+                return "", None
+            block = template_admin.build_injection_block(template)
+            try:
+                template_usage.record_injection(user_env.current_user(), reference)
+            except Exception:
+                logger.warning("模板引用计数写入失败", exc_info=True)
+            return block, reference
         except Exception as e:
             logger.warning(f"模板库匹配失败（忽略注入）: {e}")
+            return "", None
+
+    @staticmethod
+    def _kb_style_injection(route: RouteInfo, doctor_input: str) -> str:
+        """知识库同模态模板对注入：本院文风参照（开关/预算读 config.yml reporting.kb_style_reference）"""
+        try:
+            from app.config import get_kb_style_reference_config
+
+            cfg = get_kb_style_reference_config()
+            if not cfg["enabled"]:
+                return ""
+            from . import kb_reference
+
+            result = kb_reference.kb_reference_for_route(
+                name=route.name,
+                modality=(route.modalities or [""])[0],
+                body_parts=route.body_parts,
+                aliases=route.aliases,
+                top_k=cfg["top_k"],
+                max_chars=cfg["max_chars"],
+                focus=f"{route.name} {' '.join(route.body_parts or [])}",
+            )
+            if not result.get("text"):
+                return ""
+            return (
+                "\n\n【本院知识库模板参照（同模态「影像学表现｜影像学意见」模板对，"
+                "仅用于统一本院文风与术语写法）】\n"
+                "**数值、节段、病灶位置一律以医生本次输入为准，严禁照抄模板数值**；"
+                "范式选择、追问设计、章节标题仍以上文路由规则为准。\n"
+                f"{result['text']}\n"
+            )
+        except Exception as e:
+            logger.warning(f"知识库风格参照注入失败（忽略）: {e}")
             return ""
 
     @staticmethod
@@ -336,6 +373,7 @@ class ReportService:
         on_token: Optional[callable] = None,
         on_notice: Optional[callable] = None,
         on_reasoning: Optional[callable] = None,
+        username: str = "",
     ) -> tuple[ReportSession, LLMReportOutput]:
         """生成报告
         
@@ -351,7 +389,12 @@ class ReportService:
             (报告会话, LLM输出)
         """
         t_start = time.perf_counter()
-        logger.info(f"开始生成报告: conversation_id={conversation_id}")
+        logger.info(f"开始生成报告: conversation_id={conversation_id}, user={username or '-'}")
+
+        # 用户环境隔离：路由/提示词/模板走该用户的合并视图
+        from . import user_env
+
+        user_env.set_current_user(username)
 
         # 1. 路由解析
         if emit_event:
@@ -385,9 +428,16 @@ class ReportService:
         )
 
         # 模板库注入：命中本院优秀范例时追加范例章节（风格参照，数值以本次输入为准）
-        injection = self._template_injection(route.id, request.input_text)
+        injection, template_reference = await asyncio.to_thread(
+            self._template_injection, route.id, request.input_text
+        )
         if injection:
             system_prompt += injection
+
+        # 知识库同模态模板对注入：本院文风参照（Milvus 不可用时静默跳过）
+        kb_ref = await asyncio.to_thread(self._kb_style_injection, route, request.input_text)
+        if kb_ref:
+            system_prompt += kb_ref
 
         # 模板直选线路：医生未输入阅片结论，仅点选模板按钮触发
         template_only = bool(request.route_id) and not (request.input_text or "").strip()
@@ -461,8 +511,12 @@ class ReportService:
             except ReportParseError as e:
                 logger.error(f"校验修正输出解析失败，沿用首次结果: {e}")
 
+        if template_reference:
+            template_reference = {**template_reference, "report_version": 1,
+                                  "validation_passed": not self.validator.validate(llm_output, question_round=0)}
+
         # 5. 创建会话（含对话记录）
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         # 耗时口径：首个 token 出现时间（用户感知等待时间）；无 token 时回退总耗时
         elapsed = (first_token_at - t_start) if first_token_at else (time.perf_counter() - t_start)
         assistant_text = llm_output.assistant_message or (
@@ -479,12 +533,14 @@ class ReportService:
             question_round=0,
             current_version=1,
             report=llm_output.report,
+            template_reference=template_reference,
             questions=llm_output.questions,
             messages=[
                 ChatMessage(role="user", content=request.input_text, created_at=now),
                 ChatMessage(
                     role="assistant",
                     content=assistant_text,
+                    template_reference=template_reference,
                     questions=llm_output.questions,
                     created_at=now,
                 ),
@@ -506,6 +562,7 @@ class ReportService:
         on_token: Optional[callable] = None,
         on_notice: Optional[callable] = None,
         on_reasoning: Optional[callable] = None,
+        username: str = "",
     ) -> tuple[ReportSession, LLMReportOutput]:
         """迭代报告
         
@@ -520,7 +577,12 @@ class ReportService:
             (更新后的会话, LLM输出)
         """
         t_start = time.perf_counter()
-        logger.info(f"开始迭代报告: conversation_id={current_session.conversation_id}, round={request.question_round}")
+        logger.info(f"开始迭代报告: conversation_id={current_session.conversation_id}, round={request.question_round}, user={username or '-'}")
+
+        # 用户环境隔离：路由/提示词/模板走该用户的合并视图
+        from . import user_env
+
+        user_env.set_current_user(username)
 
         # 1. 获取路由
         route = self.route_resolver.get_route_by_id(current_session.route_id)
@@ -541,9 +603,15 @@ class ReportService:
         )
 
         # 模板库注入：迭代修订同样参照本院优秀范例风格
-        injection = self._template_injection(route.id, request.input_text)
+        injection, template_reference = await asyncio.to_thread(
+            self._template_injection, route.id, request.input_text
+        )
         if injection:
             system_prompt += injection
+
+        kb_ref = await asyncio.to_thread(self._kb_style_injection, route, request.input_text)
+        if kb_ref:
+            system_prompt += kb_ref
 
         user_prompt = self.prompt_loader.build_user_prompt(
             doctor_input=request.input_text,
@@ -618,11 +686,16 @@ class ReportService:
             except ReportParseError as e:
                 logger.error(f"校验修正输出解析失败，沿用首次结果: {e}")
 
+        if template_reference:
+            template_reference = {**template_reference, "report_version": current_session.current_version + 1,
+                                  "validation_passed": not self.validator.validate(llm_output, question_round=new_round)}
+
         # 5. 更新会话（追加对话记录）
         # 耗时口径：首个 token 出现时间（用户感知等待时间）；无 token 时回退总耗时
         elapsed = (first_token_at - t_start) if first_token_at else (time.perf_counter() - t_start)
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         current_session.report = llm_output.report
+        current_session.template_reference = template_reference
         current_session.questions = llm_output.questions
         current_session.question_round = new_round
         current_session.current_version += 1
@@ -641,6 +714,11 @@ class ReportService:
                     "报告已更新，我还有几个问题：" if llm_output.questions else "报告已更新。"
                 ),
                 questions=llm_output.questions,
+                template_reference=template_reference,
+                # 追问轮次达到上限后的每次更新，附带采纳程度评价卡（采纳/修改/拒绝）
+                review={"version": current_session.current_version, "choice": None, "comment": ""}
+                if new_round >= current_session.max_question_rounds
+                else None,
                 created_at=now,
             )
         )

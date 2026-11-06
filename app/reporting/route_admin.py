@@ -1,10 +1,14 @@
 """路由配置管理：查看/编辑/启停路由、专科Prompt读写、新路由草稿生成 skill"""
 
+import asyncio
 import json
 import logging
 import re
+import time
+from html import unescape as _html_unescape
 from pathlib import Path
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 import yaml
 
@@ -23,8 +27,7 @@ _ID_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 
 # ===== routes.yml 读写 =====
 
-_DOC_MAX_CHARS = 20000
-_DOC_RELEVANT_CHARS = 14000
+# 上下文预算（上传文档/联网检索/最终注入三级上限）读 config.yml route_draft 段，改后无需重启
 _PARSE_MAX_CHARS = 1500000  # 解析原文安全上限，防止超大文件撑爆内存
 _PDF_MAX_PAGES = 300
 _UNSUPPORTED_HINT = "仅支持 pdf / docx / xlsx / txt / md / csv 格式的参考资料"
@@ -32,6 +35,13 @@ _UNSUPPORTED_HINT = "仅支持 pdf / docx / xlsx / txt / md / csv 格式的参�
 # 器官核心单字（专属性强、歧义小），用于扩展检索词命中"肝实质/肝胆/肝血管瘤"等变体
 # 注意：不含"椎"（会误命中椎动脉/胸椎等非本部位内容），脊柱类依赖"腰椎/颈椎"等二字词匹配
 _ORGAN_SINGLE = set("肝肾脾胰肺脑")
+def _ctx_budgets(llm_name: str = "") -> dict:
+    """读取草稿上下文三级预算；0=auto 时按所选路由模型上下文窗口派生"""
+    from app.config import get_route_draft_context_config
+
+    return get_route_draft_context_config(llm_name)
+
+
 # modality/通用词：几乎所有无关行都会提到，作为检索词会误命中，故从匹配词中剔除
 _MODALITY_STOP = {
     "mri", "mr", "ct", "dr", "ct平扫", "磁共振", "x线", "超声", "平扫", "增强",
@@ -187,14 +197,14 @@ def _focus_terms(focus: str) -> list[str]:
     return out[:32]
 
 
-def _select_relevant(text: str, focus: str) -> tuple[str, int, int]:
+def _select_relevant(text: str, focus: str, llm_name: str = "") -> tuple[str, int, int]:
     """按与路由名称的相关度筛选文档内容：命中行优先输出，无关行过滤掉（不堆背景噪声）。
 
     Returns: (筛选后文本, 命中行数, 过滤行数)
     """
     terms = _focus_terms(focus)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    if not terms or len(lines) <= 1:
+    if not terms or not lines:
         return text.strip(), 0, 0
     low_terms = [t.lower() for t in terms]
     hit = [ln for ln in lines if any(t in ln.lower() for t in low_terms)]
@@ -203,8 +213,9 @@ def _select_relevant(text: str, focus: str) -> tuple[str, int, int]:
         # 无任何命中：整份文档可能都与本部位无关，返回原文截断交由上层判断
         return text.strip(), 0, filtered
     relevant = "\n".join(hit)
-    if len(relevant) > _DOC_MAX_CHARS:
-        relevant = relevant[:_DOC_MAX_CHARS] + "\n…（相关条目过多，已截断）"
+    doc_max = _ctx_budgets(llm_name)["doc_max_chars"]
+    if len(relevant) > doc_max:
+        relevant = relevant[:doc_max] + "\n…（相关条目过多，已截断）"
     header = (
         f"【与「{focus.strip()}」直接相关的材料，共命中 {len(hit)} 条，"
         f"已过滤 {filtered} 条与本部位无关的记录】"
@@ -212,7 +223,7 @@ def _select_relevant(text: str, focus: str) -> tuple[str, int, int]:
     return header + "\n" + relevant, len(hit), filtered
 
 
-def extract_reference_text(filename: str, data: bytes, focus: str = "") -> dict:
+def extract_reference_text(filename: str, data: bytes, focus: str = "", llm_name: str = "") -> dict:
     """将上传的参考资料文档解析为纯文本，并按路由名称优先抽取相关材料。
 
     支持：pdf（pypdf/PyMuPDF）、docx、xlsx、txt/md/csv（UTF-8/GBK 自适应）。
@@ -239,10 +250,381 @@ def extract_reference_text(filename: str, data: bytes, focus: str = "") -> dict:
         raise ValueError("文档内容为空（未提取到任何文字）")
     if len(text) > _PARSE_MAX_CHARS:
         text = text[:_PARSE_MAX_CHARS]
-    text, matched, filtered = _select_relevant(text, focus)
-    if len(text) > _DOC_MAX_CHARS:
-        text = text[:_DOC_MAX_CHARS] + "\n…（内容过长，已截断）"
+    text, matched, filtered = _select_relevant(text, focus, llm_name)
+    doc_max = _ctx_budgets(llm_name)["doc_max_chars"]
+    if len(text) > doc_max:
+        text = text[:doc_max] + "\n…（内容过长，已截断）"
     return {"text": text, "chars": len(text), "matched_lines": matched, "filtered_lines": filtered}
+
+
+# =============================================================================
+# 联网检索（新路由草稿参考资料，仅作参考）
+# =============================================================================
+_WEB_SEARCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    )
+}
+
+# 分面检索：对齐路由体系四构成面（prompt_md 四章节 + 胶囊），
+# 每面独立查询，结果分组返回，支撑草稿各章节建设
+_WEB_FACETS = [
+    ("elements", "书写要素", "影像报告 影像所见 书写要素 病灶特征 解剖位置 几何 信号 继发改变"),
+    ("grading", "分级分型", "影像 权威分级 分型 分期 标准  criteria"),
+    ("lesions", "病变术语", "常见病变 诊断术语 影像诊断 鉴别诊断"),
+    ("examples", "报告范例", "报告范文 影像所见 影像诊断 示例"),
+]
+
+
+def check_web_search_available(force: bool = False) -> dict:
+    """联网检索连通性探活：按优先级逐个探测检索端点（ddg → bing），返回首个可用者。
+
+    探活结果缓存 10 分钟（force=True 强制重探），避免每次点击都发外网请求。
+    Returns: {"ok": bool, "message": str, "elapsed": float, "provider": str}
+    """
+    import time
+
+    import httpx
+
+    if not force and _web_provider_cache["name"] and time.perf_counter() - _web_provider_cache["ts"] < 600:
+        return {"ok": True, "message": f"联网检索通道正常（{_web_provider_cache['name']}，缓存）", "elapsed": 0.0, "provider": _web_provider_cache["name"]}
+
+    t0 = time.perf_counter()
+    errors: list[str] = []
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=_WEB_SEARCH_HEADERS) as client:
+            for provider in _WEB_PROVIDERS:
+                try:
+                    hits = _web_search("影像报告", client, provider)
+                except Exception as e:
+                    errors.append(f"{provider}:{type(e).__name__}")
+                    continue
+                if hits:
+                    elapsed = round(time.perf_counter() - t0, 2)
+                    _web_provider_cache["name"] = provider
+                    _web_provider_cache["ts"] = time.perf_counter()
+                    return {"ok": True, "message": f"联网检索通道正常（{provider}）", "elapsed": elapsed, "provider": provider}
+                errors.append(f"{provider}:无结果结构")
+    except Exception as e:
+        errors.append(f"client:{type(e).__name__}")
+    elapsed = round(time.perf_counter() - t0, 2)
+    return {
+        "ok": False,
+        "message": f"检索端点均不可达（{'; '.join(errors)}），服务器可能无外网或端点被限制",
+        "elapsed": elapsed,
+        "provider": "",
+    }
+
+
+def _clean_snippet(raw: str) -> str:
+    text = _html_unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+    # 剥离搜索引擎注入的日期前缀（如"2025年3月28日 - "），便于回源锚点定位与展示
+    return re.sub(r"^\d{4}年\d{1,2}月\d{1,2}日\s*[-–—]\s*", "", text).strip()
+
+
+def _ddg_search(query: str, client) -> list:
+    """DuckDuckGo HTML 端点单次检索，返回 hits=[{"snippet","url"}]"""
+    resp = client.post("https://html.duckduckgo.com/html/", data={"q": query})
+    resp.raise_for_status()
+    html = resp.text
+    hits: list[dict] = []
+    for m in re.finditer(r'class="result__snippet"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.S):
+        snippet = _clean_snippet(m.group(2))
+        if not snippet:
+            continue
+        url = m.group(1)
+        if url.startswith("//"):
+            url = "https:" + url
+        qs = parse_qs(urlparse(url).query)
+        real = (qs.get("uddg") or [url])[0]
+        hits.append({"snippet": snippet, "url": real if real.startswith("http") else ""})
+    return hits
+
+
+def _baidu_search(query: str, client) -> list:
+    """百度移动端网页端点单次检索（国内服务器可达，风控弱于桌面端）。
+
+    按 c-result 结果块解析：摘要取 c-abstract，来源取块内非 baidu 域外链。
+    命中安全验证页时抛 ValueError，由调用方切换下一端点。
+    """
+    resp = client.get("https://m.baidu.com/s", params={"word": query})
+    resp.raise_for_status()
+    if "百度安全验证" in resp.text or "wappass" in str(resp.url) or "captcha" in resp.text[:3000]:
+        raise ValueError("baidu 触发安全验证")
+    hits: list[dict] = []
+    for block in re.split(r'(?=<div class="c-result)', resp.text):
+        if "c-abstract" not in block:
+            continue
+        sm = re.search(r'class="c-abstract[^"]*"[^>]*>(.*?)</(?:div|span)>', block, re.S)
+        if not sm:
+            continue
+        snippet = _clean_snippet(sm.group(1))
+        if len(snippet) <= 12:
+            continue
+        um = re.search(r'href="(https?://[^"]+)"', block)
+        url = um.group(1) if um and "baidu.com" not in um.group(1) and "baiducontent" not in um.group(1) else ""
+        hits.append({"snippet": snippet, "url": url})
+    return hits
+
+
+def _so360_search(query: str, client) -> list:
+    """360 搜索网页端点单次检索（国内服务器可达）。
+
+    按 res-title 结果块解析：摘要取 data-result-summary，来源取 data-mdurl（真实 URL，免二次请求）。
+    命中验证页时抛 ValueError，由调用方切换下一端点。
+    """
+    resp = client.get("https://www.so.com/s", params={"q": query})
+    resp.raise_for_status()
+    if "验证" in resp.text[:2000] or "captcha" in str(resp.url):
+        raise ValueError("so360 触发验证")
+    hits: list[dict] = []
+    for block in re.split(r'(?=<h3 class="res-title)', resp.text):
+        sm = re.search(r"<span data-result-summary[^>]*>(.*?)</span>", block, re.S)
+        if not sm:
+            continue
+        snippet = _clean_snippet(sm.group(1))
+        if len(snippet) <= 12:
+            continue
+        um = re.search(r'data-mdurl="([^"]+)"', block)
+        url = um.group(1) if um and um.group(1).startswith("http") and "so.com/link" not in um.group(1) else ""
+        hits.append({"snippet": snippet, "url": url})
+    return hits
+
+
+def _sogou_search(query: str, client) -> list:
+    """搜狗网页端点单次检索（国内服务器可达）。
+
+    仅解析摘要，不解析跳转来源（sogou 链接需二次请求，易触发 antispider）。
+    命中反爬页时抛 ValueError，由调用方切换下一端点。
+    """
+    resp = client.get("https://www.sogou.com/web", params={"query": query})
+    resp.raise_for_status()
+    if "antispider" in str(resp.url) or "验证码" in resp.text[:2000]:
+        raise ValueError("sogou 触发反爬验证")
+    hits: list[dict] = []
+    for m in re.finditer(r'class="(?:str_info|txt-info|ft)[^"]*"[^>]*>(.*?)</(?:div|span|p)>', resp.text, re.S):
+        snippet = _clean_snippet(m.group(1))
+        if len(snippet) > 12:
+            hits.append({"snippet": snippet, "url": ""})
+    return hits
+
+
+def _bing_search(query: str, client) -> list:
+    """Bing 网页端点单次检索（海外网络可用），返回 hits=[{"snippet","url"}]"""
+    resp = client.get("https://www.bing.com/search", params={"q": query, "mkt": "zh-CN", "setlang": "zh-hans"})
+    resp.raise_for_status()
+    hits: list[dict] = []
+    for m in re.finditer(r'<li class="b_algo".*?</li>', resp.text, re.S):
+        block = m.group(0)
+        p = re.search(r"<p[^>]*>(.*?)</p>", block, re.S)
+        snippet = _clean_snippet(p.group(1)) if p else ""
+        a = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"', block)
+        url = a.group(1) if a and a.group(1).startswith("http") else ""
+        if snippet:
+            hits.append({"snippet": snippet, "url": url})
+    return hits
+
+
+# 检索端点优先级：DuckDuckGo 优先，不可达时依次回退 百度移动/360/搜狗/Bing；探活结果缓存 10 分钟避免重复探测
+_WEB_PROVIDERS = ("ddg", "baidu", "so360", "sogou", "bing")
+_web_provider_cache: dict = {"name": "", "ts": 0.0}
+
+
+def _web_search(query: str, client, provider: str) -> list:
+    if provider == "bing":
+        return _bing_search(query, client)
+    if provider == "baidu":
+        return _baidu_search(query, client)
+    if provider == "so360":
+        return _so360_search(query, client)
+    if provider == "sogou":
+        return _sogou_search(query, client)
+    return _ddg_search(query, client)
+
+
+def _reference_page_paragraphs(url: str, client) -> list[str]:
+    """Read visible paragraph text, preserving punctuation and inline markup."""
+    from html.parser import HTMLParser
+
+    class PageText(HTMLParser):
+        blocks = {"p", "div", "article", "section", "li", "br", "h1", "h2", "h3", "h4", "tr"}
+        ignored = {"script", "style", "noscript", "nav", "header", "footer", "svg"}
+
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.parts = []
+            self.hidden = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag in self.ignored:
+                self.hidden.append(tag)
+            elif not self.hidden and tag in self.blocks:
+                self.parts.append("\n")
+
+        def handle_endtag(self, tag):
+            if self.hidden:
+                if tag == self.hidden[-1]:
+                    self.hidden.pop()
+            elif tag in self.blocks:
+                self.parts.append("\n")
+
+        def handle_data(self, data):
+            if not self.hidden:
+                self.parts.append(data)
+
+    if urlparse(url).scheme not in {"http", "https"}:
+        return []
+    try:
+        response = client.get(url, timeout=8.0)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "").lower()
+        if content_type and not any(t in content_type for t in ("html", "text/plain", "xhtml")):
+            return []
+        if len(response.text) > 2000000:
+            return []
+        parser = PageText()
+        parser.feed(response.text)
+        return [re.sub(r"\s+", " ", line).strip()
+                for line in "".join(parser.parts).splitlines() if line.strip()]
+    except Exception:
+        return []
+
+
+def _complete_snippet(snippet: str, url: str, client, page_cache=None) -> str:
+    """Expand an excerpt using punctuation-insensitive paragraph matching."""
+    if not url:
+        return snippet
+    paragraphs = (page_cache.get(url, []) if page_cache is not None
+                  else _reference_page_paragraphs(url, client))
+    normalize = lambda text: re.sub(r"[\W_]+", "", text).casefold()
+    fragments = [normalize(part) for part in re.split(r"\.{2,}|…+", snippet)]
+    anchors = [part[:24] for part in fragments if len(part) >= 8]
+    for anchor in anchors:
+        for paragraph in paragraphs:
+            if anchor not in normalize(paragraph):
+                continue
+            if len(normalize(paragraph)) <= len(normalize(snippet)) + 10:
+                continue
+            return paragraph
+    return snippet
+
+
+def _full_reference_paragraphs(paragraphs: list[str], focus: str) -> list[str]:
+    """Only source paragraphs; never return search summaries or cut sentences."""
+    terms = [term.lower() for term in _focus_terms(focus)]
+    seen, result = set(), []
+    for paragraph in paragraphs:
+        text = paragraph.strip()
+        if len(text) < 35 or re.search(r"\.{3,}|…", text):
+            continue
+        if not any(term in text.lower() for term in terms):
+            continue
+        key = re.sub(r"\s+", "", text)
+        if key not in seen:
+            seen.add(key)
+            result.append(text)
+    return result
+
+
+def _pack_full_references(records: list[dict], max_chars: int) -> tuple[str, list, int]:
+    """Pack whole paragraphs into the budget, balancing search facets."""
+    groups = {}
+    for record in records:
+        groups.setdefault(record["facet"], []).append(record)
+    ordered = []
+    while any(groups.values()):
+        for group in groups.values():
+            if group:
+                ordered.append(group.pop(0))
+    blocks, accepted, seen = [], [], set()
+    used, omitted = 0, 0
+    for record in ordered:
+        key = re.sub(r"\s+", "", record["text"])
+        if key in seen:
+            continue
+        seen.add(key)
+        block = f"【{record['facet']} · 原文段落】\n来源：{record['url']}\n{record['text']}"
+        extra = len(block) + (2 if blocks else 0)
+        if used + extra > max_chars:
+            omitted += 1
+            continue
+        blocks.append(block)
+        accepted.append(record)
+        used += extra
+    return "\n\n".join(blocks), accepted, omitted
+
+
+def web_search_reference(focus: str, per_facet_lines: int = 12, llm_name: str = "") -> dict:
+    """Retrieve complete relevant source paragraphs; summaries only locate URLs.
+
+    Budget overflow omits whole paragraphs and reports their count separately.
+    No partial paragraph or failed-source summary is placed in the reference text.
+    """
+    import httpx
+    from concurrent.futures import ThreadPoolExecutor
+
+    focus = (focus or "").strip()
+    if not focus:
+        raise ValueError("请先填写路由名称再联网检索")
+    budgets = _ctx_budgets(llm_name)
+    web_max = min(budgets["web_search_max_chars"], budgets["final_ref_max_chars"])
+    terms = [term.lower() for term in _focus_terms(focus)]
+    preferred = _web_provider_cache["name"]
+    order = ([preferred] + [p for p in _WEB_PROVIDERS if p != preferred]) if preferred else list(_WEB_PROVIDERS)
+    page_cache, records, excluded = {}, [], set()
+    filtered = 0
+    with httpx.Client(timeout=12.0, follow_redirects=True, headers=_WEB_SEARCH_HEADERS) as client:
+        for key, label, suffix in _WEB_FACETS:
+            facet_attempts = 0
+            for provider in order:
+                try:
+                    hits = _web_search(f"{focus} {suffix}", client, provider)
+                except Exception:
+                    continue
+                relevant = [h for h in hits[:16] if any(term in h["snippet"].lower() for term in terms)]
+                filtered += len(hits[:16]) - len(relevant)
+                room = min(3, 6 - facet_attempts, 24 - len(page_cache))
+                pending = list(dict.fromkeys(h["url"] for h in relevant
+                    if h.get("url") and h["url"] not in page_cache))[:max(0, room)]
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    pages = pool.map(lambda url: _reference_page_paragraphs(url, client), pending)
+                    page_cache.update(zip(pending, pages))
+                facet_attempts += len(pending)
+                before = len(records)
+                for hit in relevant:
+                    url = hit.get("url", "")
+                    paragraphs = _full_reference_paragraphs(page_cache.get(url, []), focus)
+                    if not paragraphs:
+                        excluded.add(url or hit["snippet"])
+                        continue
+                    excluded.discard(url)
+                    for paragraph in paragraphs:
+                        records.append({"url": url, "title": hit["snippet"][:70],
+                                        "facet": label, "key": key, "text": paragraph})
+                if len(records) > before:
+                    _web_provider_cache.update(name=provider, ts=time.perf_counter())
+                    break
+                if facet_attempts >= 6 or len(page_cache) >= 24:
+                    break
+    if not records:
+        raise ValueError("未能获取与本路由相关的完整原文正文，未填入搜索摘要。请调整路由名称、上传原文文档或手动粘贴原文。")
+    text, accepted, omitted = _pack_full_references(records, web_max)
+    if not accepted:
+        raise ValueError(f"相关原文段落超过本次联网容量 {web_max} 字符，未截断正文。请切换容量更大的模型或上传精简的原文资料。")
+    sources, facets = {}, {}
+    for record in accepted:
+        sources.setdefault(record["url"], {"url":record["url"], "title":record["title"],
+                                           "status":"fulltext", "facet":record["facet"]})
+        stat = facets.setdefault(record["key"], {"key":record["key"], "label":record["facet"], "matched":0})
+        stat["matched"] += 1
+    return {"text":text, "chars":len(text), "matched_lines":len(accepted),
+            "filtered_lines":filtered, "sources":list(sources),
+            "source_details":list(sources.values()), "expanded_count":len(sources),
+            "summary_count":0, "excluded_count":len(excluded), "omitted_paragraphs":omitted,
+            "truncated":False, "capacity_limited":bool(omitted),
+            "web_max_chars":web_max, "final_ref_max_chars":budgets["final_ref_max_chars"],
+            "facets":list(facets.values())}
 
 
 def load_routes_raw() -> dict:
@@ -328,14 +710,28 @@ def validator_linkage() -> dict:
 
 _DRAFT_SKILL_PROMPT = """你是一名医疗影像报告模板设计专家。请为给定的检查部位设计一套完整的路由配置草稿。
 
+参考资料使用铁律（用户上传文档或联网检索所得，**仅作参考，不是权威来源**）：
+- 只可从中采纳：该部位的标准解剖术语、权威分级/分型名称、常见病变清单、报告书写句式。
+- 严禁照抄：具体病例数值、患者信息、与本次部位无关的内容、网页广告/导航/免责声明等噪声。
+- 参考资料与你的医学知识冲突时，以你的医学知识为准；参考资料缺失时按通用规范自行补全。
+- 联网检索片段可能过时或来源不明，采纳前须判断其是否符合现行影像报告书写规范。
+
+本院知识库模板锚点挖掘（若参考资料含「【本院知识库模板参照】」段，其为本报告系统知识库中
+同模态的「影像学表现｜影像学意见」模板对，是本院现行书写习惯的最高优先级参照）：
+- 从模板对中抽取：①该部位实际使用的解剖/病变术语与分级分型写法（如 BI-RADS、ACR 型）；
+  ②"表现→意见"的映射句式（意见行如何由表现行归纳、建议如何续写）；③阴性基线的本院措辞。
+- 将抽得的术语并入「关键病变速查」与 quick_tags（去重、剔除与模态不符者）；
+  将本院句式融入模块2默认填充句与「标准范例」，使生成报告与本院模板文风一致。
+- 模板对中的具体数值/患者相关内容一律忽略；模板对覆盖不到的病变按你的医学知识补全。
+
 必须严格输出如下 JSON（不要输出任何其他内容、不要 markdown 代码块）：
 {
   "id": "小写snake_case路由ID，如 liver_mri",
   "name": "中文路由名，如 肝脏 MRI",
   "aliases": ["4~6条触发别名：名称无空格写法、简称/口语/邻近部位变体（如 肝脏MR、肝MRI、上腹部MRI），越多越易触发路由"],
-  "modalities": ["MRI"],
+  "modalities": ["检查类型大写码，如 MRI/CT/DR/MG/US；用户已指定则照填，未指定则按推断填写，无法判断填 []"],
   "body_parts": ["部位标准词"],
-  "quick_tags": ["诊断结论关键词胶囊8~15条，每条为可独立成立的诊断结论（疾病名+必要分级），末尾含一条'XX MRI未见明显异常'"],
+  "quick_tags": ["诊断结论关键词胶囊8~15条，每条为可独立成立的诊断结论（疾病名+必要分级），末尾含一条'XX未见明显异常'（模态已知时写'XX MRI未见明显异常'式）"],
   "prompt_md": "专科Prompt全文"
 }
 
@@ -422,8 +818,8 @@ def _fallback_draft(name: str, body_part: str, modality: str, rid: str) -> dict:
     return {
         "id": rid,
         "name": name,
-        "aliases": _default_aliases(name, body_part, modality),
-        "modalities": [modality],
+        "aliases": _default_aliases(name, body_part, modality) if modality else [name],
+        "modalities": [modality] if modality else [],
         "body_parts": [body_part],
         "quick_tags": [f"{body_part}未见明显异常"],
         "prompt_md": prompt_md,
@@ -440,26 +836,61 @@ async def generate_route_draft(
 ) -> dict:
     """新路由草稿生成 skill：依据部位名+可选参考资料，LLM 生成完整路由配置草稿。
 
+    KB 检索内置：自动检索本院同模态「影像学表现｜影像学意见」模板对作为参照材料，
+    无需前端按钮/额外端点。
+
     Returns: 草稿 dict（id/name/aliases/modalities/body_parts/quick_tags/prompt_md）
     """
+    from . import kb_reference
+
     name = (name or "").strip()
     body_part = (body_part or name).strip()
-    modality = (modality or "MRI").strip().upper()
+    modality = (modality or "").strip().upper()
     rid = re.sub(r"[^a-z0-9_]+", "_", re.sub(r"[^A-Za-z0-9]+", "_", body_part.lower())).strip("_") or "new_route"
-    rid = f"{rid}_{modality.lower()}" if not rid.endswith(modality.lower()) else rid
+    if modality and not rid.endswith(modality.lower()):
+        rid = f"{rid}_{modality.lower()}"
 
+    if "【搜索摘要（未补全）】" in reference_text:
+        raise ValueError("参考资料中含旧版未补全摘要，请清空后重新联网检索完整原文。")
     ref_block = ""
     if reference_text.strip():
+        final_max = _ctx_budgets(llm_name)["final_ref_max_chars"]
+        ref = reference_text.strip()
+        if len(ref) > final_max:
+            raise ValueError(f"参考资料共 {len(ref)} 字符，超过当前模型容量 {final_max} 字符；请删减资料或切换容量更大的模型，正文未被截断。")
         ref_block = (
-            "\n\n医生提供的参考资料（已按与本路由相关度重排，"
-            "请优先采纳「直接相关的材料」段落中的术语、分级、征象描述与诊断结论；"
-            "与本部位无关的内容一律忽略）：\n"
-            f"{reference_text.strip()[:12000]}\n"
+            "\n\n参考资料（来源：医生上传文档或联网检索，已按与本路由相关度过滤；"
+            "**仅作参考**：仅采纳其中的术语、分级/分型、书写句式，严禁照抄病例数值与无关内容；"
+            "与你医学知识冲突时以你的知识为准）：\n"
+            f"{ref}\n"
+        )
+
+    kb = await asyncio.to_thread(kb_reference.kb_reference_for_route,
+        name=name,
+        modality=modality,
+        body_parts=[body_part] if body_part else [],
+        top_k=10,
+        max_chars=12000,
+    )
+    kb_block = ""
+    if kb["count"]:
+        kb_block = (
+            "\n\n【本院知识库模板参照】同模态「影像学表现｜影像学意见」模板对；"
+            "**仅作参考**：仅采纳其中的术语、分级/分型、书写句式，严禁照抄病例数值；"
+            "与你医学知识冲突时以你的知识为准：\n"
+            f"{kb['text']}\n"
         )
 
     messages = [
         {"role": "system", "content": _DRAFT_SKILL_PROMPT},
-        {"role": "user", "content": f"检查部位：{body_part}；检查类型：{modality}；路由中文名：{name}。{ref_block}"},
+        {
+            "role": "user",
+            "content": (
+                f"检查部位：{body_part}；路由中文名：{name}。"
+                + (f"检查类型：{modality}。" if modality else "检查类型：用户未指定，请依据部位与参考资料推断最可能的模态（MRI/CT/DR/MG/US等）填入 modalities，无法判断则填 []。")
+                + f"{ref_block}{kb_block}"
+            ),
+        },
     ]
     try:
         raw = await chat_stream(
@@ -478,14 +909,18 @@ async def generate_route_draft(
             raise ValueError("草稿缺少 prompt_md")
         draft.setdefault("id", rid)
         draft.setdefault("name", name)
-        draft.setdefault("modalities", [modality])
+        if modality:
+            draft.setdefault("modalities", [modality])
+        else:
+            draft["modalities"] = [str(m).strip().upper() for m in (draft.get("modalities") or []) if str(m).strip()]
         draft.setdefault("body_parts", [body_part])
         draft.setdefault("aliases", [name])
-        # 确定性补足触发别名：LLM 给的别名之外并入标准变体，保证至少 4 条、更易命中
+        # 确定性补足触发别名：仅当模态已知时并入标准变体，避免未指定模态时硬塞 MRI 别名
         merged = [str(a) for a in (draft.get("aliases") or []) if str(a).strip()]
-        for a in _default_aliases(name, body_part, modality):
-            if a not in merged:
-                merged.append(a)
+        if modality:
+            for a in _default_aliases(name, body_part, modality):
+                if a not in merged:
+                    merged.append(a)
         draft["aliases"] = merged
         draft.setdefault("quick_tags", [f"{body_part}未见明显异常"])
         draft["fallback"] = False

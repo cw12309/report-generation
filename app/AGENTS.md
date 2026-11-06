@@ -150,3 +150,15 @@ observability.py
 - 修改 Gateway 代理的请求/响应模型后，Worker 的对应接口也需要同步
 - `config.py` 的 `_load()` 有缓存，修改 `config.yml` 后需要调用 `reload_config()` 或重启
 - OpenAI SDK 的 `base_url` 只需填到 `/v1`，SDK 会自动拼接路径后缀
+
+## Reporting reference contract
+
+GET /api/report-workbench/admin/routes/reference-limits returns character limits for the selected route model. Web search now returns only complete relevant source paragraphs; search snippets are used to locate URLs and never enter reference text. Capacity packing omits whole paragraphs and reports omitted_paragraphs separately. Draft generation rejects over-limit references and legacy incomplete-summary markers with HTTP 400 instead of silently truncating. Frontend uses Unicode code-point counts matching Python len().
+
+## Async reporting retrieval
+
+ReportService.generate/iterate and route draft generation must offload synchronous knowledge-base retrieval with asyncio.to_thread so slow embedding/Milvus calls do not stall history and health requests on the shared event loop.
+
+## Template references and counters
+
+`reporting/template_admin.py` caches an enabled-template index by user and route, invalidated by baseline file changes or API user edits; at most 64 revisions are retained. `reporting/user_env.py:cache_version` tracks user changes. Matching returns a content-version hash, scores and keyword reasons. `reporting/template_usage.py` stores per-user injection attempts and validated/persisted success flags in `data/template_usage.sqlite3`; generation never rewrites templates.yml/user overrides for counters. Legacy usage_count remains historical only. ReportSession and assistant messages retain the reference snapshot for each generated version. Router marks success idempotently only after history persistence succeeds; stats failures must not fail report generation. New attempt counts do not feed popularity back into ranking.

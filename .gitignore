@@ -38,3 +38,11 @@ milvus-stack-images.tar.gz
 data/
 app/memory/data/
 data/sessions.db
+# Deployment secrets and runtime output
+.env.*
+!.env.example
+logs/
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+app/skills/.usage.json

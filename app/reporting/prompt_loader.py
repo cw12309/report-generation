@@ -42,7 +42,7 @@ class PromptLoader:
         Returns:
             系统Prompt文本
         """
-        # 缓存键包含路由Prompt文件 mtime，编辑文件后自动失效
+        # 缓存键包含路由Prompt文件 mtime，编辑文件后自动失效；含用户维度（个人提示词覆写隔离）
         mtime = ""
         if route.prompt_file:
             p = self.prompts_dir / route.prompt_file
@@ -50,7 +50,9 @@ class PromptLoader:
                 p = p.with_suffix(".md")
             if p.exists():
                 mtime = str(p.stat().st_mtime)
-        cache_key = f"{route.id}_{question_round}_{operation}_{mtime}"
+        from . import user_env
+
+        cache_key = f"{user_env.current_user()}|{route.id}_{question_round}_{operation}_{mtime}"
         if cache_key in self._prompt_cache:
             return self._prompt_cache[cache_key]
 
@@ -170,9 +172,16 @@ class PromptLoader:
     def _load_route_rules(self, route: RouteInfo) -> str:
         """加载路由专用规则。
 
-        优先读取 prompts/{prompt_file}（支持 .md/.yml/.txt，原文注入，按 mtime 自动失效缓存）；
+        优先读取当前用户的个人提示词覆写；其次 prompts/{prompt_file}（支持 .md/.yml/.txt，原文注入，按 mtime 自动失效缓存）；
         文件不存在时回退到从 docs/structure 模板正则提取。
         """
+        from . import user_env
+
+        override = user_env.get_prompt_override(user_env.current_user(), route.id)
+        if override is not None:
+            if len(override) > 3000:
+                override = override[:3000] + "\n\n... (内容过长，已截断)\n"
+            return override
         if route.prompt_file:
             path = self.prompts_dir / route.prompt_file
             if not path.suffix:

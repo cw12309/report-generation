@@ -38,3 +38,4 @@ milvus-stack-images.tar.gz
 data/
 app/memory/data/
 data/sessions.db
+logs/

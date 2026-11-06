@@ -103,6 +103,7 @@ from tools.rag_tool import create_rag_search_handler
 # Report 工作台路由
 try:
     from reporting.router import router as report_router
+    from reporting.auth import router as report_auth_router
     REPORT_WORKBENCH_AVAILABLE = True
 except ImportError:
     REPORT_WORKBENCH_AVAILABLE = False
@@ -366,16 +367,18 @@ def create_app(*, session_store: Optional[SessionStore] = None) -> FastAPI:
     if os.path.isdir(front_dir):
         app.mount("/static", StaticFiles(directory=front_dir), name="static")
 
-    # 注册 Report 工作台路由
+    # 注册 Report 工作台路由（鉴权路由先行，业务路由全量需登录）
     if REPORT_WORKBENCH_AVAILABLE:
+        app.include_router(report_auth_router)
         app.include_router(report_router)
-        logger.info("Report 工作台路由已注册")
+        logger.info("Report 工作台路由已注册（含登录鉴权）")
 
     @app.get("/")
     async def index():
         index_path = os.path.join(front_dir, "index.html")
         if os.path.exists(index_path):
-            return FileResponse(index_path)
+            # 入口 HTML 禁止缓存，确保始终加载最新版本的 app.js/style.css 引用
+            return FileResponse(index_path, headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
         return {"message": "影像报告生成Agent v2", "docs": "/docs"}
 
     @app.get("/health", tags=["internal"])

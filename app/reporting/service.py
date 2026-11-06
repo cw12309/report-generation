@@ -314,6 +314,39 @@ class ReportService:
             return ""
 
     @staticmethod
+    def _kb_style_injection(route: RouteInfo, doctor_input: str) -> str:
+        """知识库同模态模板对注入：本院文风参照（开关/预算读 config.yml reporting.kb_style_reference）"""
+        try:
+            from app.config import get_kb_style_reference_config
+
+            cfg = get_kb_style_reference_config()
+            if not cfg["enabled"]:
+                return ""
+            from . import kb_reference
+
+            result = kb_reference.kb_reference_for_route(
+                name=route.name,
+                modality=(route.modalities or [""])[0],
+                body_parts=route.body_parts,
+                aliases=route.aliases,
+                top_k=cfg["top_k"],
+                max_chars=cfg["max_chars"],
+                focus=f"{route.name} {' '.join(route.body_parts or [])}",
+            )
+            if not result.get("text"):
+                return ""
+            return (
+                "\n\n【本院知识库模板参照（同模态「影像学表现｜影像学意见」模板对，"
+                "仅用于统一本院文风与术语写法）】\n"
+                "**数值、节段、病灶位置一律以医生本次输入为准，严禁照抄模板数值**；"
+                "范式选择、追问设计、章节标题仍以上文路由规则为准。\n"
+                f"{result['text']}\n"
+            )
+        except Exception as e:
+            logger.warning(f"知识库风格参照注入失败（忽略）: {e}")
+            return ""
+
+    @staticmethod
     def is_report_intent(text: str) -> bool:
         """判断输入是否为报告生成意图（否则走闲聊标准回复）"""
         t = (text or "").strip()
@@ -336,6 +369,7 @@ class ReportService:
         on_token: Optional[callable] = None,
         on_notice: Optional[callable] = None,
         on_reasoning: Optional[callable] = None,
+        username: str = "",
     ) -> tuple[ReportSession, LLMReportOutput]:
         """生成报告
         
@@ -351,7 +385,12 @@ class ReportService:
             (报告会话, LLM输出)
         """
         t_start = time.perf_counter()
-        logger.info(f"开始生成报告: conversation_id={conversation_id}")
+        logger.info(f"开始生成报告: conversation_id={conversation_id}, user={username or '-'}")
+
+        # 用户环境隔离：路由/提示词/模板走该用户的合并视图
+        from . import user_env
+
+        user_env.set_current_user(username)
 
         # 1. 路由解析
         if emit_event:
@@ -388,6 +427,11 @@ class ReportService:
         injection = self._template_injection(route.id, request.input_text)
         if injection:
             system_prompt += injection
+
+        # 知识库同模态模板对注入：本院文风参照（Milvus 不可用时静默跳过）
+        kb_ref = self._kb_style_injection(route, request.input_text)
+        if kb_ref:
+            system_prompt += kb_ref
 
         # 模板直选线路：医生未输入阅片结论，仅点选模板按钮触发
         template_only = bool(request.route_id) and not (request.input_text or "").strip()
@@ -506,6 +550,7 @@ class ReportService:
         on_token: Optional[callable] = None,
         on_notice: Optional[callable] = None,
         on_reasoning: Optional[callable] = None,
+        username: str = "",
     ) -> tuple[ReportSession, LLMReportOutput]:
         """迭代报告
         
@@ -520,7 +565,12 @@ class ReportService:
             (更新后的会话, LLM输出)
         """
         t_start = time.perf_counter()
-        logger.info(f"开始迭代报告: conversation_id={current_session.conversation_id}, round={request.question_round}")
+        logger.info(f"开始迭代报告: conversation_id={current_session.conversation_id}, round={request.question_round}, user={username or '-'}")
+
+        # 用户环境隔离：路由/提示词/模板走该用户的合并视图
+        from . import user_env
+
+        user_env.set_current_user(username)
 
         # 1. 获取路由
         route = self.route_resolver.get_route_by_id(current_session.route_id)
@@ -544,6 +594,10 @@ class ReportService:
         injection = self._template_injection(route.id, request.input_text)
         if injection:
             system_prompt += injection
+
+        kb_ref = self._kb_style_injection(route, request.input_text)
+        if kb_ref:
+            system_prompt += kb_ref
 
         user_prompt = self.prompt_loader.build_user_prompt(
             doctor_input=request.input_text,
@@ -641,6 +695,10 @@ class ReportService:
                     "报告已更新，我还有几个问题：" if llm_output.questions else "报告已更新。"
                 ),
                 questions=llm_output.questions,
+                # 追问轮次达到上限后的每次更新，附带采纳程度评价卡（采纳/修改/拒绝）
+                review={"version": current_session.current_version, "choice": None, "comment": ""}
+                if new_round >= current_session.max_question_rounds
+                else None,
                 created_at=now,
             )
         )

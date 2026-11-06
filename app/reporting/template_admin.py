@@ -104,8 +104,25 @@ def validate_template_payload(payload: dict, existing_ids: list[str], allow_same
     return errors
 
 
+def normalize_template(payload: dict, existing: Optional[dict] = None) -> dict:
+    """字段规整（名称/路由/标签/关键词/范文/启停/质量分），供全局与个人环境共用"""
+    t = dict(existing or {})
+    t.update(payload or {})
+    t["name"] = str(t.get("name") or "").strip()
+    t["route_id"] = str(t.get("route_id") or "").strip()
+    t["tags"] = [str(x).strip() for x in (t.get("tags") or []) if str(x).strip()]
+    t["match_keywords"] = [str(k).strip() for k in (t.get("match_keywords") or []) if str(k).strip()]
+    t["imaging_findings"] = str(t.get("imaging_findings") or "").strip()
+    t["imaging_diagnosis"] = str(t.get("imaging_diagnosis") or "").strip()
+    t["source"] = str(t.get("source") or "manual")
+    t["enabled"] = bool(t.get("enabled", True))
+    t["quality_score"] = max(1, min(5, int(t.get("quality_score") or 5)))
+    t["updated_at"] = _now()
+    return t
+
+
 def upsert_template(payload: dict) -> dict:
-    """新增或更新模板，返回落盘后的模板"""
+    """新增或更新模板（全局基线库），返回落盘后的模板"""
     templates = load_templates()
     payload = dict(payload or {})
     tid = str(payload.get("id") or "").strip()
@@ -115,16 +132,7 @@ def upsert_template(payload: dict) -> dict:
         while any(t.get("id") == tid for t in templates):
             tid = _new_id() + "_x"
     payload["id"] = tid
-    payload["name"] = str(payload.get("name") or "").strip()
-    payload["route_id"] = str(payload.get("route_id") or "").strip()
-    payload["tags"] = [str(t).strip() for t in (payload.get("tags") or []) if str(t).strip()]
-    payload["match_keywords"] = [str(k).strip() for k in (payload.get("match_keywords") or []) if str(k).strip()]
-    payload["imaging_findings"] = str(payload.get("imaging_findings") or "").strip()
-    payload["imaging_diagnosis"] = str(payload.get("imaging_diagnosis") or "").strip()
-    payload["source"] = str(payload.get("source") or "manual")
-    payload["enabled"] = bool(payload.get("enabled", True))
-    payload["quality_score"] = max(1, min(5, int(payload.get("quality_score") or 5)))
-    payload["updated_at"] = _now()
+    payload = normalize_template(payload)
 
     replaced = False
     for i, t in enumerate(templates):
@@ -162,13 +170,16 @@ def toggle_template(tid: str) -> Optional[bool]:
 
 
 def bump_usage(tid: str):
-    """引用计数 +1（生成命中时调用，不触发全量重写缓存以外的 IO 风险）"""
+    """引用计数 +1（生成命中时调用）；个人新增模板计入个人环境，基线模板计入全局"""
     templates = load_templates()
     for t in templates:
         if t.get("id") == tid:
             t["usage_count"] = int(t.get("usage_count") or 0) + 1
             save_templates(templates)
             return
+    from . import user_env
+
+    user_env.bump_usage(user_env.current_user(), tid)
 
 
 # ===== 匹配与注入 =====
@@ -191,8 +202,12 @@ def match_template(route_id: str, doctor_input: str, threshold: float = 0.18) ->
     """按路由+医生输入匹配最佳启用模板。
 
     优先级：match_keywords/tags 精确子串命中（计分）→ bigram Jaccard 相似度兜底。
+    模板池为「基线 + 当前登录用户个人覆写/新增」合并视图，用户间互不影响。
     """
-    templates = [t for t in load_templates() if t.get("enabled", True) and t.get("route_id") == route_id]
+    from . import user_env
+
+    pool = user_env.merged_templates(user_env.current_user(), load_templates())
+    templates = [t for t in pool if t.get("enabled", True) and t.get("route_id") == route_id]
     if not templates:
         return None
     text = doctor_input or ""
